@@ -1,0 +1,14 @@
+{"t_rel": 0.0, "phase": "pre_early", "usage": {"session": 0.131, "weekly": 0.393}, "kimi": {"session": 44, "weekly": 253}, "glmflash": {"session": 486, "weekly": 9765}}
+{"t_rel": 5.8, "phase": "pre", "usage": {"session": 0.131, "weekly": 0.393}, "kimi": {"session": 44, "weekly": 253}, "glmflash": {"session": 486, "weekly": 9765}}
+{"t_rel": 15.6, "phase": "chat", "req": 1, "tok_in": 39891, "tok_out": 524, "err": null}
+{"t_rel": 22.7, "phase": "chat", "req": 2, "tok_in": 39893, "tok_out": 235, "err": null}
+{"t_rel": 34.7, "phase": "chat", "req": 3, "tok_in": 39892, "tok_out": 275, "err": null}
+{"t_rel": 41.1, "phase": "chat", "req": 4, "tok_in": 39893, "tok_out": 243, "err": null}
+{"t_rel": 47.9, "phase": "chat", "req": 5, "tok_in": 39893, "tok_out": 279, "err": null}
+{"t_rel": 55.3, "phase": "chat", "req": 6, "tok_in": 39893, "tok_out": 290, "err": null}
+{"t_rel": 65.0, "phase": "chat", "req": 7, "tok_in": 39893, "tok_out": 564, "err": null}
+{"t_rel": 71.3, "phase": "chat", "req": 8, "tok_in": 39893, "tok_out": 278, "err": null}
+{"t_rel": 78.4, "phase": "chat", "req": 9, "tok_in": 39893, "tok_out": 340, "err": null}
+{"t_rel": 83.9, "phase": "chat", "req": 10, "tok_in": 39891, "tok_out": 197, "err": null}
+{"t_rel": 99.4, "phase": "post", "usage": {"session": 0.187, "weekly": 0.402}, "kimi": {"session": 54, "weekly": 263}, "glmflash": {"session": 486, "weekly": 9765}}
+{"t_rel": 129.8, "phase": "confirm", "usage": {"session": 0.187, "weekly": 0.402}, "kimi": {"session": 54, "weekly": 263}, "glmflash": {"session": 486, "weekly": 9765}}

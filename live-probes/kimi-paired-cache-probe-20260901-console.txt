@@ -1,0 +1,74 @@
+Captured owner-run console transcript, 2026-09-01 — paired cache probe on kimi-k3.
+Verbatim (three invocations: --plan, the full A+B1+B2 run, then --phases A aborted at
+the confirmation). Raw meter/chat log: kimi-paired-cache-probe.jsonl. The --plan nonce
+hashes belong to the plan invocation only — every invocation generates fresh nonces;
+the stable identity is the body sha ca123ce574e4febc (the seeded T2 long_context fixture).
+
+jr0237@jr0237-MS-7A38:~/Documentos/srnoob2570/ollama-cloud-pricing-bench$ .venv/bin/python /tmp/kimi_paired_cache_probe.py --plan          # ya verificado: sin red, sin llave
+.venv/bin/python /tmp/kimi_paired_cache_probe.py                  # A + B1 + B2 (30 requests)
+.venv/bin/python /tmp/kimi_paired_cache_probe.py --phases A       # solo el brazo sin cache (10 requests)
+PLAN body=153071 chars, sha=ca123ce574e4febc, nonce=400 words per request, 10 req/phase
+[A] 10 prompts, distinct=10, first_sha=fa03f882c19294e2, body_in_every_prompt=True
+[B1] 10 prompts, distinct=1, first_sha=c277dfd7fe6382b8, body_in_every_prompt=True
+[B2] 10 prompts, distinct=1, first_sha=c277dfd7fe6382b8, body_in_every_prompt=True
+PLAN DONE (no request sent)
+About to fire 30 REAL kimi-k3 requests (phases A,B1,B2 x 10); arm A alone ~= the earlier verified bracket (~5.6 session pp, ~0.9 weekly pp).
+Continue? [y/N] y
+[A] quiet sleep 5s begins
+[A] PRE t=5.3 usage={'session': 0.072, 'weekly': 0.426} kimi={'weekly': 263} glmflash={'session': 391, 'weekly': 10558}
+[A] CHAT req=1/10 http=200 t=5.44s tok_in=39893 tok_out=286 err=None
+[A] CHAT req=2/10 http=200 t=6.15s tok_in=39893 tok_out=362 err=None
+[A] CHAT req=3/10 http=200 t=4.98s tok_in=39893 tok_out=281 err=None
+[A] CHAT req=4/10 http=200 t=5.58s tok_in=39893 tok_out=294 err=None
+[A] CHAT req=5/10 http=200 t=5.02s tok_in=39893 tok_out=288 err=None
+[A] CHAT req=6/10 http=200 t=5.82s tok_in=39892 tok_out=288 err=None
+[A] CHAT req=7/10 http=200 t=6.49s tok_in=39893 tok_out=407 err=None
+[A] CHAT req=8/10 http=200 t=5.51s tok_in=39893 tok_out=269 err=None
+[A] CHAT req=9/10 http=200 t=6.82s tok_in=39892 tok_out=348 err=None
+[A] CHAT req=10/10 http=200 t=6.65s tok_in=39893 tok_out=311 err=None
+[A] settle sleep 15s (registration <=6 s; margin)
+[A] POST t=79.1 usage={'session': 0.128, 'weekly': 0.434} kimi={'session': 10, 'weekly': 273} glmflash={'session': 391, 'weekly': 10558}
+[A] CONFIRM t=109.5 usage={'session': 0.128, 'weekly': 0.434} kimi={'session': 10, 'weekly': 273} glmflash={'session': 391, 'weekly': 10558}
+[A] RESULT dpp_session=+0.056 dpp_weekly=+0.008 kimi_requests(s/w)=10/10 glmflash_requests=0 tokens_billed=402062 errs=0
+[B1] quiet sleep 5s begins
+[B1] PRE t=114.8 usage={'session': 0.128, 'weekly': 0.434} kimi={'session': 10, 'weekly': 273} glmflash={'session': 391, 'weekly': 10558}
+[B1] CHAT req=1/10 http=200 t=5.26s tok_in=39893 tok_out=250 err=None
+[B1] CHAT req=2/10 http=200 t=2.39s tok_in=39893 tok_out=165 err=None
+[B1] CHAT req=3/10 http=200 t=2.83s tok_in=39893 tok_out=282 err=None
+[B1] CHAT req=4/10 http=200 t=7.36s tok_in=39893 tok_out=381 err=None
+[B1] CHAT req=5/10 http=200 t=4.23s tok_in=39893 tok_out=258 err=None
+[B1] CHAT req=6/10 http=200 t=3.00s tok_in=39893 tok_out=183 err=None
+[B1] CHAT req=7/10 http=200 t=4.59s tok_in=39893 tok_out=316 err=None
+[B1] CHAT req=8/10 http=200 t=5.07s tok_in=39893 tok_out=398 err=None
+[B1] CHAT req=9/10 http=200 t=4.05s tok_in=39893 tok_out=218 err=None
+[B1] CHAT req=10/10 http=200 t=2.55s tok_in=39893 tok_out=150 err=None
+[B1] settle sleep 15s (registration <=6 s; margin)
+[B1] POST t=171.5 usage={'session': 0.139, 'weekly': 0.436} kimi={'session': 20, 'weekly': 283} glmflash={'session': 391, 'weekly': 10558}
+[B1] CONFIRM t=201.8 usage={'session': 0.139, 'weekly': 0.436} kimi={'session': 20, 'weekly': 283} glmflash={'session': 391, 'weekly': 10558}
+[B1] RESULT dpp_session=+0.011 dpp_weekly=+0.002 kimi_requests(s/w)=10/10 glmflash_requests=0 tokens_billed=401531 errs=0
+[B2] quiet sleep 5s begins
+[B2] PRE t=207.2 usage={'session': 0.139, 'weekly': 0.436} kimi={'session': 20, 'weekly': 283} glmflash={'session': 391, 'weekly': 10558}
+[B2] CHAT req=1/10 http=200 t=2.34s tok_in=39893 tok_out=178 err=None
+[B2] CHAT req=2/10 http=200 t=3.95s tok_in=39893 tok_out=299 err=None
+[B2] CHAT req=3/10 http=200 t=3.97s tok_in=39893 tok_out=286 err=None
+[B2] CHAT req=4/10 http=200 t=2.68s tok_in=39893 tok_out=205 err=None
+[B2] CHAT req=5/10 http=200 t=5.64s tok_in=39893 tok_out=443 err=None
+[B2] CHAT req=6/10 http=200 t=4.50s tok_in=39893 tok_out=313 err=None
+[B2] CHAT req=7/10 http=200 t=5.82s tok_in=39893 tok_out=341 err=None
+[B2] CHAT req=8/10 http=200 t=4.51s tok_in=39893 tok_out=332 err=None
+[B2] CHAT req=9/10 http=200 t=6.00s tok_in=39893 tok_out=445 err=None
+[B2] CHAT req=10/10 http=200 t=3.68s tok_in=39893 tok_out=294 err=None
+[B2] settle sleep 15s (registration <=6 s; margin)
+[B2] POST t=265.6 usage={'session': 0.147, 'weekly': 0.437} kimi={'session': 30, 'weekly': 293} glmflash={'session': 391, 'weekly': 10558}
+[B2] CONFIRM t=295.9 usage={'session': 0.147, 'weekly': 0.437} kimi={'session': 30, 'weekly': 293} glmflash={'session': 391, 'weekly': 10558}
+[B2] RESULT dpp_session=+0.008 dpp_weekly=+0.001 kimi_requests(s/w)=10/10 glmflash_requests=0 tokens_billed=402066 errs=0
+=== SUMMARY ===
+A: tokens=402062 dpp_s=+0.056 dpp_w=+0.008 session_pp/1M=0.1392820012833842 weekly_pp/1M=0.019897428754769183 errs=0
+B1: tokens=401531 dpp_s=+0.011 dpp_w=+0.002 session_pp/1M=0.02739514508219791 weekly_pp/1M=0.0049809354694905295 errs=0
+B2: tokens=402066 dpp_s=+0.008 dpp_w=+0.001 session_pp/1M=0.019897230802902954 weekly_pp/1M=0.002487153850362878 errs=0
+CACHED-WORK RATIO B2/A session = 0.143 (weekly = 0.125)
+COLD-REPLAY RATIO B1/A (session) = 0.197 (expected ~ (1+9r)/10 if only req 1 misses)
+PAIRED PROBE DONE
+About to fire 10 REAL kimi-k3 requests (phases A x 10); arm A alone ~= the earlier verified bracket (~5.6 session pp, ~0.9 weekly pp).
+Continue? [y/N] n
+aborted by owner before any request

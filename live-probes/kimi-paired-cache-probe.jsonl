@@ -1,0 +1,40 @@
+{"t_rel": 5.3, "phase": "A:pre", "usage": {"session": 0.072, "weekly": 0.426}, "kimi": {"weekly": 263}, "glmflash": {"session": 391, "weekly": 10558}}
+{"t_rel": 10.8, "phase": "A:chat", "req": 1, "tok_in": 39893, "tok_out": 286, "err": null}
+{"t_rel": 16.9, "phase": "A:chat", "req": 2, "tok_in": 39893, "tok_out": 362, "err": null}
+{"t_rel": 21.9, "phase": "A:chat", "req": 3, "tok_in": 39893, "tok_out": 281, "err": null}
+{"t_rel": 27.5, "phase": "A:chat", "req": 4, "tok_in": 39893, "tok_out": 294, "err": null}
+{"t_rel": 32.5, "phase": "A:chat", "req": 5, "tok_in": 39893, "tok_out": 288, "err": null}
+{"t_rel": 38.3, "phase": "A:chat", "req": 6, "tok_in": 39892, "tok_out": 288, "err": null}
+{"t_rel": 44.8, "phase": "A:chat", "req": 7, "tok_in": 39893, "tok_out": 407, "err": null}
+{"t_rel": 50.3, "phase": "A:chat", "req": 8, "tok_in": 39893, "tok_out": 269, "err": null}
+{"t_rel": 57.1, "phase": "A:chat", "req": 9, "tok_in": 39892, "tok_out": 348, "err": null}
+{"t_rel": 63.8, "phase": "A:chat", "req": 10, "tok_in": 39893, "tok_out": 311, "err": null}
+{"t_rel": 79.1, "phase": "A:post", "usage": {"session": 0.128, "weekly": 0.434}, "kimi": {"session": 10, "weekly": 273}, "glmflash": {"session": 391, "weekly": 10558}}
+{"t_rel": 109.5, "phase": "A:confirm", "usage": {"session": 0.128, "weekly": 0.434}, "kimi": {"session": 10, "weekly": 273}, "glmflash": {"session": 391, "weekly": 10558}}
+{"t_rel": 114.8, "phase": "B1:pre", "usage": {"session": 0.128, "weekly": 0.434}, "kimi": {"session": 10, "weekly": 273}, "glmflash": {"session": 391, "weekly": 10558}}
+{"t_rel": 120.0, "phase": "B1:chat", "req": 1, "tok_in": 39893, "tok_out": 250, "err": null}
+{"t_rel": 122.4, "phase": "B1:chat", "req": 2, "tok_in": 39893, "tok_out": 165, "err": null}
+{"t_rel": 125.3, "phase": "B1:chat", "req": 3, "tok_in": 39893, "tok_out": 282, "err": null}
+{"t_rel": 132.6, "phase": "B1:chat", "req": 4, "tok_in": 39893, "tok_out": 381, "err": null}
+{"t_rel": 136.9, "phase": "B1:chat", "req": 5, "tok_in": 39893, "tok_out": 258, "err": null}
+{"t_rel": 139.9, "phase": "B1:chat", "req": 6, "tok_in": 39893, "tok_out": 183, "err": null}
+{"t_rel": 144.5, "phase": "B1:chat", "req": 7, "tok_in": 39893, "tok_out": 316, "err": null}
+{"t_rel": 149.5, "phase": "B1:chat", "req": 8, "tok_in": 39893, "tok_out": 398, "err": null}
+{"t_rel": 153.6, "phase": "B1:chat", "req": 9, "tok_in": 39893, "tok_out": 218, "err": null}
+{"t_rel": 156.1, "phase": "B1:chat", "req": 10, "tok_in": 39893, "tok_out": 150, "err": null}
+{"t_rel": 171.5, "phase": "B1:post", "usage": {"session": 0.139, "weekly": 0.436}, "kimi": {"session": 20, "weekly": 283}, "glmflash": {"session": 391, "weekly": 10558}}
+{"t_rel": 201.8, "phase": "B1:confirm", "usage": {"session": 0.139, "weekly": 0.436}, "kimi": {"session": 20, "weekly": 283}, "glmflash": {"session": 391, "weekly": 10558}}
+{"t_rel": 207.2, "phase": "B2:pre", "usage": {"session": 0.139, "weekly": 0.436}, "kimi": {"session": 20, "weekly": 283}, "glmflash": {"session": 391, "weekly": 10558}}
+{"t_rel": 209.5, "phase": "B2:chat", "req": 1, "tok_in": 39893, "tok_out": 178, "err": null}
+{"t_rel": 213.5, "phase": "B2:chat", "req": 2, "tok_in": 39893, "tok_out": 299, "err": null}
+{"t_rel": 217.4, "phase": "B2:chat", "req": 3, "tok_in": 39893, "tok_out": 286, "err": null}
+{"t_rel": 220.1, "phase": "B2:chat", "req": 4, "tok_in": 39893, "tok_out": 205, "err": null}
+{"t_rel": 225.8, "phase": "B2:chat", "req": 5, "tok_in": 39893, "tok_out": 443, "err": null}
+{"t_rel": 230.3, "phase": "B2:chat", "req": 6, "tok_in": 39893, "tok_out": 313, "err": null}
+{"t_rel": 236.1, "phase": "B2:chat", "req": 7, "tok_in": 39893, "tok_out": 341, "err": null}
+{"t_rel": 240.6, "phase": "B2:chat", "req": 8, "tok_in": 39893, "tok_out": 332, "err": null}
+{"t_rel": 246.6, "phase": "B2:chat", "req": 9, "tok_in": 39893, "tok_out": 445, "err": null}
+{"t_rel": 250.3, "phase": "B2:chat", "req": 10, "tok_in": 39893, "tok_out": 294, "err": null}
+{"t_rel": 265.6, "phase": "B2:post", "usage": {"session": 0.147, "weekly": 0.437}, "kimi": {"session": 30, "weekly": 293}, "glmflash": {"session": 391, "weekly": 10558}}
+{"t_rel": 295.9, "phase": "B2:confirm", "usage": {"session": 0.147, "weekly": 0.437}, "kimi": {"session": 30, "weekly": 293}, "glmflash": {"session": 391, "weekly": 10558}}
+{"t_rel": 295.9, "phase": "summary", "result": {"A": {"tokens_total": 402062, "dpp_session": 0.05600000000000001, "dpp_weekly": 0.008000000000000007, "kimi_requests": 10, "glmflash_requests": 0, "errs": 0, "session_pp_per_1m": 0.1392820012833842, "weekly_pp_per_1m": 0.019897428754769183}, "B1": {"tokens_total": 401531, "dpp_session": 0.01100000000000001, "dpp_weekly": 0.0020000000000000018, "kimi_requests": 10, "glmflash_requests": 0, "errs": 0, "session_pp_per_1m": 0.02739514508219791, "weekly_pp_per_1m": 0.0049809354694905295}, "B2": {"tokens_total": 402066, "dpp_session": 0.00799999999999998, "dpp_weekly": 0.0010000000000000009, "kimi_requests": 10, "glmflash_requests": 0, "errs": 0, "session_pp_per_1m": 0.019897230802902954, "weekly_pp_per_1m": 0.002487153850362878}}}

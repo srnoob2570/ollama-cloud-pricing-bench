@@ -2,11 +2,14 @@
 
 The live catalog is read BEFORE a single request is billed: a slate id gone from
 it (renamed, removed) would produce silently-missing suites. Drift aborts the
-run with a diff, and the dry-run mark is left intact — an aborted preflight is
-not a run. Catalog ids arrive tagged where the price table lists the base id
-(medidor-vivo-2026-08-31 §5: `nemotron-3-nano:30b` vs `nemotron-3-nano`), so a
-slate id that already carries a tag must match exactly, and a base id matches
-its tagged variants. The snapshot seen at run start is pinned in the manifest.
+run with a diff. The caller has already consumed the dry-run mark by then (the
+require->consume window stays two adjacent filesystem ops, so a concurrent run
+can never double the approved spend): an aborted preflight only costs a fresh
+(free) dry-run, which every abort message says. Catalog ids arrive tagged where
+the price table lists the base id (medidor-vivo-2026-08-31 §5:
+`nemotron-3-nano:30b` vs `nemotron-3-nano`), so a slate id that already carries
+a tag must match exactly, and a base id matches its tagged variants. The
+snapshot seen at run start is pinned in the manifest.
 """
 
 from __future__ import annotations
@@ -110,9 +113,6 @@ async def _verify_async(
         unseen=unseen,
         ambiguous=ambiguous,
     )
-    if missing:
-        raise PreflightError(_drift_message(reporte, len(slate_ids)))
-    return reporte
     if missing:
         raise PreflightError(_drift_message(reporte, len(slate_ids)))
     return reporte

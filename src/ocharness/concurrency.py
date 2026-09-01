@@ -33,20 +33,18 @@ import asyncio
 import json
 import pathlib
 import time
-import uuid
 
 from . import fixtures, schema
 from .client import PROTOCOL_VERSION, OllamaCloud
 from .runner import (
     BatchContext,
     BatchSpec,
-    Manifest,
     RunnerError,
     _append_jsonl,
     _burst,
-    _check_drift,
     _execute_batch,
     batch_id,
+    open_workstream_manifest,
 )
 
 ANCHOR_LEVEL = "T1"  # the workstream runs on the T1 anchor: its cheapest fixture
@@ -241,6 +239,17 @@ async def _sweep(
                 f"{linea['rejected']} rejected, {linea['errored']} errored"
             )
         if linea["accepted"] < k:
+            if linea["errored"]:
+                # The cut-off is a per-key 429 phenomenon. A transport error is
+                # not a measurement of it: persisting a sub-floor (or too-low)
+                # conclusion from failed requests would pin every later run to
+                # the k=1 cell. The volley line above keeps the raw evidence;
+                # the sweep aborts and a healthy resume re-probes.
+                raise RunnerError(
+                    f"probe volley k={k}: {linea['errored']} of {k} requests errored "
+                    "(transport failures, not 429 rejections) - the cut-off cannot be "
+                    "measured from failed requests; re-run the probe"
+                )
             fallo = resumen
             break
     if fallo is None:
@@ -250,15 +259,12 @@ async def _sweep(
         cut_off = None
         nota = (
             f"the cut-off is below the probe floor ({PROBE_K_FROM}): even the k={fallo['k']} "
-            f"volley was not fully accepted ({fallo['rejected']} rejected, "
-            f"{fallo['errored']} errored) - only the k=1 cell is viable"
+            f"volley was not fully accepted ({fallo['rejected']} rejected) - only the k=1 "
+            "cell is viable"
         )
     else:
         cut_off = fallo["k"] - 1
-        if fallo["rejected"]:
-            causa = f"{fallo['rejected']} of {fallo['requested']} rejected (HTTP 429)"
-        else:
-            causa = f"{fallo['errored']} of {fallo['requested']} errored"
+        causa = f"{fallo['rejected']} of {fallo['requested']} rejected (HTTP 429)"
         nota = f"volley k={fallo['k']}: {causa}; the cut-off is {cut_off}"
     return cut_off, nota, volleys
 
@@ -384,30 +390,14 @@ async def _run_async(cfg: dict) -> dict:
     batches_dir.mkdir(parents=True, exist_ok=True)
     ruta_manifest = runs_dir / f"manifest-{ANCHOR_LEVEL}-concurrency.json"
 
-    existente = Manifest.load(ruta_manifest, strict=True)
-    run_id = (
-        existente.run_id
-        if existente
-        else f"{ANCHOR_LEVEL}-cc-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{uuid.uuid4().hex[:8]}"
-    )
-    if existente:
-        _check_drift(existente, cfg)
-
-    manifiesto = existente or Manifest.create(
-        ruta_manifest,
-        run_id=run_id,
+    manifiesto = open_workstream_manifest(
+        runs_dir,
         # the workstream's own identity: `status` renders it from the manifest doc,
         # while the batch/request lines carry the anchor's density class (T1)
         level=f"{ANCHOR_LEVEL}-concurrency",
-        table_version=cfg["table_version"],
-        k=None,  # the cells carry their own k; the probe is a per-key property
-        planned=0,
-        catalog=cfg.get("catalog"),
+        run_id_prefix=f"{ANCHOR_LEVEL}-cc",
+        cfg=cfg,  # k=None: the cells carry their own k; the probe is a per-key property
     )
-    if existente:
-        if cfg.get("catalog"):
-            manifiesto.append_catalog(cfg["catalog"])
-        manifiesto.save()
     run_id = manifiesto.run_id
     ruta_probe = runs_dir / f"probe-{run_id}.jsonl"
     modelo_api = cfg.get("model_map", {}).get(model, model)

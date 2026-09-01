@@ -52,8 +52,25 @@ class FakeOllama:
         self.catalog_http = 200  # status the models endpoint answers with
         self.catalog_raise: Exception | None = None  # transport failure on /v1/models
         self.reject_all = False  # every chat request rejected (429), nothing billed
+        self.chat_raise: Exception | None = None  # transport failure on /api/chat
         self.usage_raise: Exception | None = None  # transport failure on /api/usage
         self.usage_raise_from = 10**9  # meter read ordinal from which it starts failing
+        # Cache scripting (the calibrate-cache seam): with `cache_horizon_s` set, the
+        # fake caches per (model, prompt) — a repeat within the horizon is a hit, the
+        # done-object reports `prompt_eval_cache_hit_count` (0 on a cold send) and only
+        # `cached_eval_count` freshly evaluated tokens, the meter bills `cached_ticks`
+        # instead of `ticks_per_request`, and a hit answers `cache_ttft_benefit_s`
+        # sooner (a skipped prefill). Unset (default): no cache, and the done-object
+        # carries no cache-hit field at all — the world where the API does not report
+        # hits, which the calibration must read as "no token evidence".
+        self.cache_horizon_s: float | None = None
+        self.cached_eval_count = 6  # tokens re-evaluated on a hit (the prompt's tail)
+        self.cached_ticks = 0  # ticks billed for a cache-hit request
+        self.cache_ttft_benefit_s = 0.0
+        # False: a deployment that caches but never reports the hit field — the
+        # done-object keeps the reduced prompt_eval_count, the field stays absent.
+        self.cache_report_hits = True
+        self._cache_last: dict[tuple[str, str], float] = {}
 
     # ---- scripting ----
     def program_consumption(self, ticks: int) -> None:
@@ -106,6 +123,8 @@ class FakeOllama:
         if request.url.path == "/api/chat":
             if "authorization" not in request.headers:
                 return httpx.Response(401, json={"error": "invalid credentials"})
+            if self.chat_raise is not None:
+                raise self.chat_raise
             if self.reject_all:
                 return httpx.Response(429, json={"error": "scripted: everything rejected"})
             self._n_chat += 1
@@ -115,22 +134,44 @@ class FakeOllama:
                 return httpx.Response(429, json={"error": "concurrency limit exceeded"})
             self._in_flight += 1
             try:
+                cacheada = self._cache_lookup(body)
                 if self.chat_latency:
-                    await asyncio.sleep(self.chat_latency)
-                self._bill(body)
+                    latencia = self.chat_latency
+                    if cacheada:
+                        latencia -= self.cache_ttft_benefit_s
+                    await asyncio.sleep(max(0.0, latencia))
+                self._bill(body, cacheada)
                 if body.get("stream"):
-                    return httpx.Response(200, content=self._chat_chunks(body))
-                return httpx.Response(200, json=self._done(body))
+                    return httpx.Response(200, content=self._chat_chunks(body, cacheada))
+                return httpx.Response(200, json=self._done(body, cacheada))
             finally:
                 self._in_flight -= 1
         return httpx.Response(404, json={"error": "not found"})
 
-    def _bill(self, body: dict) -> None:
+    def _bill(self, body: dict, cacheada: int = 0) -> None:
         modelo = body.get("model", "?")
         self._counts[modelo] = self._counts.get(modelo, 0) + 1
         self._last_billed = modelo
-        if self.ticks_per_request:
-            self.program_consumption(ticks=self.ticks_per_request)
+        ticks = self.cached_ticks if cacheada else self.ticks_per_request
+        if ticks:
+            self.program_consumption(ticks=ticks)
+
+    def _cache_lookup(self, body: dict) -> int:
+        """Tokens served from cache for this request (0 = cold send or expired miss).
+
+        A served prompt refreshes the cache whether it hit or not — the real
+        behavior the replay's between-batches spacing probes.
+        """
+        if self.cache_horizon_s is None:
+            return 0
+        ahora = asyncio.get_running_loop().time()
+        clave = (body.get("model", "?"), self._prompt_of(body))
+        servido = self._cache_last.get(clave)
+        self._cache_last[clave] = ahora
+        if servido is None or (ahora - servido) > self.cache_horizon_s:
+            return 0
+        completa, _ = self._token_counts(body)
+        return max(0, completa - self.cached_eval_count)
 
     def _reply_text(self, body: dict) -> str:
         if self.reply_for is not None:
@@ -149,7 +190,7 @@ class FakeOllama:
     def _prompt_of(self, body: dict) -> str:
         return (body.get("messages") or [{}])[0].get("content") or ""
 
-    def _chat_chunks(self, body: dict) -> bytes:
+    def _chat_chunks(self, body: dict, cacheada: int = 0) -> bytes:
         modelo = body.get("model", "glm-5.3-flash")
         llamadas = self.tool_calls_for(self._prompt_of(body)) if self.tool_calls_for else None
         if llamadas:
@@ -160,7 +201,7 @@ class FakeOllama:
                     "message": {"role": "assistant", "content": "", "tool_calls": llamadas},
                     "done": False,
                 },
-                self._done(body),
+                self._done(body, cacheada),
             ]
             if self.truncate_stream:
                 parciales = parciales[:-1]
@@ -178,15 +219,15 @@ class FakeOllama:
                 "message": {"role": "assistant", "content": texto[mitad:]},
                 "done": False,
             },
-            self._done(body),
+            self._done(body, cacheada),
         ]
         if self.truncate_stream:
             parciales = parciales[:-1]  # billed, but the stream ends without a done frame
         return b"".join((json.dumps(c) + "\n").encode() for c in parciales)
 
-    def _done(self, body: dict) -> dict:
+    def _done(self, body: dict, cacheada: int = 0) -> dict:
         prompt_eval, eval_ = self._token_counts(body)
-        return {
+        done = {
             "model": body.get("model", "glm-5.3-flash"),
             "done": True,
             "done_reason": "stop",
@@ -197,6 +238,14 @@ class FakeOllama:
             "eval_count": eval_,
             "eval_duration": None,
         }
+        if self.cache_horizon_s is not None:
+            if cacheada:
+                done["prompt_eval_count"] = self.cached_eval_count
+            if self.cache_report_hits:
+                # A deployment that tracks cache hits reports them even when
+                # zero — the calibration's explicit-zero evidence for "no".
+                done["prompt_eval_cache_hit_count"] = cacheada
+        return done
 
     def _read_meter(self) -> dict:
         self._reads += 1

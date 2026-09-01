@@ -183,6 +183,98 @@ def test_429_by_concurrency_reachable_through_the_async_transport(fake):
     assert sorted(resultados) == [200, 200, 200, 429, 429, 429]
 
 
+def test_cache_hit_within_the_horizon_reports_cached_tokens_and_fewer_ticks(fake):
+    """The calibrate-cache seam: a repeat of the SAME prompt within the horizon is
+    a hit — the done-object reports the cached rest and only the tail freshly
+    evaluated, and the meter bills `cached_ticks` instead of `ticks_per_request`."""
+    fake.cache_horizon_s = 60.0
+    fake.cached_eval_count = 6
+    fake.counts_for = lambda prompt, seed: (100, 12)  # a cold send reports 100 in
+    fake.ticks_per_request = 10
+    fake.cached_ticks = 2
+    auth = {"Authorization": "Bearer test-key"}
+    body = {"model": "glm-5.3-flash", "messages": [{"role": "user", "content": "hi"}]}
+    with httpx.Client(transport=fake.transport()) as client:
+        r1 = client.post("https://fake.ollama/api/chat", json=body, headers=auth).json()
+        r2 = client.post("https://fake.ollama/api/chat", json=body, headers=auth).json()
+        for _ in range(fake.lag_reads):
+            client.get("https://fake.ollama/api/usage", headers=auth)
+        r = client.get("https://fake.ollama/api/usage", headers=auth).json()
+    assert r1["prompt_eval_count"] == 100
+    assert r1["prompt_eval_cache_hit_count"] == 0  # cold: the field exists, zero hits
+    assert r2["prompt_eval_count"] == 6  # only the tail re-evaluated
+    assert r2["prompt_eval_cache_hit_count"] == 94
+    assert round(r["limits"]["session"]["usage"] - 0.234, 3) == 0.012  # 10 + 2 ticks
+
+
+def test_cache_miss_after_the_horizon_and_refresh_on_a_served_prompt(fake):
+    """Persistence: past the horizon the prefix is a miss again — and the miss
+    itself re-populates the cache (an immediate repeat hits)."""
+    import time
+
+    fake.cache_horizon_s = 0.05
+    fake.cached_eval_count = 6
+    fake.counts_for = lambda prompt, seed: (100, 12)
+    auth = {"Authorization": "Bearer test-key"}
+    body = {"model": "glm-5.3-flash", "messages": [{"role": "user", "content": "hi"}]}
+    with httpx.Client(transport=fake.transport()) as client:
+        r1 = client.post("https://fake.ollama/api/chat", json=body, headers=auth).json()
+        time.sleep(0.06)
+        r2 = client.post("https://fake.ollama/api/chat", json=body, headers=auth).json()
+        r3 = client.post("https://fake.ollama/api/chat", json=body, headers=auth).json()
+    assert r1["prompt_eval_cache_hit_count"] == 0
+    assert r2["prompt_eval_count"] == 100 and r2["prompt_eval_cache_hit_count"] == 0  # expired
+    assert r3["prompt_eval_count"] == 6 and r3["prompt_eval_cache_hit_count"] == 94  # re-warmed
+
+
+def test_cache_state_is_per_model(fake):
+    """One model's warm prefix never warms another model's."""
+    fake.cache_horizon_s = 60.0
+    fake.cached_eval_count = 6
+    fake.counts_for = lambda prompt, seed: (100, 12)
+    auth = {"Authorization": "Bearer test-key"}
+    body = {"model": "glm-5.3-flash", "messages": [{"role": "user", "content": "hi"}]}
+    otro = dict(body, model="kimi-k3")
+    with httpx.Client(transport=fake.transport()) as client:
+        client.post("https://fake.ollama/api/chat", json=body, headers=auth)
+        r = client.post("https://fake.ollama/api/chat", json=otro, headers=auth).json()
+    assert r["prompt_eval_count"] == 100 and r["prompt_eval_cache_hit_count"] == 0
+
+
+def test_cache_ttft_benefit_shortens_a_hit_held_latency(fake):
+    """Scriptable TTFT benefit: a hit skips the prefill, so its held latency drops."""
+    import time
+
+    fake.cache_horizon_s = 60.0
+    fake.chat_latency = 0.2
+    fake.cache_ttft_benefit_s = 0.15
+    auth = {"Authorization": "Bearer test-key"}
+    body = {"model": "glm-5.3-flash", "messages": [{"role": "user", "content": "hi"}]}
+    with httpx.Client(transport=fake.transport()) as client:
+        t0 = time.monotonic()
+        client.post("https://fake.ollama/api/chat", json=body, headers=auth)
+        frio = time.monotonic() - t0
+        t1 = time.monotonic()
+        client.post("https://fake.ollama/api/chat", json=body, headers=auth)
+        tibio = time.monotonic() - t1
+    assert tibio < frio - 0.05  # clearly faster, not noise
+
+
+def test_unscripted_done_carries_no_cache_hit_field(fake):
+    """The pinned world (no cache scripting): the done-object has no cache-hit
+    field at all — the harness's tok_cached stays null."""
+    fake.counts_for = lambda prompt, seed: (100, 12)
+    auth = {"Authorization": "Bearer test-key"}
+    with httpx.Client(transport=fake.transport()) as client:
+        r = client.post(
+            "https://fake.ollama/api/chat",
+            json={"model": "glm-5.3-flash", "messages": [{"role": "user", "content": "hi"}]},
+            headers=auth,
+        ).json()
+    assert "prompt_eval_cache_hit_count" not in r
+    assert r["prompt_eval_count"] == 100
+
+
 def test_standard_table_covers_the_full_catalog():
     assert len(standard_table()) == 19
     assert standard_table()["kimi-k3"]["output"] == 15.0

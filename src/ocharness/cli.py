@@ -10,7 +10,7 @@ import os
 import pathlib
 import sys
 
-from . import concurrency, cost, gate, preflight, workloads
+from . import calibration, concurrency, cost, gate, preflight, workloads
 from .pricing import PriceTable, TableError
 from .runner import Manifest, RunnerError, run_level
 
@@ -481,10 +481,117 @@ def cmd_probe_concurrency(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_calibrate_cache(args: argparse.Namespace) -> int:
+    """The cache calibration (methodology v1 §7): prefix replays per T2-slate model.
+
+    The gate consumes the T2 mark: the calibration bills T2-density requests
+    (the ~20K prefix), far below the full level the mark approved.
+    """
+    if args.level is not None:
+        print(
+            "error: calibrate-cache runs on the T2 slate; it takes no --level",
+            file=sys.stderr,
+        )
+        return 2
+    edades = tuple(float(a) for a in args.spaced_gaps)
+    if any(not math.isfinite(a) or a < 0 for a in edades) or not (
+        edades[0] < edades[1] < edades[2]
+    ):
+        print(
+            "error: --spaced-gaps must be three strictly increasing finite "
+            f"offsets in seconds; got {args.spaced_gaps!r}",
+            file=sys.stderr,
+        )
+        return 2
+    if args.settle_s < 0 or not math.isfinite(args.settle_s):
+        print(
+            f"error: --settle-s must be a finite number >= 0; got {args.settle_s!r}",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        tabla = PriceTable.load(_pricing_dir(args), args.table_version)
+        slate = workloads.slate("T2", tabla)
+        modelos = [args.model] if args.model else list(slate)
+        fuera = [m for m in modelos if m not in slate]
+        if fuera:
+            print(
+                f"error: --model {', '.join(fuera)} is not in the T2 slate ({len(slate)} models)",
+                file=sys.stderr,
+            )
+            return 2
+        gate.require_dry_run(_base(args), "T2", table_version=tabla.table_version)
+    except TableError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    except gate.GateClosed as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    if not _require_api_key():
+        return 2
+
+    def _emit(msg: str) -> None:
+        print(msg, flush=True, file=sys.stderr)  # progress is log noise: stdout stays parseable
+
+    gate.consume(_base(args), "T2")  # one dry-run enables exactly one calibration
+    try:
+        catalogo = preflight.verify(slate_ids=modelos, table_models=tabla.models)
+    except preflight.PreflightError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    _emit(_preflight_line(catalogo))
+    try:
+        resumen = calibration.run_calibration(
+            _base(args),
+            models=modelos,
+            spaced_ages=edades,
+            settle_s=args.settle_s,
+            table_version=tabla.table_version,
+            tabla=tabla,
+            catalog={"http": catalogo.http, "ids": catalogo.ids, "matched": catalogo.matched},
+            model_map={s: c for s, c in catalogo.matched.items() if c != s},
+            emit=_emit,
+        )
+    except RunnerError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(resumen, ensure_ascii=False, indent=2))
+        return 0
+    lecturas = resumen["readings"]
+    print(
+        f"cache calibration {resumen['run_id']} - models "
+        f"{', '.join(resumen['models']) or '(none)'}, table {resumen['table_version']}"
+    )
+    for modelo in resumen["models"]:
+        a = lecturas[modelo]
+        tasa = "n/a" if a["hit_rate"] is None else f"{a['hit_rate'] * 100:.1f}%"
+        base_est = f" ({a['hit_rate_basis']})" if a["hit_rate_basis"] else ""
+        descuento = a["paper_discount"]
+        declarado = "declared" if descuento["declared"] else "none in the table"
+        if descuento["materialized"] is None:
+            materializado = "unknown"
+        else:
+            materializado = "materialized" if descuento["materialized"] else "NOT materialized"
+        print(
+            f"  {modelo}: cache {a['cache_exists']}, persistence "
+            f"{a['persistence'] or 'unknown'}, hit rate {tasa}{base_est}, "
+            f"{'conclusive' if a['conclusive'] else 'inconclusive'} - "
+            f"paper discount {declarado}, {materializado}"
+        )
+    if resumen["unmaterialized_paper_discounts"]:
+        print(
+            "  unmaterialized paper discounts: "
+            + ", ".join(resumen["unmaterialized_paper_discounts"])
+        )
+    return 0
+
+
 DESPACHO = {
     "dry-run": cmd_dry_run,
     "run": cmd_run,
     "probe-concurrency": cmd_probe_concurrency,
+    "calibrate-cache": cmd_calibrate_cache,
     "status": cmd_status,
 }
 
@@ -511,7 +618,8 @@ def build_parser() -> argparse.ArgumentParser:
         if nombre == "probe-concurrency":
             # The probe reads none of --s/--reps/--rep/--k: a silent no-op flag
             # would read as a tuned cell (--k) or an approved density (--reps)
-            # it ignores. Its knobs are --model and --k-max; the cell ks are the
+            # it ignores. Its knobs are --model, --k-max and --ancla (the anchor
+            # its cost-per-task verdict divides by); the cell ks are the
             # workstream's own (1, 4, 8), re-anchored to the measured cut-off.
             parser.add_argument(
                 "--k-max",
@@ -522,12 +630,28 @@ def build_parser() -> argparse.ArgumentParser:
                     f"hard ceiling {concurrency.PROBE_K_CEILING})"
                 ),
             )
+            parser.add_argument("--ancla", type=float, default=100.0, help="P_LEGADO USD/month")
+        elif nombre == "calibrate-cache":
+            # The calibration reads none of --s/--reps/--rep/--k/--ancla either:
+            # a silent no-op flag would read as a tuned assumption. Its knobs
+            # are --model and --spaced-gaps (the replays' offsets), with
+            # --settle-s governing the brackets' settle as everywhere else.
+            parser.add_argument(
+                "--spaced-gaps",
+                type=float,
+                nargs=3,
+                default=calibration.SPACED_TARGETS,
+                metavar="S",
+                help=(
+                    "the spaced replays' cumulative offsets in seconds "
+                    "(default 5 30 90; the ladder sits above the bracket's settle)"
+                ),
+            )
         else:
             parser.add_argument("--s", type=float, default=0.5, help="S1 cache hit-rate (0..1)")
             parser.add_argument("--reps", type=int, default=5)
             parser.add_argument("--rep", type=int, default=None, help="run only this repetition")
             parser.add_argument("--k", type=int, default=1, help="concurrency of the burst")
-        parser.add_argument("--ancla", type=float, default=100.0, help="P_LEGADO USD/month")
         parser.add_argument(
             "--settle-s", type=float, default=90.0, help="settle between read and read (s)"
         )

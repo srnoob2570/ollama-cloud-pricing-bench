@@ -375,6 +375,17 @@ def _make_sandbox_judge(workload: str):
     return _juez
 
 
+def _judge_cache_prefix(_prompt: str, rec: dict, _registros: list[dict]) -> bool:
+    """The cache calibration replay's contract: the exact contracted word.
+
+    The token report is the calibration's SIGNAL here, never a reproducibility
+    band: a warm replay legitimately reports fewer freshly-evaluated tokens
+    than a cold one, so the calibration band would grade the very phenomenon
+    under measurement as drift.
+    """
+    return _tokens(rec["content"]) == ["ok"]
+
+
 _JUDGES = {
     "qa_short": _judge_qa_short,
     "calibration": _judge_calibration,
@@ -387,6 +398,9 @@ _JUDGES = {
     "reasoning": _judge_reasoning,
     "ratio_in": _judge_register,
     "ratio_out": _judge_ratio_out,
+    "cache_cold": _judge_cache_prefix,  # the calibration replay's three phases:
+    "cache_intra": _judge_cache_prefix,  # the same prefix and the same word-only
+    "cache_spaced": _judge_cache_prefix,  # contract (the token report is the signal)
     "multi_file": _make_sandbox_judge("multi_file"),
     "debugging": _make_sandbox_judge("debugging"),
     "refactoring": _make_sandbox_judge("refactoring"),

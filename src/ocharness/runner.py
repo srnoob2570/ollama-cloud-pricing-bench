@@ -49,6 +49,11 @@ class BatchSpec:
     n: int  # requests in the batch (the workload's requests per repetition)
     fixture_hash: str
     plan_note: str = ""  # informational provenance carried on the batch line (no abort)
+    # Sleep before each request, index-aligned (empty = no spacing). The cache
+    # calibration's spaced replays time their sends from the prefix's last
+    # refresh; the caller computes the tuple, the burst only honors it (the
+    # calibration always fires k=1, so the sleeps serialize exactly).
+    gap_s: tuple[float, ...] = ()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -186,6 +191,44 @@ class Manifest:
         tmp = self.ruta.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(self.doc, indent=2), encoding="utf-8")
         tmp.replace(self.ruta)
+
+
+def open_workstream_manifest(
+    runs_dir: pathlib.Path,
+    *,
+    level: str,
+    run_id_prefix: str,
+    cfg: dict,
+    planned: int = 0,
+) -> Manifest:
+    """The spending workstreams' shared bootstrap: load the level's manifest
+    strictly, mint its run_id and create it when absent, refuse drift, and join
+    this attempt's catalog snapshot to the history on reuse. One resume state,
+    one drift guard, one creation path — every workstream resumes alike."""
+    ruta = runs_dir / f"manifest-{level}.json"
+    existente = Manifest.load(ruta, strict=True)
+    run_id = (
+        existente.run_id
+        if existente
+        else f"{run_id_prefix}-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
+        f"-{uuid.uuid4().hex[:8]}"
+    )
+    if existente:
+        _check_drift(existente, cfg)
+    manifiesto = existente or Manifest.create(
+        ruta,
+        run_id=run_id,
+        level=level,
+        table_version=cfg["table_version"],
+        k=cfg.get("k"),
+        planned=planned,
+        catalog=cfg.get("catalog"),
+    )
+    if existente:
+        if cfg.get("catalog"):
+            manifiesto.append_catalog(cfg["catalog"])
+        manifiesto.save()
+    return manifiesto
 
 
 def _counts(payload: dict | None, window: str = "session") -> dict[str, int]:
@@ -326,6 +369,8 @@ async def _burst(client: OllamaCloud, spec: BatchSpec, specs: tuple, modelo_api:
     async def _one(i: int) -> dict:
         seed_value = fixtures.seed(spec.workload, spec.model, spec.rep, i)
         async with semaforo:
+            if i < len(spec.gap_s) and spec.gap_s[i]:
+                await asyncio.sleep(spec.gap_s[i])
             return await client.chat(
                 model=modelo_api,
                 prompt=specs[i].prompt,
@@ -575,14 +620,8 @@ async def _run_async(cfg: dict) -> dict:
     runs_dir.mkdir(parents=True, exist_ok=True)
     batches_dir.mkdir(parents=True, exist_ok=True)
 
-    existente = Manifest.load(runs_dir / f"manifest-{level}.json", strict=True)
-    run_id = (
-        existente.run_id
-        if existente
-        else f"{level}-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{uuid.uuid4().hex[:8]}"
-    )
-    if existente:
-        _check_drift(existente, cfg)
+    manifiesto = open_workstream_manifest(runs_dir, level=level, run_id_prefix=level, cfg=cfg)
+    run_id = manifiesto.run_id
     try:
         specs = plan(
             run_id=run_id,
@@ -595,30 +634,18 @@ async def _run_async(cfg: dict) -> dict:
         )
     except ValueError as e:  # fixture drift is a clean abort, not a traceback
         raise RunnerError(f"run aborted before any request: {e}") from None
-    manifiesto = existente or Manifest.create(
-        runs_dir / f"manifest-{level}.json",
-        run_id=run_id,
-        level=level,
-        table_version=cfg["table_version"],
-        k=cfg["k"],
-        planned=len(specs),
-        catalog=cfg.get("catalog"),
+    # The plan is the max union of everything this run_id has ever covered:
+    # a wider resume grows it, and status's pending count stays truthful.
+    planned_previo = manifiesto.doc.get("planned")
+    union = max(
+        planned_previo if isinstance(planned_previo, int) else 0,
+        len(specs),
+        len(manifiesto.doc["batches"]),
     )
-    if existente:
-        # The plan is the max union of everything this run_id has ever covered:
-        # a wider resume grows it, and status's pending count stays truthful.
-        planned_previo = manifiesto.doc.get("planned")
-        union = max(
-            planned_previo if isinstance(planned_previo, int) else 0,
-            len(specs),
-            len(manifiesto.doc["batches"]),
-        )
+    if union != manifiesto.doc.get("planned"):
         manifiesto.doc["planned"] = union
-        # The preflight of THIS attempt joins the catalog snapshot history.
-        if cfg.get("catalog"):
-            manifiesto.append_catalog(cfg["catalog"])
         manifiesto.save()
-    rutas_requests = runs_dir / f"requests-{manifiesto.run_id}.jsonl"
+    rutas_requests = runs_dir / f"requests-{run_id}.jsonl"
     ruta_batches = batches_dir / f"batches-{manifiesto.run_id}.jsonl"
 
     client = OllamaCloud(transport=cfg["transport"])

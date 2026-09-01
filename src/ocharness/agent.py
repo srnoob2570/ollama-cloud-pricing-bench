@@ -5,11 +5,15 @@ Each step is one chat request — the task prompt (goal + action contract) plus 
 full transcript so far — whose reply must carry exactly one JSON action. The
 harness parses it, executes it against the task's working copy, and appends the
 outcome; the loop ends when the model plays `finish`, when MAX_STEPS actions are
-spent, or when a step's request fails at the transport level (a dead endpoint is
-never consulted again, and nothing inside a batch is retried). The model executes
-nothing itself: `run_tests` runs the sandbox's pytest, and the checker re-runs it
-independently after the loop, so a model that claims "the tests pass" without
-passing them lands as a failed checker.
+spent, when a step's request fails at the transport level (a dead endpoint is
+never consulted again, and nothing inside a batch is retried), or when the
+harness itself fails to execute an action (a broken working copy is the same
+class of stop). The model executes nothing itself: `run_tests` runs the
+sandbox's pytest, and the checker re-runs it independently after the loop, so a
+model that claims "the tests pass" without passing them lands as a failed
+checker. A task that crashes (disk full, a hostile write) still lands in the
+dataset as its own record — its siblings' evidence and the batch's count check
+survive it.
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import pathlib
+import time
 
 from . import fixtures, sandbox
 from .client import OllamaCloud
@@ -31,12 +36,8 @@ def parse_action(reply: str) -> dict | None:
     texto = reply.strip()
     if not texto:
         return None
-    candidato = texto
-    if not candidato.startswith("{"):
-        inicio, fin = texto.find("{"), texto.rfind("}")
-        if inicio < 0 or fin <= inicio:
-            return None
-        candidato = texto[inicio : fin + 1]
+    inicio, fin = texto.find("{"), texto.rfind("}")
+    candidato = texto[inicio : fin + 1] if 0 <= inicio < fin else texto
     try:
         accion = json.loads(candidato)
     except ValueError:
@@ -46,6 +47,27 @@ def parse_action(reply: str) -> dict | None:
 
 def _cap(texto: str, limite: int) -> str:
     return texto if len(texto) <= limite else texto[:limite] + f" ...[truncated at {limite} chars]"
+
+
+def _registro_crash(task_dir: pathlib.Path, causa: str) -> dict:
+    """The degenerate record of a task that produced no step at all (its repo
+    could not even be seeded): present in the dataset with the crash as its
+    err, so the batch's other tasks keep their records and the count check
+    still sees the task's real (zero) spend."""
+    ahora = time.time()
+    return {
+        "t_start": ahora,
+        "t_first_chunk": None,
+        "t_total": ahora,
+        "chunks": 0,
+        "http": None,
+        "err": f"task crashed before its first step: {causa}",
+        "done": None,
+        "content": "",
+        "steps": [],
+        "tool_calls": [],
+        "repo_dir": str(task_dir),
+    }
 
 
 def _inside(task_dir: pathlib.Path, rel) -> pathlib.Path | None:
@@ -153,10 +175,13 @@ async def run_task(
     the tokens each step billed.
     """
     task_dir.mkdir(parents=True, exist_ok=True)
-    for ruta, contenido in repo:
-        destino = task_dir / ruta
-        destino.parent.mkdir(parents=True, exist_ok=True)
-        destino.write_text(contenido, encoding="utf-8")
+    try:
+        for ruta, contenido in repo:
+            destino = task_dir / ruta
+            destino.parent.mkdir(parents=True, exist_ok=True)
+            destino.write_text(contenido, encoding="utf-8")
+    except OSError as e:
+        return _registro_crash(task_dir, f"{type(e).__name__}: {e}")
     pasos: list[dict] = []
     transcripcion: list[str] = []
     for numero in range(1, MAX_STEPS + 1):
@@ -165,13 +190,20 @@ async def run_task(
             prompt=_step_prompt(task_prompt, transcripcion, numero),
             seed=seed_value,
         )
-        accion = parse_action(rec["content"]) if rec["http"] == 200 and rec["done"] else None
-        if accion is None:
-            nombre = "invalid"
-            ok, resultado = False, "rejected: the reply carries no parsable JSON action"
-        else:
-            nombre = str(accion.get("action"))
-            ok, resultado = execute_action(accion, task_dir)
+        try:
+            accion = parse_action(rec["content"]) if rec["http"] == 200 and rec["done"] else None
+            if accion is None:
+                nombre = "invalid"
+                ok, resultado = False, "rejected: the reply carries no parsable JSON action"
+            else:
+                nombre = str(accion.get("action"))
+                ok, resultado = execute_action(accion, task_dir)
+        except Exception as e:  # noqa: BLE001 - a harness-side crash is data, not a lost batch
+            # a write that cannot land (disk full, a lone surrogate) ends the
+            # task: the step is still recorded (it was billed), and a broken
+            # working copy is never consulted again.
+            nombre, ok = "error", False
+            resultado = f"the harness failed to execute the action: {type(e).__name__}: {e}"
         done = rec["done"]
         paso = {
             "step": numero,
@@ -196,8 +228,8 @@ async def run_task(
         )
         if nombre == "finish" and ok:
             break  # the model ended its session
-        if rec["err"] is not None:
-            break  # the request failed: a dead endpoint is never consulted again
+        if rec["err"] is not None or nombre == "error":
+            break  # a dead endpoint or a broken working copy is never consulted again
     return {
         "t_start": pasos[0]["t_start"],
         "t_first_chunk": pasos[0]["t_first_chunk"],
@@ -221,20 +253,29 @@ async def run_tasks(
     *,
     sandbox_root: pathlib.Path,
 ) -> list[dict]:
-    """The batch's tasks (one working copy each), k-concurrent; records in order."""
+    """The batch's tasks (one working copy each), k-concurrent; records in order.
+
+    One task crashing never discards its siblings: every task yields a record
+    (a degenerate one when it produced no step), so the batch's billed evidence
+    stays attributable and the runner's count check stays truthful.
+    """
     raiz = pathlib.Path(sandbox_root) / spec.batch_id
     semaforo = asyncio.Semaphore(spec.k)
 
     async def _una(i: int) -> dict:
         seed_value = fixtures.seed(spec.workload, spec.model, spec.rep, i)
+        task_dir = raiz / f"task-{i:04d}"
         async with semaforo:  # the cell's k bounds the tasks in flight
-            return await run_task(
-                client,
-                model=modelo_api,
-                task_prompt=specs_requeridos[i].prompt,
-                task_dir=raiz / f"task-{i:04d}",
-                seed_value=seed_value,
-                repo=specs_requeridos[i].repo,
-            )
+            try:
+                return await run_task(
+                    client,
+                    model=modelo_api,
+                    task_prompt=specs_requeridos[i].prompt,
+                    task_dir=task_dir,
+                    seed_value=seed_value,
+                    repo=specs_requeridos[i].repo,
+                )
+            except Exception as e:  # noqa: BLE001 - the record is the evidence
+                return _registro_crash(task_dir, f"{type(e).__name__}: {e}")
 
     return list(await asyncio.gather(*(_una(i) for i in range(spec.n))))

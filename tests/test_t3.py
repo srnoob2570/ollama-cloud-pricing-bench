@@ -406,3 +406,87 @@ EXFIL_UDP_TEST = (
 )
 
 HANG_TEST = "import time\n\n\ndef test_hang():\n    while True:\n        time.sleep(0.5)\n"
+
+
+def test_parse_action_extracts_a_json_object_with_trailing_prose():
+    """The docstring's contract: first `{` to last `}` — prose after the object
+    must not invalidate an otherwise parsable action."""
+    from ocharness.agent import parse_action
+
+    accion = parse_action('{"action": "finish", "summary": "done"} - tests pass now.')
+    assert accion == {"action": "finish", "summary": "done"}
+    assert parse_action('prose first {"action": "finish"}') == {"action": "finish"}
+    assert parse_action("no braces at all") is None
+    assert parse_action("{not json") is None
+
+
+def test_hostile_write_ends_the_task_without_losing_the_batch(tmp_path, fake_cli):
+    """A reply whose action cannot be written (a lone surrogate) ends that task
+    at its recorded error step: the billed evidence stays, the batch completes."""
+
+    def hostile(prompt: str) -> str:
+        workload = fixtures_t3.workload_of(prompt)
+        paso = int(_RE_STEP.search(prompt).group(1))
+        if workload == "debugging" and paso == 1:
+            return json.dumps(
+                {"action": "write_file", "path": "trap.py", "content": "bad \ud800 char"}
+            )
+        return correct_reply(prompt)
+
+    fake_cli.reply_for = hostile
+    prepare(tmp_path)
+    code, out, err = run_t3(tmp_path, "--reps", "1", "--model", "glm-5.3-flash")
+    assert code == 0, out or err
+    requests = read_requests(tmp_path)
+    por_carga: dict[str, list[dict]] = {}
+    for r in requests:
+        por_carga.setdefault(r["workload"], []).append(r)
+    hostiles = por_carga["debugging"]
+    assert len(hostiles) == 1  # the narrowed run's single task, with its record
+    for r in hostiles:
+        pasos = r["steps"]
+        assert len(pasos) == 1  # the loop ended at the broken action
+        assert pasos[0]["action"] == "error" and pasos[0]["action_ok"] is False
+        assert "UnicodeEncodeError" in pasos[0]["result"]
+        assert pasos[0]["http"] == 200  # the step was billed: the evidence is kept
+    # the other workloads' tasks are unaffected
+    assert all(r["steps"][-1]["action"] == "finish" for r in por_carga["multi_file"])
+    assert all(r["steps"][-1]["action"] == "finish" for r in por_carga["refactoring"])
+
+
+def test_one_crashed_task_never_discards_its_siblings(tmp_path, monkeypatch):
+    """A task that crashes outside the loop (e.g. its repo cannot be seeded)
+    lands as its own degenerate record; the gather never discards the batch."""
+    import asyncio
+
+    from ocharness import agent
+    from ocharness.fixtures import RequestSpec
+    from ocharness.runner import BatchSpec
+
+    async def _crash(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(agent, "run_task", _crash)
+    spec = BatchSpec(
+        level="T3",
+        batch_id="b",
+        workload="multi_file",
+        model="m",
+        rep=1,
+        k=1,
+        n=2,
+        fixture_hash="h",
+    )
+    registros = asyncio.run(
+        agent.run_tasks(
+            None,  # never consulted: run_task is patched out
+            spec,
+            (RequestSpec(prompt="p", repo=(("x.py", "1"),)),) * 2,
+            "glm-5.3-flash",
+            sandbox_root=tmp_path,
+        )
+    )
+    assert len(registros) == 2
+    for r in registros:
+        assert r["steps"] == [] and r["http"] is None
+        assert "task crashed" in r["err"] and "OSError" in r["err"]

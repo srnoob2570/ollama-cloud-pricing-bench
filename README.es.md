@@ -15,14 +15,17 @@ de predecir"? ¿qué incentivos tiene Ollama y a quién beneficia el cambio?
 > **Estado: metodología v1 consolidada (2026-09-01)** — el mapa wayfinder cerró con las 14
 > decisiones registradas; los benchmarks aún no se han ejecutado (fase posterior, compuerta de
 > gasto en [`docs/methodology-v1.md`](./docs/methodology-v1.md) §11). El harness se está
-> implementando por tickets (Harness 01-06 cerrados: andamio, runner T1 con lotes
+> implementando por tickets (Harness 01-07 cerrados: andamio, runner T1 con lotes
 > bracketeados, preflight de catálogo + checkers T1 reales + `status`, fixtures T2 + las
 > 7 suites estructurales con sus checkers reales, los mini-repos sintéticos T3 con el
-> bucle de agente determinista y los checkers pytest en sandbox, y el workstream de
+> bucle de agente determinista y los checkers pytest en sandbox, el workstream de
 > concurrencia: `bench probe-concurrency` barre k con andanadas cortas para medir el
 > corte real por key y luego ejecuta las celdas k∈{1,4,8} sobre el ancla T1 con el mismo
 > total de tokens por celda — una celda cuyo k planificado supera el corte medido se
-> re-ancla a él, documentado en el dataset).
+> re-ancla a él, documentado en el dataset — y la calibración de caché:
+> `bench calibrate-cache` re-repite un prefijo fijo de ~20K por modelo del slate T2
+> (referencia fría, r=4 intra-lote, re-envíos espaciados) y su hit-rate medido
+> reemplaza el supuesto S1 cuando es concluyente, con S0 como piso).
 
 > **Transparencia:** proyecto generado y mantenido con asistencia de IA
 > ([Claude Code](https://claude.com/claude-code)). No está afiliado ni avalado por Ollama.

@@ -122,6 +122,52 @@ def test_probe_rejects_flags_it_does_not_read(tmp_path, fake_cli):
     assert fake_cli.calls == []  # nothing ran for any refused invocation
 
 
+def test_errored_volley_is_never_a_cut_off_conclusion(tmp_path, fake_cli):
+    """A transient blip that errors the first volley is not a measured sub-floor
+    cut-off: the sweep aborts loudly, nothing is pinned, and a healthy resume
+    re-probes from the floor."""
+    import httpx
+
+    prepare(tmp_path)
+    fake_cli.chat_raise = httpx.ConnectError("network blip")
+    code, _out, err = probe_cli(tmp_path, "--model", MODEL)
+    assert code == 1
+    assert "errored" in err and "Traceback" not in err
+    volleys = probe_lines(tmp_path)
+    assert len(volleys) == 1 and volleys[0]["errored"] == 4  # the raw evidence stays
+    manifiesto = json.loads(
+        (pathlib.Path(tmp_path) / "runs" / "manifest-T1-concurrency.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifiesto["probe"]["status"] == "in_flight"  # no cut_off was persisted
+    assert "cell_plan" not in manifiesto and manifiesto["batches"] == {}
+    # the endpoint recovers: the resume re-probes (a new attempt) and runs the cells
+    fake_cli.chat_raise = None
+    from test_dry_run import run_cli
+
+    assert (
+        run_cli(
+            tmp_path,
+            "dry-run",
+            "--level",
+            "T1",
+            "--reps",
+            "1",
+            "--pricing-dir",
+            str(pathlib.Path(tmp_path) / "pricing"),
+        )[0]
+        == 0
+    )
+    code, out, err = probe_cli(tmp_path, "--model", MODEL)
+    assert code == 0, out or err
+    volleys = probe_lines(tmp_path)
+    assert len(volleys) == 18  # attempt 1's errored volley + the full 4..20 re-probe
+    doc = summary(tmp_path)
+    assert doc["probe"]["cut_off"] == 20
+    assert [c["k"] for c in doc["cells"]] == [1, 4, 8]
+
+
 def test_probe_discovers_the_configured_cut_off_and_cells_re_anchor(tmp_path, fake_cli):
     """limit=6: volleys 4..6 fully accepted, volley 7 rejected once, sweep stops there."""
     with_cutoff(fake_cli, 6)

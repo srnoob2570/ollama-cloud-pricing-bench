@@ -529,6 +529,38 @@ def _ratio_out(rng: random.Random) -> list[tuple[str, tuple[dict, ...]]]:
 
 
 # ---------------------------------------------------------------
+# cache calibration (methodology v1 §7): the fixed ~20K prefix shared with
+# long_context — the register's opening span, truncated before its task block —
+# re-sent r=4 intra-batch and re-sent again in spaced batches (5/30/90 s). The
+# three phase workloads serve the identical prompt (one prefix, one provenance);
+# the phase lives in the workload name so the raw dataset is self-describing.
+
+CACHE_PREFIX_LINES = 550  # the long_context document's opening span (~20K tokens)
+CACHE_N_BY_WORKLOAD = {"cache_cold": 1, "cache_intra": 4, "cache_spaced": 3}
+
+_CACHE_HEADER = (
+    "Cache calibration replay. The register below is the fixed measurement "
+    "prefix; read it and answer the final instruction only."
+)
+_CACHE_TASK = "Reply with the single word: OK."
+
+
+def cache_prefix_prompt() -> str:
+    """The calibration's fixed prefix: the long_context register's opening span
+    (truncated before its task block) under the calibration's own header.
+
+    The bytes are the long_context fixture's own — same generator, same seed
+    lineage — so the measured prefix and the T2 suite share one provenance; the
+    header and the one-word task keep the replay a workload of its own (and
+    `workload_of` unambiguous).
+    """
+    largo, _ = _long_context(_rng("long_context"))[0]
+    cuerpo = largo[: largo.index(f"\n\n{_REGISTER_TASK}")]  # register only: no task block
+    lineas = cuerpo.splitlines()[2:]  # drop the register header + blank: the replay carries its own
+    return f"{_CACHE_HEADER}\n\n" + "\n".join(lineas[:CACHE_PREFIX_LINES]) + f"\n\n{_CACHE_TASK}"
+
+
+# ---------------------------------------------------------------
 # Dispatch
 
 _GENERATORS = {
@@ -567,8 +599,17 @@ def specs(workload: str, n: int) -> list[tuple[str, tuple[dict, ...]]]:
     """The workload's `n` deterministic (prompt, tools) pairs.
 
     Raises ValueError on an unknown workload or a wrong request count: the
-    workload table's shape is part of the fixture contract.
+    workload table's shape is part of the fixture contract. The cache
+    calibration's phase workloads (cache_cold/cache_intra/cache_spaced) serve
+    the one fixed prefix with their own pinned request counts.
     """
+    if workload in CACHE_N_BY_WORKLOAD:
+        if n != CACHE_N_BY_WORKLOAD[workload]:
+            raise ValueError(
+                f"cache workload {workload!r} runs {CACHE_N_BY_WORKLOAD[workload]} "
+                f"request(s) per bracket, not {n}"
+            )
+        return [(cache_prefix_prompt(), ())] * n
     if workload not in _N_BY_WORKLOAD:
         raise ValueError(f"unknown T2 workload: {workload!r}")
     if n != _N_BY_WORKLOAD[workload]:

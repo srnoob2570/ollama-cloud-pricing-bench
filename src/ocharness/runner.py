@@ -29,7 +29,7 @@ import pathlib
 import time
 import uuid
 
-from . import checkers, fixtures, schema
+from . import agent, checkers, fixtures, schema
 from .client import PROTOCOL_VERSION, OllamaCloud
 from .fixtures import FIXTURE_VERSION
 
@@ -216,6 +216,15 @@ def _dpp(pre: dict | None, post: dict | None, window: str) -> float | None:
     return round((despues - antes) * 100, 1)
 
 
+def _sum_steps(pasos: list[dict], campo: str) -> int | None:
+    """A T3 task's token total across its loop steps: None unless EVERY step
+    reports the count (a partial sum would silently understate the billing)."""
+    valores = [p.get(campo) for p in pasos]
+    if not valores or any(not isinstance(v, int) or isinstance(v, bool) for v in valores):
+        return None
+    return sum(valores)
+
+
 def _request_line(
     rec: dict,
     spec: BatchSpec,
@@ -228,6 +237,15 @@ def _request_line(
     checker: str | None,
 ) -> dict:
     done = rec["done"]  # the verbatim done-object; None when the request never completed
+    pasos = rec.get("steps") or []  # a T3 task's loop steps (its raw per-step evidence)
+    if pasos:
+        tok_in = _sum_steps(pasos, "tok_in")
+        tok_out = _sum_steps(pasos, "tok_out")
+        tok_cached = _sum_steps(pasos, "tok_cached")
+    else:
+        tok_in = done.get("prompt_eval_count") if done else None
+        tok_out = done.get("eval_count") if done else None
+        tok_cached = done.get("prompt_eval_cache_hit_count") if done else None
     return {
         "req_id": f"{spec.batch_id}-{index:04d}",
         "batch_id": spec.batch_id,
@@ -242,14 +260,16 @@ def _request_line(
         "t_first_chunk": None if rec["t_first_chunk"] is None else round(rec["t_first_chunk"], 6),
         "t_total": round(rec["t_total"], 6),
         "chunks": rec["chunks"],
-        "tok_in": done.get("prompt_eval_count") if done else None,
-        "tok_out": done.get("eval_count") if done else None,
-        "tok_cached": done.get("prompt_eval_cache_hit_count") if done else None,
+        "tok_in": tok_in,
+        "tok_out": tok_out,
+        "tok_cached": tok_cached,
         "api": done,
         "http": rec["http"],
         "err": rec["err"],
-        "checker": checker,  # real verdict for T1/T2; T3 arrives with ticket Harness 05
+        "checker": checker,
         "tool_calls": rec.get("tool_calls"),
+        "steps": pasos,
+        "sandbox": rec.get("sandbox"),  # the T3 checker's sandbox run; null for T1/T2
         "out_text_hash": (
             hashlib.sha256(rec["content"].encode("utf-8")).hexdigest() if rec["content"] else None
         ),
@@ -351,16 +371,18 @@ async def _run_async(cfg: dict) -> dict:
                 omitidos += 1
                 if estado == "in_flight":
                     en_vuelo += 1
-                    cfg["emit"](
-                        f"resume: batch {spec.batch_id} ({spec.workload}/{spec.model}) is "
-                        "in_flight from an interrupted run - skipped, never silently retried"
-                    )
+                    if cfg["emit"]:
+                        cfg["emit"](
+                            f"resume: batch {spec.batch_id} ({spec.workload}/{spec.model}) is "
+                            "in_flight from an interrupted run - skipped, never silently retried"
+                        )
                 elif estado == "aborted":
                     abortados_previos += 1
-                    cfg["emit"](
-                        f"resume: batch {spec.batch_id} ({spec.workload}/{spec.model}) aborted "
-                        "in an earlier attempt - skipped; its spend is already in the dataset"
-                    )
+                    if cfg["emit"]:
+                        cfg["emit"](
+                            f"resume: batch {spec.batch_id} ({spec.workload}/{spec.model}) aborted "
+                            "in an earlier attempt - skipped; its spend is already in the dataset"
+                        )
                 continue
             manifiesto.set(spec.batch_id, "in_flight", workload=spec.workload, model=spec.model)
 
@@ -386,7 +408,23 @@ async def _run_async(cfg: dict) -> dict:
             nota_checker = ""
             try:
                 specs_requeridos = fixtures.build(level, spec.workload, spec.n)
-                registros = await _burst(client, spec, specs_requeridos, modelo_api)
+                if level == "T3":
+                    # T3's burst IS the agent loop: each task consults the model
+                    # step by step over its own working copy, and every step is
+                    # one billed chat request.
+                    registros = await agent.run_tasks(
+                        client,
+                        spec,
+                        specs_requeridos,
+                        modelo_api,
+                        sandbox_root=base / "sandbox" / manifiesto.run_id,
+                    )
+                    ok = sum(1 for r in registros for p in r["steps"] if p["http"] == 200)
+                    intentados = sum(len(r["steps"]) for r in registros)
+                else:
+                    registros = await _burst(client, spec, specs_requeridos, modelo_api)
+                    ok = sum(1 for r in registros if r["http"] == 200)
+                    intentados = spec.n
                 try:
                     veredictos = checkers.judge(
                         spec.workload, [s.prompt for s in specs_requeridos], registros
@@ -421,13 +459,12 @@ async def _run_async(cfg: dict) -> dict:
                 raise RunnerError(
                     f"batch {spec.batch_id} ({spec.workload}/{spec.model}): {nota}"
                 ) from None
-            ok = sum(1 for r in registros if r["http"] == 200)
             if ok == 0:
                 # A fully rejected burst bills nothing but measures nothing either:
                 # recorded as aborted (the request lines above carry the evidence),
                 # never as a silent done cell.
                 nota = (
-                    f"aborted: 0 of {spec.n} requests accepted - the endpoint rejected "
+                    f"aborted: 0 of {intentados} requests accepted - the endpoint rejected "
                     "every request (model id or catalog drift?); nothing was billed"
                 )
                 manifiesto.set(
@@ -550,7 +587,7 @@ async def _run_async(cfg: dict) -> dict:
             if cfg["emit"]:
                 cfg["emit"](
                     f"[{hechos + omitidos}/{len(specs)}] {spec.workload}/{spec.model} "
-                    f"rep{spec.rep} k{spec.k}: {ok}/{spec.n} ok, "
+                    f"rep{spec.rep} k{spec.k}: {ok}/{intentados} ok, "
                     f"dpp_session={_dpp(pre, post, 'session')}"
                 )
     finally:

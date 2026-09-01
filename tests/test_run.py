@@ -394,27 +394,6 @@ def test_checker_failure_keeps_the_billed_evidence(tmp_path, fake_cli, monkeypat
     assert all(e["status"] == "aborted" for e in manifiesto["batches"].values())
 
 
-def test_run_t3_is_not_implemented_yet(tmp_path, fake_cli):
-    """T2 runs since Harness 04; T3 stays behind its ticket's gate."""
-    prepare(tmp_path)
-    assert (
-        run_cli(
-            tmp_path,
-            "dry-run",
-            "--level",
-            "T3",
-            "--reps",
-            "1",
-            "--pricing-dir",
-            str(tmp_path / "pricing"),
-        )[0]
-        == 0
-    )
-    code, _, err = run_cli(tmp_path, "run", "--level", "T3", "--reps", "1", "--settle-s", "0")
-    assert code == 3 and "Harness 05" in err
-    assert fake_cli.calls == []  # refusing also spends nothing
-
-
 def test_meter_payload_without_request_counts_aborts_cleanly(tmp_path, fake_cli):
     """A meter payload lacking request_count aborts the batch - never a traceback."""
     prepare(tmp_path)

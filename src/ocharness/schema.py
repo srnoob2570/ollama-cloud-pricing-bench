@@ -30,6 +30,9 @@ _REQUEST_SCHEMA: dict[str, tuple] = {
     "err": (str, None),
     "checker": (str, None),
     "tool_calls": (list, None),  # accumulated tool-call frames (T2 tool_calling; [] otherwise)
+    "steps": (list, None),  # per-step records of the T3 agent loop ([] otherwise):
+    # action, outcome, reply, and the tokens each loop step billed.
+    "sandbox": (dict, None),  # the T3 checker's sandbox run (null for T1/T2)
     "out_text_hash": (str, None),
     "fixture_hash": (str,),
     "table_version": (str,),
@@ -46,6 +49,7 @@ _BATCH_SCHEMA: dict[str, tuple] = {
     "k": (int,),
     "n": (int,),
     "settle_s": (float, int),
+    "count_check_s": (float, int, None),  # null on an aborted batch closed without a check
     "medidor_pre": (dict,),
     # medidor_post is null on an aborted batch whose post read itself failed
     "medidor_post": (dict, None),
@@ -68,6 +72,11 @@ def _validate(line: dict, esquema: dict, tipo: str) -> None:
     faltantes = [k for k in esquema if k not in line]
     if faltantes:
         raise SchemaError(f"{tipo} line is missing fields: {', '.join(sorted(faltantes))}")
+    sobrantes = [k for k in line if k not in esquema]
+    if sobrantes:
+        # A field the schema does not declare is a producer bug (a typo writes
+        # the wrong evidence under the wrong name): it fails loudly on write.
+        raise SchemaError(f"{tipo} line carries undeclared fields: {', '.join(sorted(sobrantes))}")
     for campo, permitidos in esquema.items():
         valor = line[campo]
         admite_nulo = None in permitidos

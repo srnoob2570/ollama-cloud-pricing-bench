@@ -35,16 +35,27 @@ T2 (structural suites, same rules):
     the reply, and the prescribed ANSWER marker is present;
   * ratio_out: the complete 10-note structure plus the contracted final word.
 
+T3 (agent loop over the synthetic mini-repos, same rules):
+
+  * multi_file / debugging / refactoring: the working copy's REAL pytest suite,
+    run in the sandbox after the loop — hard timeout, no network, isolated cwd,
+    protected files (the suite and its conftest) restored from the fixture
+    first. The verdict is the exit code; whatever the model claimed on its
+    `finish` action never reaches it. A task whose loop died mid-way is still
+    graded on the repo state it left behind (a fix that already landed passes);
+    a task with no accepted exchange at all has no outcome to grade -> `null`.
+
 An unknown workload raises CheckersError: a level must never run with a silent
 placeholder checker (that placeholder is exactly what this replaces).
 """
 
 from __future__ import annotations
 
+import pathlib
 import re
 import statistics
 
-from . import fixtures, fixtures_t2
+from . import fixtures, fixtures_t2, fixtures_t3, sandbox
 
 # The calibration reproducibility band: |reported - median| <= 2 % of the median.
 CALIBRATION_BAND = 0.02
@@ -303,6 +314,31 @@ def _judge_ratio_out(_prompt: str, rec: dict, _registros: list[dict]) -> bool:
     return bool(tokens) and tokens[-1] == fixtures_t2.RATIO_OUT_TAIL
 
 
+def _make_sandbox_judge(workload: str):
+    """The T3 judge for one workload: the sandbox's pytest run is the verdict.
+
+    The graded copy is rebuilt from the fixture (the suite and pytest's config
+    are never the model's), so a task only passes when the fixture's own tests
+    pass on the delivered source. A sandbox that never reached pytest is a
+    harness misconfiguration, not a model outcome: it aborts the batch loudly
+    with the billed evidence kept as null-verdict lines.
+    """
+
+    def _juez(_prompt: str, rec: dict, _registros: list[dict]) -> bool:
+        resultado = sandbox.run_checker(
+            pathlib.Path(rec["repo_dir"]), fixtures_t3.repo_files(workload)
+        )
+        if not resultado["sandbox_ok"]:
+            raise CheckersError(
+                f"the sandbox never ran pytest (exit {resultado['returncode']}): "
+                f"{resultado['tail'][-200:]}"
+            )
+        rec["sandbox"] = resultado  # the checker's raw evidence, kept on the line
+        return resultado["returncode"] == 0 and not resultado["timed_out"]
+
+    return _juez
+
+
 _JUDGES = {
     "qa_short": _judge_qa_short,
     "calibration": _judge_calibration,
@@ -314,6 +350,9 @@ _JUDGES = {
     "reasoning": _judge_reasoning,
     "ratio_in": _judge_register,
     "ratio_out": _judge_ratio_out,
+    "multi_file": _make_sandbox_judge("multi_file"),
+    "debugging": _make_sandbox_judge("debugging"),
+    "refactoring": _make_sandbox_judge("refactoring"),
 }
 
 
@@ -328,7 +367,15 @@ def judge(workload: str, textos: list[str], registros: list[dict]) -> list[str |
         )
     veredictos: list[str | None] = []
     for texto, rec in zip(textos, registros):
-        if rec["done"] is None:
+        if workload in fixtures_t3.WORKLOADS:
+            # A T3 task is graded on the working copy the loop leaves behind:
+            # any accepted exchange (a step with HTTP 200) means there is a repo
+            # state to grade, even when the loop died mid-way. No accepted
+            # exchange at all means the model never engaged -> null, like T1/T2.
+            if not any(p.get("http") == 200 for p in rec.get("steps") or ()):
+                veredictos.append(None)
+                continue
+        elif rec["done"] is None:
             # No completed response: a transport/HTTP failure stays null (the request
             # is a failed attempt, not a graded outcome); a truncated 200 fails.
             veredictos.append(None if not rec["content"] and rec["http"] != 200 else "fail")

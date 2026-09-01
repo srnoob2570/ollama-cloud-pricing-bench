@@ -139,13 +139,6 @@ def cmd_run(args: argparse.Namespace) -> int:
     except gate.GateClosed as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
-    if args.level not in ("T1", "T2"):
-        print(
-            f"error: run is implemented for T1 and T2 (tickets Harness 02/04); {args.level} "
-            "arrives with ticket Harness 05",
-            file=sys.stderr,
-        )
-        return 3
     if not os.environ.get("OLLAMA_API_KEY"):
         print(
             "error: OLLAMA_API_KEY is not set - the harness reads the key only from the "
@@ -164,11 +157,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     # Preflight before a single request is billed. The mark is consumed first:
     # the require->consume window stays a pair of adjacent filesystem ops (a
     # concurrent run can never double the approved spend), and an aborted
-    # preflight only costs a fresh (free) dry-run.
+    # preflight only costs a fresh (free) dry-run. The check covers the models
+    # THIS run will bill: --model narrowed the slate, so drift in a model the
+    # run never touches must not abort it.
     try:
-        catalogo = preflight.verify(
-            slate_ids=workloads.slate(args.level, tabla), table_models=tabla.models
-        )
+        catalogo = preflight.verify(slate_ids=modelos, table_models=tabla.models)
     except preflight.PreflightError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

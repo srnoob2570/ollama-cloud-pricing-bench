@@ -2,10 +2,10 @@
 
 The fixture is the request sequence itself — identical across models and
 repetitions so every cell serves the same load, and hash-stamped on every raw
-line. T1 generators live here; the 7 structural T2 suites live in
-`fixtures_t2` behind the same `build()` seam. qa_short carries the answer key
-its checker grades against; the other contracts live in the prompts themselves.
-English, synthetic, version-in-repo.
+line. T1 generators live here; the 7 structural T2 suites live in `fixtures_t2`
+and the 3 T3 mini-repos in `fixtures_t3`, all behind the same `build()` seam.
+qa_short carries the answer key its checker grades against; the other contracts
+live in the prompts themselves. English, synthetic, version-in-repo.
 """
 
 from __future__ import annotations
@@ -16,8 +16,9 @@ import hashlib
 import json
 
 # Version of the fixture_hash derivation (sha256 over the JSON of prompts +
-# tool schemas). Any change to the algorithm re-rolls every hash: resumed runs
-# refuse to mix schemes under one run_id (the runner checks the manifest).
+# tool schemas — plus, once T3 exists, the mini-repos' file bytes). Any change
+# to the algorithm re-rolls every hash: resumed runs refuse to mix schemes
+# under one run_id (the runner checks the manifest).
 FIXTURE_VERSION = "2"
 
 CALIBRATION_PROMPT = (
@@ -99,10 +100,15 @@ def _t1_prompts(workload: str, n: int) -> list[str]:
 
 @dataclasses.dataclass(frozen=True)
 class RequestSpec:
-    """One planned request: its prompt plus the tool schemas sent alongside."""
+    """One planned request: its prompt plus the tool schemas sent alongside.
+
+    T3 tasks also carry `repo`: the mini-repo's (relative path, content) pairs,
+    seeded into the task's working copy by the agent loop.
+    """
 
     prompt: str
     tools: tuple[dict, ...] = ()
+    repo: tuple[tuple[str, str], ...] = ()
 
 
 @functools.cache
@@ -117,6 +123,13 @@ def _build_cached(level: str, workload: str, n: int) -> tuple[RequestSpec, ...]:
             RequestSpec(prompt=texto, tools=tuple(herramientas))
             for texto, herramientas in fixtures_t2.specs(workload, n)
         )
+    if level == "T3":
+        from . import fixtures_t3  # lazy: T1/T2 runs never load the T3 generators
+
+        return tuple(
+            RequestSpec(prompt=texto, repo=tuple(archivos))
+            for texto, archivos in fixtures_t3.specs(workload, n)
+        )
     raise ValueError(f"fixture generators for {level!r} arrive with a later Harness ticket")
 
 
@@ -130,9 +143,22 @@ def build(level: str, workload: str, n: int) -> tuple[RequestSpec, ...]:
 
 
 def fixture_hash(specs) -> str:
-    """sha256 over the batch's exact request specs (prompts + tool schemas)."""
+    """sha256 over the batch's exact request specs (prompts + tool schemas +
+    repo files when the workload carries a mini-repo).
+
+    The `repo` key joins the material only when some spec carries one: the
+    T1/T2 hashes stay byte-identical to the pre-T3 dataset.
+    """
+    con_repo = any(s.repo for s in specs)
     material = json.dumps(
-        [{"prompt": s.prompt, "tools": list(s.tools)} for s in specs],
+        [
+            {
+                "prompt": s.prompt,
+                "tools": list(s.tools),
+                **({"repo": [list(par) for par in s.repo]} if con_repo else {}),
+            }
+            for s in specs
+        ],
         sort_keys=True,
         ensure_ascii=False,
     )
@@ -140,6 +166,11 @@ def fixture_hash(specs) -> str:
 
 
 def seed(workload: str, model: str, rep: int, index: int) -> int:
-    """Stable per-request seed derived from the cell coordinates (never random)."""
+    """Stable per-request seed derived from the cell coordinates (never random).
+
+    The value stays inside the signed 63-bit range an API's seed field can
+    decode: a 64-bit unsigned derivation would hand every other request a
+    number the endpoint may reject outright.
+    """
     material = f"{workload}|{model}|{rep}|{index}".encode()
-    return int.from_bytes(hashlib.sha256(material).digest()[:8], "big")
+    return int.from_bytes(hashlib.sha256(material).digest()[:8], "big") % (2**63)

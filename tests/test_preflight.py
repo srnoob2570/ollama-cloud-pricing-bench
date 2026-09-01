@@ -57,14 +57,26 @@ def test_renamed_id_shows_as_missing_plus_new_in_the_diff(tmp_path, fake_cli):
 def test_tagged_catalog_ids_satisfy_the_slate(tmp_path, fake_cli):
     """Catalog ids carry tags the table lacks (medidor-vivo §5): base id matches."""
     catalogo = full_catalog()
-    catalogo.remove("nemotron-3-nano")
     catalogo.remove("gemma4")
-    fake_cli.catalog = sorted(catalogo + ["nemotron-3-nano:30b", "gemma4:31b"])
+    fake_cli.catalog = sorted(catalogo + ["gemma4:31b"])
     prepare(tmp_path)
     code, out, err = run_t1(tmp_path, "--model", "gemma4")
     assert code == 0, out or err
     assert "gemma4 -> gemma4:31b" in err  # the mapping is surfaced, not hidden
-    assert "nemotron-3-nano -> nemotron-3-nano:30b" in err
+
+
+def test_single_model_run_ignores_drift_in_models_it_will_not_bill(tmp_path, fake_cli):
+    """--model narrows the run: a missing slate id the run never bills is not
+    this run's drift - the preflight checks exactly what it will bill."""
+    catalogo = full_catalog()
+    catalogo.remove("kimi-k3")
+    fake_cli.catalog = sorted(catalogo)
+    prepare(tmp_path)
+    code, out, err = run_t1(tmp_path, "--model", "glm-5.3-flash")
+    assert code == 0, out or err  # no abort over a model the run never touches
+    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    snapshot = manifiesto["catalog"][-1]
+    assert list(snapshot["matched"]) == ["glm-5.3-flash"]  # exactly what it bills
 
 
 def test_tag_drift_on_a_tagged_slate_id_is_not_a_match(tmp_path, fake_cli):

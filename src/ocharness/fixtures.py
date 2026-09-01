@@ -1,8 +1,10 @@
 """Deterministic T1 fixtures: seeded prompts, hashed (methodology v1 §5).
 
-T1 carries micro-benchmarks without checkers; the fixture is the prompt sequence
-itself — identical across models and repetitions so every cell serves the same
-load, and hash-stamped on every raw line. English, synthetic, version-in-repo.
+The fixture is the prompt sequence itself — identical across models and
+repetitions so every cell serves the same load, and hash-stamped on every raw
+line. qa_short carries the answer key its checker grades against; the other two
+contracts (the single calibration word, the throughput list) live in the prompts
+themselves. English, synthetic, version-in-repo.
 """
 
 from __future__ import annotations
@@ -42,10 +44,55 @@ THROUGHPUT_PROMPT = (
     "Then, on a new line, write the single word: DONE"
 )
 
+# The exact suffix every qa_short prompt carries (kept here so prompt and checker
+# can never disagree about where the question ends).
+QA_SHORT_SUFFIX = " Answer in one short sentence."
+
+# The answer key the qa_short checker grades against. Each question accepts the
+# equivalent spellings a correct short answer may take (digits or words, common
+# aliases); any one of them suffices. Where the world has two defensible
+# answers (largest desert), both are accepted.
+QA_SHORT_ANSWERS: dict[str, tuple[str, ...]] = {
+    "What is the capital of France?": ("Paris",),
+    "How many days are there in a leap year?": ("366", "three hundred sixty six"),
+    "What is 7 times 8?": ("56", "fifty six"),
+    "Name the largest ocean on Earth.": ("Pacific",),
+    "What is the official language of Brazil?": ("Portuguese",),
+    "Who wrote Romeo and Juliet?": ("Shakespeare", "William Shakespeare"),
+    "What is the boiling point of water in Celsius?": ("100", "one hundred"),
+    "How many continents are there?": ("7", "seven"),
+    "What is the chemical symbol for gold?": ("Au",),
+    "Which planet is closest to the Sun?": ("Mercury",),
+    "What is the square root of 144?": ("12", "twelve"),
+    "Name the longest river in the world.": ("Nile",),
+    "What color results from mixing blue and yellow paint?": ("Green",),
+    "How many minutes are in an hour?": ("60", "sixty"),
+    "What is the tallest mountain above sea level?": ("Everest", "Mount Everest"),
+    "How many sides does a hexagon have?": ("6", "six"),
+    "What is the freezing point of water in Fahrenheit?": ("32", "thirty two"),
+    "Which currency is used in Japan?": ("Yen",),
+    "What is the largest desert in the world?": ("Sahara", "Antarctica"),
+    "How many strings does a standard guitar have?": ("6", "six"),
+}
+
+
+def question_of(prompt: str) -> str:
+    """The QA question a qa_short prompt carries (the fixture suffix stripped).
+
+    Raises on a prompt that is not a known qa_short fixture: a prompt/checker
+    mismatch is a fixture drift, never a model verdict.
+    """
+    if not prompt.endswith(QA_SHORT_SUFFIX):
+        raise ValueError(f"qa_short prompt does not carry the fixture suffix: {prompt!r}")
+    pregunta = prompt[: -len(QA_SHORT_SUFFIX)]
+    if pregunta not in QA_SHORT_ANSWERS:
+        raise ValueError(f"qa_short prompt is not in the answer key: {pregunta!r}")
+    return pregunta
+
 
 def _t1_prompts(workload: str, n: int) -> list[str]:
     if workload == "qa_short":
-        return [f"{q} Answer in one short sentence." for q in QA_SHORT_QUESTIONS[:n]]
+        return [f"{q}{QA_SHORT_SUFFIX}" for q in QA_SHORT_QUESTIONS[:n]]
     if workload == "calibration":
         return [CALIBRATION_PROMPT] * n
     if workload == "throughput":

@@ -14,7 +14,8 @@ The goal is not comparing nominal prices, but answering with data:
 > **Status: methodology v1 consolidated (2026-09-01)** - the wayfinder map closed with all 14
 > decisions recorded; the benchmarks have not run yet (a later phase, spending gate in
 > [`docs/methodology-v1.md`](./docs/methodology-v1.md) §11). The harness (tickets #17-26) is
-> being implemented; Harness 01 (CLI scaffold, spending gate, dry-run, fake) is done.
+> being implemented; Harness 01-03 are done (scaffold, T1 runner with bracketed
+> batches, catalog preflight + real T1 checkers + `status`).
 > [Leer en español →](./README.es.md)
 
 > **Transparency:** this project is generated and maintained with AI assistance

@@ -20,11 +20,16 @@ def fake() -> FakeOllama:
 
 @pytest.fixture()
 def fake_cli(fake, monkeypatch):
-    """The fake wired as the CLI's transport seam (client hits it, never the network)."""
+    """The fake wired as the CLI's transport seam (client hits it, never the network).
+
+    The catalog defaults to the official table's ids so preflight passes; drift
+    tests script `fake.catalog` explicitly.
+    """
     monkeypatch.setenv("OLLAMA_API_KEY", "test-key")
     from ocharness import client
 
     monkeypatch.setattr(client, "default_transport", lambda: fake.transport())
+    fake.catalog = sorted(standard_table())
     return fake
 
 

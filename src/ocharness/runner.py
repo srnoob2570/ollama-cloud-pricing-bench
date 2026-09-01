@@ -15,8 +15,8 @@ Per batch = one (workload, model, rep, k) cell:
 `batch_id` is deterministic from (run, level, workload, model, rep, k); the
 per-level manifest records in_flight/done/aborted. A re-run resumes done batches
 and **skips** aborted/in_flight ones with a loud report — an aborted batch is
-never silently retried (its requests are already billed; recovery is an explicit
-operator decision once `resume`/`status` exist).
+never silently retried (its requests are already billed; `bench status` shows
+the state and recovery stays an explicit operator decision).
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ import pathlib
 import time
 import uuid
 
-from . import fixtures, schema
+from . import checkers, fixtures, schema
 from .client import PROTOCOL_VERSION, OllamaCloud
 
 
@@ -119,20 +119,21 @@ class Manifest:
         table_version: str,
         k: int,
         planned: int,
+        catalog: dict | None = None,
     ) -> Manifest:
-        m = cls(
-            ruta,
-            {
-                "run_id": run_id,
-                "level": level,
-                "table_version": table_version,
-                "protocol_version": PROTOCOL_VERSION,
-                "k": k,
-                "started_at": round(time.time(), 3),
-                "planned": planned,
-                "batches": {},
-            },
-        )
+        doc = {
+            "run_id": run_id,
+            "level": level,
+            "table_version": table_version,
+            "protocol_version": PROTOCOL_VERSION,
+            "k": k,
+            "started_at": round(time.time(), 3),
+            "planned": planned,
+            "batches": {},
+        }
+        if catalog is not None:  # the /v1/models snapshot this run was prefighted against
+            doc["catalog"] = {"captured_at": round(time.time(), 3), **catalog}
+        m = cls(ruta, doc)
         m.save()
         return m
 
@@ -186,6 +187,7 @@ def _request_line(
     index: int,
     seed_value: int,
     table_version: str,
+    checker: str | None,
 ) -> dict:
     done = rec["done"]  # the verbatim done-object; None when the request never completed
     return {
@@ -208,7 +210,7 @@ def _request_line(
         "api": done,
         "http": rec["http"],
         "err": rec["err"],
-        "checker": None,  # T1 carries no checker; T2/T3 fill it (later tickets)
+        "checker": checker,  # real verdict for T1; T2/T3 arrive with later tickets
         "out_text_hash": (
             hashlib.sha256(rec["content"].encode("utf-8")).hexdigest() if rec["content"] else None
         ),
@@ -267,6 +269,7 @@ async def _run_async(cfg: dict) -> dict:
         table_version=cfg["table_version"],
         k=cfg["k"],
         planned=len(specs),
+        catalog=cfg.get("catalog"),
     )
     rutas_requests = runs_dir / f"requests-{manifiesto.run_id}.jsonl"
     ruta_batches = batches_dir / f"batches-{manifiesto.run_id}.jsonl"
@@ -301,6 +304,7 @@ async def _run_async(cfg: dict) -> dict:
             try:
                 textos = fixtures.prompts(level, spec.workload, spec.n)
                 registros = await _burst(client, spec, textos)
+                veredictos = checkers.judge(spec.workload, textos, registros)
                 for idx, rec in enumerate(registros):
                     linea = _request_line(
                         rec,
@@ -310,6 +314,7 @@ async def _run_async(cfg: dict) -> dict:
                         index=idx,
                         seed_value=fixtures.seed(spec.workload, spec.model, spec.rep, idx),
                         table_version=cfg["table_version"],
+                        checker=veredictos[idx],
                     )
                     schema.validate_request_line(linea)
                     _append_jsonl(rutas_requests, linea)
@@ -527,6 +532,7 @@ def run_level(
     k: int,
     settle_s: float,
     table_version: str,
+    catalog: dict | None = None,
     transport=None,
     emit=print,
 ) -> dict:
@@ -541,6 +547,7 @@ def run_level(
         "k": k,
         "settle_s": settle_s,
         "table_version": table_version,
+        "catalog": catalog,
         "transport": transport,
         "emit": emit,
     }

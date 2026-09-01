@@ -15,7 +15,8 @@ de predecir"? ¿qué incentivos tiene Ollama y a quién beneficia el cambio?
 > **Estado: metodología v1 consolidada (2026-09-01)** — el mapa wayfinder cerró con las 14
 > decisiones registradas; los benchmarks aún no se han ejecutado (fase posterior, compuerta de
 > gasto en [`docs/methodology-v1.md`](./docs/methodology-v1.md) §11). El harness se está
-> implementando por tickets (Harness 01 cerrado).
+> implementando por tickets (Harness 01-03 cerrados: andamio, runner T1 con lotes
+> bracketeados, preflight de catálogo + checkers T1 reales + `status`).
 
 > **Transparencia:** proyecto generado y mantenido con asistencia de IA
 > ([Claude Code](https://claude.com/claude-code)). No está afiliado ni avalado por Ollama.

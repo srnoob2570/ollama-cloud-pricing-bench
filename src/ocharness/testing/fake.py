@@ -4,11 +4,16 @@ Reproduces the behavior MEASURED during the live meter verification
 (docs/research/medidor-vivo-2026-08-31.md): usage in 0.001 ticks with read lag,
 instant and exact per-model request_count, and scriptable errors. Injected as an
 httpx transport; never touches the network.
+
+Scripting hooks (default behavior unless overridden): `reply_for` maps a chat
+prompt to its reply text, `counts_for` maps (prompt, seed) to the done-object's
+reported token counts, `catalog` is what /v1/models serves.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 import httpx
 
@@ -34,6 +39,13 @@ class FakeOllama:
         self.chat_latency = 0.0  # seconds the chat handler holds (for overlap tests)
         self._counts: dict[str, int] = {}
         self._last_billed: str | None = None
+        # Scriptable transcripts: the default reply is the "world" canned stream
+        # with the (26, 12) token counts, exactly as the first tests pinned them.
+        self.reply_for: Callable[[str], str] | None = None
+        self.counts_for: Callable[[str, int | None], tuple[int, int]] | None = None
+        # What /v1/models serves (list of ids); empty = an unscripted catalog.
+        self.catalog: list[str] = []
+        self.catalog_http = 200  # status the models endpoint answers with
 
     # ---- scripting ----
     def program_consumption(self, ticks: int) -> None:
@@ -67,6 +79,16 @@ class FakeOllama:
             if "authorization" not in request.headers:
                 return httpx.Response(401, json={"error": "invalid credentials"})
             return httpx.Response(200, json=self._read_meter())
+        if request.url.path == "/v1/models":
+            if "authorization" not in request.headers:
+                return httpx.Response(401, json={"error": "invalid credentials"})
+            return httpx.Response(
+                self.catalog_http,
+                json={
+                    "object": "list",
+                    "data": [{"id": m, "object": "model"} for m in self.catalog],
+                },
+            )
         if request.url.path == "/api/chat":
             if "authorization" not in request.headers:
                 return httpx.Response(401, json={"error": "invalid credentials"})
@@ -96,11 +118,35 @@ class FakeOllama:
         if self.ticks_per_request:
             self.program_consumption(ticks=self.ticks_per_request)
 
+    def _reply_text(self, body: dict) -> str:
+        if self.reply_for is not None:
+            mensajes = body.get("messages") or [{}]
+            return self.reply_for(mensajes[0].get("content") or "")
+        return "world"
+
+    def _token_counts(self, body: dict) -> tuple[int, int]:
+        if self.counts_for is not None:
+            mensajes = body.get("messages") or [{}]
+            prompt = mensajes[0].get("content") or ""
+            semilla = (body.get("options") or {}).get("seed")
+            return self.counts_for(prompt, semilla)
+        return (26, 12)
+
     def _chat_chunks(self, body: dict) -> bytes:
         modelo = body.get("model", "glm-5.3-flash")
+        texto = self._reply_text(body)
+        mitad = -(-len(texto) // 2)  # ceil: "world" -> "wor" + "ld", as always scripted
         parciales = [
-            {"model": modelo, "message": {"role": "assistant", "content": "wor"}, "done": False},
-            {"model": modelo, "message": {"role": "assistant", "content": "ld"}, "done": False},
+            {
+                "model": modelo,
+                "message": {"role": "assistant", "content": texto[:mitad]},
+                "done": False,
+            },
+            {
+                "model": modelo,
+                "message": {"role": "assistant", "content": texto[mitad:]},
+                "done": False,
+            },
             self._done(body),
         ]
         if self.truncate_stream:
@@ -108,15 +154,16 @@ class FakeOllama:
         return b"".join((json.dumps(c) + "\n").encode() for c in parciales)
 
     def _done(self, body: dict) -> dict:
+        prompt_eval, eval_ = self._token_counts(body)
         return {
             "model": body.get("model", "glm-5.3-flash"),
             "done": True,
             "done_reason": "stop",
             "total_duration": 500_000_000,
             "load_duration": None,
-            "prompt_eval_count": 26,
+            "prompt_eval_count": prompt_eval,
             "prompt_eval_duration": None,
-            "eval_count": 12,
+            "eval_count": eval_,
             "eval_duration": None,
         }
 

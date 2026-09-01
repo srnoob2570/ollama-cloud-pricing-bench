@@ -37,6 +37,11 @@ def run_t1(tmp_path, *extra) -> tuple[int, str, str]:
     return run_cli(tmp_path, "run", "--level", "T1", "--settle-s", "0", *extra)
 
 
+def consumer_calls(fake) -> list[dict]:
+    """Calls that consume or meter quota (preflight's /v1/models read excluded)."""
+    return [c for c in fake.calls if c["path"] != "/v1/models"]
+
+
 def read_jsonl(tmp_path, dirname, pattern) -> list[dict]:
     files = sorted((tmp_path / dirname).glob(pattern))
     assert len(files) == 1, f"expected exactly one {pattern} in {dirname}/"
@@ -137,7 +142,9 @@ def test_raw_lines_honor_the_agreed_schema(tmp_path, fake_cli):
     assert ok["api"]["done"] is True and ok["api"]["done_reason"] == "stop"  # verbatim
     assert ok["t_first_chunk"] is not None and ok["chunks"] == 3
     assert ok["k"] == 1 and ok["rep"] == 1 and isinstance(ok["seed"], int)
-    assert ok["checker"] is None  # T1 micro-benchmarks carry no checker
+    # Harness 03: the checker is real. The default fake replies "world", which
+    # matches no answer-key entry -> the graded verdict is fail, not a placeholder.
+    assert ok["checker"] == "fail"
     assert ok["out_text_hash"] == hashlib.sha256(b"world").hexdigest()
     assert ok["table_version"] == "2026-08-31" and ok["protocol_version"]
     batch = batches[0]
@@ -150,7 +157,7 @@ def test_raw_lines_honor_the_agreed_schema(tmp_path, fake_cli):
 def test_resume_skips_completed_batches_without_new_requests(tmp_path, fake_cli):
     pricing = prepare(tmp_path)
     assert run_t1(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")[0] == 0
-    antes = len(fake_cli.calls)
+    antes = len(consumer_calls(fake_cli))
     # A new invocation needs a fresh dry-run (the gate); the manifest carries the run.
     assert (
         run_cli(tmp_path, "dry-run", "--level", "T1", "--reps", "1", "--pricing-dir", pricing)[0]
@@ -158,13 +165,13 @@ def test_resume_skips_completed_batches_without_new_requests(tmp_path, fake_cli)
     )
     code, out, err = run_t1(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")
     assert code == 0, out or err
-    assert len(fake_cli.calls) == antes  # zero new requests: every batch was done
+    assert len(consumer_calls(fake_cli)) == antes  # zero new requests: every batch was done
 
 
 def test_in_flight_batch_is_never_silently_retried(tmp_path, fake_cli):
     pricing = prepare(tmp_path)
     assert run_t1(tmp_path, "--model", "glm-5.3-flash", "--rep", "1", "--reps", "1")[0] == 0
-    antes = len(fake_cli.calls)
+    antes = len(consumer_calls(fake_cli))
     ruta = tmp_path / "runs" / "manifest-T1.json"
     manifiesto = json.loads(ruta.read_text(encoding="utf-8"))
     victima = next(iter(manifiesto["batches"]))
@@ -176,7 +183,7 @@ def test_in_flight_batch_is_never_silently_retried(tmp_path, fake_cli):
     )
     code, out, err = run_t1(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")
     assert code == 0, out or err
-    assert len(fake_cli.calls) == antes  # skipped, never re-requested
+    assert len(consumer_calls(fake_cli)) == antes  # skipped, never re-requested
     assert "in_flight" in (out + err)  # ...and reported, not silent
 
 

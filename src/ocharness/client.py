@@ -53,6 +53,15 @@ class OllamaCloud:
             payload = None
         return r.status_code, payload
 
+    async def models(self) -> tuple[int, dict | None]:
+        """GET /v1/models -> (http status, payload or None): the preflight catalog."""
+        r = await self._client.get("/v1/models")
+        try:
+            payload = r.json()
+        except ValueError:
+            payload = None
+        return r.status_code, payload
+
     async def chat(self, *, model: str, prompt: str, seed: int | None = None) -> dict:
         """One streaming chat request with chunk timestamps; errors are data, not raises."""
         payload = {

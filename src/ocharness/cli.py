@@ -10,7 +10,7 @@ import os
 import pathlib
 import sys
 
-from . import analyze, calibration, concurrency, cost, gate, predict, preflight, workloads
+from . import analyze, calibration, concurrency, cost, gate, predict, preflight, releases, workloads
 from .pricing import PriceTable, TableError
 from .runner import Manifest, RunnerError, run_level
 
@@ -23,6 +23,7 @@ SUBCOMMANDS = (
     "analyze",
     "status",
     "resume",
+    "release",
 )
 
 
@@ -123,7 +124,7 @@ def _preflight_line(catalogo: preflight.CatalogReport) -> str:
 
 def cmd_run(args: argparse.Namespace) -> int:
     if args.level is None:
-        print("error: run requires --level", file=sys.stderr)
+        print(f"error: {args.comando} requires --level", file=sys.stderr)
         return 2
     try:
         tabla = PriceTable.load(_pricing_dir(args), args.table_version)
@@ -190,7 +191,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(json.dumps(resumen, ensure_ascii=False, indent=2))
     else:
         print(
-            f"run {resumen['run_id']}: {resumen['batches_done']}/{resumen['batches_planned']} "
+            f"{args.comando} {resumen['run_id']}: {resumen['batches_done']}/{resumen['batches_planned']} "
             f"batches done, {resumen['batches_skipped_done']} skipped, "
             f"{resumen['batches_in_flight_skipped']} in_flight skipped, "
             f"{resumen['batches_aborted_skipped']} aborted skipped, "
@@ -775,12 +776,83 @@ def cmd_predict(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_analyze(doc: dict, carpeta: pathlib.Path, etiqueta: str | None = None) -> None:
+    """The analyze human report: the baseline params, the verdict census, the bundle."""
+    bp = doc["base_params"]
+    encabezado = "analysis" + (f" - {etiqueta}" if etiqueta else "")
+    print(
+        f"{encabezado}: table={bp['table_version']} ancla={bp['ancla']:g} "
+        f"({bp['usd_per_pp']:.6f} USD/pp) s={bp['s']} | raw: "
+        f"{doc['raw']['request_lines']} requests, {doc['raw']['batch_lines']} batches"
+    )
+    conteo = {"legacy": 0, "new": 0, "tie": 0, "no data": 0}
+    for c in doc["cells"]:
+        conteo[c["verdict"]["s0"]] += 1
+    print(
+        f"  cells: {len(doc['cells'])} | s0 verdicts: {conteo['legacy']} legacy, "
+        f"{conteo['new']} new, {conteo['tie']} tie, {conteo['no data']} no data"
+    )
+    if doc["paper_discounts"]:
+        print("  unmaterialized paper discounts: " + ", ".join(doc["paper_discounts"]))
+    print(f"  bundle: {carpeta} (analysis.json, dashboard.html, pngs/)")
+
+
+def _analyze_release(args: argparse.Namespace) -> int:
+    """`analyze --release <tag>`: fetch the dataset release, verify it against
+    its metadata's sha256 map, and analyze it with the release's OWN table —
+    the raw<->code<->table pairing, consumed. Still offline against the API:
+    only `gh` moves bytes."""
+    base = _base(args)
+
+    def _emit(msg: str) -> None:
+        print(msg, file=sys.stderr, flush=True)
+
+    if args.pricing_dir != "pricing":
+        _emit("note: --pricing-dir is ignored with --release (the release carries its own table)")
+    try:
+        repo = args.repo or releases.infer_repo(base)
+        # fetch() refuses (before touching the previous fetch) when the
+        # requested table version, level or model is not what the release
+        # carries: a silent empty analysis would read as a verdict of none.
+        stage, _meta = releases.fetch(
+            base,
+            tag=args.release,
+            repo=repo,
+            table_version=args.table_version,
+            level=args.level,
+            model=args.model,
+        )
+        tabla = releases.release_table(stage)
+    except (releases.ReleaseError, TableError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    try:
+        doc = analyze.build(
+            stage,
+            tabla=tabla,
+            ancla=args.ancla,
+            s=args.s,
+            level=args.level,
+            model=args.model,
+        )
+    except analyze.AnalyzeError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    carpeta = analyze.write_bundle(stage, doc, emit=_emit)
+    if args.json:
+        print(json.dumps(doc, ensure_ascii=False, indent=2))
+        return 0
+    _print_analyze(doc, carpeta, etiqueta=f"release {args.release}")
+    return 0
+
+
 def cmd_analyze(args: argparse.Namespace) -> int:
     """The re-run without re-measuring: the whole bundle from raw alone.
 
     The API key is never needed here and never read: analyze works offline on
     the immutable datasets, so a price change (or a new anchor or S1 guess)
-    re-derives every derived number with zero quota spent.
+    re-derives every derived number with zero quota spent. `--release <tag>`
+    points it at a fetched dataset release instead of the local raw data.
     """
     if math.isnan(args.s) or not (0.0 <= args.s <= 1.0):
         print(f"error: --s must be in [0, 1] (S1 cache hit-rate); got {args.s!r}", file=sys.stderr)
@@ -788,6 +860,8 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     if not math.isfinite(args.ancla) or args.ancla <= 0:
         print(f"error: --ancla must be a finite number > 0; got {args.ancla!r}", file=sys.stderr)
         return 2
+    if args.release is not None:
+        return _analyze_release(args)
     try:
         tabla = PriceTable.load(_pricing_dir(args), args.table_version)
     except TableError as e:
@@ -811,22 +885,50 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(doc, ensure_ascii=False, indent=2))
         return 0
-    bp = doc["base_params"]
+    _print_analyze(doc, carpeta)
+    return 0
+
+
+def cmd_release(args: argparse.Namespace) -> int:
+    """Dataset sync to GitHub releases (methodology v1 §4): one release per
+    run, pairing raw<->code<->table. It never touches the ollama API and never
+    reads the key for anything but the credential scrub."""
+    if not args.run:
+        print("error: release requires --run <run_id>", file=sys.stderr)
+        return 2
+    base = _base(args)
+    try:
+        repo = args.repo or releases.infer_repo(base)
+        paquete = releases.package(base, run_id=args.run, pricing_dir=_pricing_dir(args))
+        releases.publish(base, paquete, repo=repo)
+    except releases.ReleaseError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "tag": paquete.tag,
+                    "repo": repo,
+                    "tar": str(paquete.tar),
+                    "metadata_asset": str(paquete.metadata),
+                    "metadata": paquete.doc,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    meta = paquete.doc
+    print(f"released {paquete.tag} -> {repo}")
     print(
-        f"analysis: table={bp['table_version']} ancla={bp['ancla']:g} "
-        f"({bp['usd_per_pp']:.6f} USD/pp) s={bp['s']} | raw: "
-        f"{doc['raw']['request_lines']} requests, {doc['raw']['batch_lines']} batches"
+        f"  run {paquete.run_id} (level {meta.get('level')}) - table {meta['table_version']}, "
+        f"protocol {meta['protocol_version']}, {meta['counts']['request_lines']} request lines, "
+        f"{meta['counts']['batch_lines']} batch lines"
     )
-    conteo = {"legacy": 0, "new": 0, "tie": 0, "no data": 0}
-    for c in doc["cells"]:
-        conteo[c["verdict"]["s0"]] += 1
-    print(
-        f"  cells: {len(doc['cells'])} | s0 verdicts: {conteo['legacy']} legacy, "
-        f"{conteo['new']} new, {conteo['tie']} tie, {conteo['no data']} no data"
-    )
-    if doc["paper_discounts"]:
-        print("  unmaterialized paper discounts: " + ", ".join(doc["paper_discounts"]))
-    print(f"  bundle: {carpeta} (analysis.json, dashboard.html, pngs/)")
+    commit = (meta.get("code") or {}).get("git_commit")
+    print(f"  code: {commit or 'unknown commit (not a git checkout)'}")
+    print(f"  assets: {paquete.tar.name}, {paquete.metadata.name}")
     return 0
 
 
@@ -838,6 +940,11 @@ DESPACHO = {
     "predict": cmd_predict,
     "analyze": cmd_analyze,
     "status": cmd_status,
+    # resume IS run against the run's manifest: batch_id is deterministic from
+    # (run, level, workload, model, rep, k), so a re-invocation resumes done
+    # batches without re-billing and skips aborted/in_flight ones loudly.
+    "resume": cmd_run,
+    "release": cmd_release,
 }
 
 
@@ -853,13 +960,20 @@ def build_parser() -> argparse.ArgumentParser:
             # status also reports the workstreams' manifests (e.g. T1-concurrency):
             # free-form, filtered by manifest file name
             parser.add_argument("--level", default=None)
+        elif nombre == "release":
+            parser.add_argument("--run", required=True, help="the run_id to package and publish")
+            parser.add_argument(
+                "--repo", default=None, help="owner/name (default: git remote origin)"
+            )
         else:
             parser.add_argument("--level", choices=["T1", "T2", "T3"], default=None)
-        parser.add_argument("--model", default=None)
+        if nombre != "release":  # release never touches a model
+            parser.add_argument("--model", default=None)
         parser.add_argument(
             "--pricing-dir", default="pricing", help="tables directory (relative to --base)"
         )
-        parser.add_argument("--table-version", default=None)
+        if nombre != "release":  # the run's manifest binds its table; no override
+            parser.add_argument("--table-version", default=None)
         if nombre == "probe-concurrency":
             # The probe reads none of --s/--reps/--rep/--k: a silent no-op flag
             # would read as a tuned cell (--k) or an approved density (--reps)
@@ -900,6 +1014,19 @@ def build_parser() -> argparse.ArgumentParser:
             # bundle.
             parser.add_argument("--ancla", type=float, default=100.0, help="P_LEGADO USD/month")
             parser.add_argument("--s", type=float, default=0.5, help="S1 cache hit-rate (0..1)")
+            parser.add_argument(
+                "--release",
+                default=None,
+                metavar="TAG",
+                help=(
+                    "analyze a dataset release's fetched copy (releases/<tag>/) instead "
+                    "of the local raw data; its own table prices it, so --pricing-dir "
+                    "is ignored and --table-version must match the release's"
+                ),
+            )
+            parser.add_argument(
+                "--repo", default=None, help="owner/name for --release (default: git remote origin)"
+            )
         elif nombre == "predict":
             # predict's own knobs: --phase (the flow's mode), the cell's
             # --workload, the estimate's native units (--pp weekly pp,
@@ -918,14 +1045,20 @@ def build_parser() -> argparse.ArgumentParser:
             parser.add_argument("--notes", default="", help="the estimator's reasoning (locked)")
             parser.add_argument("--report", action="store_true", help="write the MAPE report")
             parser.add_argument("--s", type=float, default=0.5, help="S1 cache hit-rate (0..1)")
-        else:
+        elif nombre in ("dry-run", "run", "resume", "status"):
+            # status reads none of these but accepted them before Harness 10;
+            # dropping them would break every script or habit mirroring `run`'s
+            # invocation shape (a silent interface change, not a cleanup).
             parser.add_argument("--s", type=float, default=0.5, help="S1 cache hit-rate (0..1)")
             parser.add_argument("--reps", type=int, default=5)
             parser.add_argument("--rep", type=int, default=None, help="run only this repetition")
             parser.add_argument("--k", type=int, default=1, help="concurrency of the burst")
-        parser.add_argument(
-            "--settle-s", type=float, default=90.0, help="settle between read and read (s)"
-        )
+        # release takes none of the above: it never tunes a spend or an
+        # assumption. Its knobs are --run and --repo only.
+        if nombre != "release":  # release never reads a settle (it never brackets)
+            parser.add_argument(
+                "--settle-s", type=float, default=90.0, help="settle between read and read (s)"
+            )
         parser.add_argument("--json", action="store_true")
         parser.set_defaults(func=DESPACHO.get(nombre, _stub(nombre)))
     return p

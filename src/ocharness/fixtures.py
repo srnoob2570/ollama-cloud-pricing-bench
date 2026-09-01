@@ -129,11 +129,6 @@ def build(level: str, workload: str, n: int) -> tuple[RequestSpec, ...]:
     return _build_cached(level, workload, n)
 
 
-def prompts(level: str, workload: str, n: int) -> list[str]:
-    """The `n` deterministic prompts of one batch (workload, single model)."""
-    return [spec.prompt for spec in build(level, workload, n)]
-
-
 def fixture_hash(specs) -> str:
     """sha256 over the batch's exact request specs (prompts + tool schemas)."""
     material = json.dumps(

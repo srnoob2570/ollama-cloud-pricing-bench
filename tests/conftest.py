@@ -18,6 +18,16 @@ def fake() -> FakeOllama:
     return FakeOllama()
 
 
+@pytest.fixture()
+def fake_cli(fake, monkeypatch):
+    """The fake wired as the CLI's transport seam (client hits it, never the network)."""
+    monkeypatch.setenv("OLLAMA_API_KEY", "test-key")
+    from ocharness import client
+
+    monkeypatch.setattr(client, "default_transport", lambda: fake.transport())
+    return fake
+
+
 def write_table(pricing_dir: pathlib.Path, version: str, models: dict) -> pathlib.Path:
     """Writes a test versioned price table; returns the DIRECTORY."""
     pricing_dir.mkdir(parents=True, exist_ok=True)

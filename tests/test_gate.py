@@ -67,12 +67,28 @@ def test_table_change_invalidates_the_gate(tmp_path):
         require_dry_run(tmp_path, "T1", table_version="2026-09-01")
 
 
-def test_one_dry_run_enables_one_run(tmp_path):
+def test_one_dry_run_enables_one_run(tmp_path, fake_cli):
     pricing = _pricing(tmp_path)
     assert (
-        main(["--base", str(tmp_path), "dry-run", "--level", "T1", "--pricing-dir", pricing]) == 0
+        main(
+            [
+                "--base",
+                str(tmp_path),
+                "dry-run",
+                "--level",
+                "T1",
+                "--reps",
+                "1",
+                "--pricing-dir",
+                pricing,
+            ]
+        )
+        == 0
     )
-    assert main(["--base", str(tmp_path), "run", "--level", "T1"]) == 3  # passes and consumes
+    assert (
+        main(["--base", str(tmp_path), "run", "--level", "T1", "--reps", "1", "--settle-s", "0"])
+        == 0
+    )  # passes and consumes
     assert main(["--base", str(tmp_path), "run", "--level", "T1"]) == 2  # mark consumed
 
 

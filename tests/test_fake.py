@@ -136,6 +136,32 @@ def test_one_shot_failure_scriptable(fake):
     assert (r1.status_code, r2.status_code, r3.status_code) == (200, 500, 200)
 
 
+def test_chat_bills_ticks_per_accepted_request(fake):
+    """Every ACCEPTED request bills; 500/429 do not (the harness's no-retry contract)."""
+    fake.ticks_per_request = 2
+    auth = {"Authorization": "Bearer test-key"}
+    with httpx.Client(transport=fake.transport()) as client:
+        client.post("https://fake.ollama/api/chat", json={"model": "glm-5.3-flash"}, headers=auth)
+        fake.fails_on = 2
+        client.post("https://fake.ollama/api/chat", json={"model": "glm-5.3-flash"}, headers=auth)
+        for _ in range(fake.lag_reads):
+            client.get("https://fake.ollama/api/usage", headers=auth)
+        r = client.get("https://fake.ollama/api/usage", headers=auth).json()
+    assert round(r["limits"]["session"]["usage"] - 0.234, 3) == 0.002  # only the accepted one
+
+
+def test_undercount_drops_requests_from_the_reported_counts(fake):
+    """Scriptable meter undercount: the runner's count check must abort on it."""
+    auth = {"Authorization": "Bearer test-key"}
+    with httpx.Client(transport=fake.transport()) as client:
+        client.post("https://fake.ollama/api/chat", json={"model": "glm-5.3-flash"}, headers=auth)
+        client.post("https://fake.ollama/api/chat", json={"model": "glm-5.3-flash"}, headers=auth)
+        fake.undercount_by = 1
+        r = client.get("https://fake.ollama/api/usage", headers=auth).json()
+    counts = {m["name"]: m["request_count"] for m in r["limits"]["session"]["models"]}
+    assert counts["glm-5.3-flash"] == 1  # two billed, one dropped from the report
+
+
 def test_standard_table_covers_the_full_catalog():
     assert len(standard_table()) == 19
     assert standard_table()["kimi-k3"]["output"] == 15.0

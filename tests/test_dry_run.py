@@ -64,12 +64,13 @@ def test_run_refuses_without_dry_run(tmp_path, fake, capsys):
     assert fake.calls == []  # refusing also spends nothing
 
 
-def test_gate_passes_after_prior_dry_run(tmp_path, fake, capsys):
+def test_gate_passes_then_run_demands_the_api_key(tmp_path, fake, capsys, monkeypatch):
+    monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
     pricing = with_pricing(tmp_path)
     assert run_cli(tmp_path, "dry-run", "--level", "T1", "--pricing-dir", pricing)[0] == 0
     codigo, _, errores = run_cli(tmp_path, "run", "--level", "T1")
-    assert codigo != 0  # passes the gate; run is a stub until Harness 02
-    assert "not implemented" in errores
+    assert codigo == 2  # the gate opened; the run stops at the missing key, mark intact
+    assert "OLLAMA_API_KEY" in errores
 
 
 def test_missing_table_gives_clean_error(tmp_path, fake, capsys):

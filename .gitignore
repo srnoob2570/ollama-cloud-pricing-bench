@@ -1,0 +1,14 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Estado en-runtime del harness (las marcas de compuerta no son datasets;
+# los datasets crudos se publican como releases, ticket Harness 10)
+runs/
+
+# Credenciales — jamás en el repo
+.env*
+*.key

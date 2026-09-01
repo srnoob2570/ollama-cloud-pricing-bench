@@ -86,6 +86,23 @@ _PROBE_SCHEMA: dict[str, tuple] = {
 }
 
 
+# The predictability flow's estimate line (predictability/estimates-phase*.jsonl):
+# the owner's locked estimate for one cell — timestamped and hash-stamped before
+# the run that validates it (methodology v1 §8; the hash covers the whole line
+# minus itself, so an edited registry never verifies again).
+_ESTIMATE_SCHEMA: dict[str, tuple] = {
+    "cell": (dict,),  # {"workload": str, "model": str}
+    "phase": (str,),  # "blind" | "informed"
+    "estimated_pp": (float, int),  # the legacy side's native unit (weekly pp)
+    "estimated_usd": (float, int),  # the new side's native unit (dollars of credits)
+    "notes": (str,),
+    "timestamp": (float, int),
+    "table_version": (str,),  # the table the estimator was shown
+    "evidence": (dict,),  # raw-line counts at record time (blindness provenance)
+    "hash": (str,),
+}
+
+
 class SchemaError(Exception):
     """A raw line does not honor the agreed dataset schema."""
 
@@ -126,3 +143,10 @@ def validate_batch_line(line: dict) -> None:
 
 def validate_probe_line(line: dict) -> None:
     _validate(line, _PROBE_SCHEMA, "probe")
+
+
+def validate_estimate_line(line: dict) -> None:
+    _validate(line, _ESTIMATE_SCHEMA, "estimate")
+    celda = line["cell"]
+    if not isinstance(celda.get("workload"), str) or not isinstance(celda.get("model"), str):
+        raise SchemaError("estimate line: 'cell' must carry 'workload' and 'model' strings")

@@ -10,7 +10,7 @@ import os
 import pathlib
 import sys
 
-from . import analyze, calibration, concurrency, cost, gate, preflight, workloads
+from . import analyze, calibration, concurrency, cost, gate, predict, preflight, workloads
 from .pricing import PriceTable, TableError
 from .runner import Manifest, RunnerError, run_level
 
@@ -19,6 +19,7 @@ SUBCOMMANDS = (
     "run",
     "probe-concurrency",
     "calibrate-cache",
+    "predict",
     "analyze",
     "status",
     "resume",
@@ -587,6 +588,193 @@ def cmd_calibrate_cache(args: argparse.Namespace) -> int:
     return 0
 
 
+def _pct(valor: float | None) -> str:
+    """A MAPE for the human report (a ratio rendered as a percentage)."""
+    return "n/a" if valor is None else f"{valor * 100:.1f}%"
+
+
+def _ci_pct(ci: list | None) -> str:
+    if not ci:
+        return "n/a"
+    return f"[{_pct(ci[0])} - {_pct(ci[1])}]"
+
+
+def _print_predict_report(doc: dict, ruta: pathlib.Path) -> int:
+    """The report's human summary: the two phases' comparative verdicts + findings."""
+    print(
+        f"predictability report (table {doc['table_version']}): "
+        f"{doc['estimates']['blind']} blind, {doc['estimates']['informed']} informed estimates"
+    )
+    for fase in ("blind", "informed"):
+        agregado = doc["aggregate"].get(fase)
+        if agregado is None:
+            print(f"  {fase}: no estimates recorded")
+            continue
+        legado, nuevo = agregado["mape_legacy"], agregado["mape_new"]
+        print(
+            f"  {fase}: MAPE legacy {_pct(legado['mape'] if legado else None)} "
+            f"{_ci_pct(legado['ci'] if legado else None)} | "
+            f"MAPE new {_pct(nuevo['mape'] if nuevo else None)} "
+            f"{_ci_pct(nuevo['ci'] if nuevo else None)} "
+            f"({nuevo['cells'] if nuevo else 0} cells)"
+        )
+        print(
+            f"    paired delta (legacy - new): {_pct(agregado['delta_mape'])} "
+            f"{_ci_pct(agregado['ci_delta'])} ({agregado['paired_cells']} paired cells) - "
+            f"{agregado['verdict']}; Ollama's claim: {agregado['ollama_claim']}"
+        )
+    hallazgos = doc["findings"]
+    if hallazgos["sub_resolution_legacy"]:
+        print(
+            "  sub-resolution (excluded from the legacy side): "
+            + "; ".join(hallazgos["sub_resolution_legacy"])
+        )
+    if hallazgos["pending_blind"]:
+        print(
+            f"  pending blind estimates: {len(hallazgos['pending_blind'])} cells "
+            "(the flow refuses them once the cell has run)"
+        )
+    print(f"  report: {ruta}")
+    return 0
+
+
+def cmd_predict(args: argparse.Namespace) -> int:
+    """The predictability HITL flow (methodology v1 §8). It never touches the API:
+    the estimates are recorded from the owner's judgment against the fixture's
+    public description and the rate table, and the report re-derives everything
+    offline from the raw datasets, like analyze."""
+    if args.level is not None:
+        print("error: predict runs on the 12-cell grid; it takes no --level", file=sys.stderr)
+        return 2
+    grabando = args.phase is not None
+    if args.report and grabando:
+        print("error: give either --report or --phase, not both", file=sys.stderr)
+        return 2
+    grabadoras = (args.workload, args.model, args.pp, args.usd, args.notes)
+    if not (args.report or grabando) and any(v not in (None, "") for v in grabadoras):
+        print(
+            "error: --workload/--model/--pp/--usd/--notes record an estimate; "
+            "give --phase blind|informed (or --report)",
+            file=sys.stderr,
+        )
+        return 2
+    if args.report and any(v not in (None, "") for v in grabadoras):
+        print(
+            "error: the report covers the whole grid; it takes no recording flags "
+            "(--workload/--model/--pp/--usd/--notes)",
+            file=sys.stderr,
+        )
+        return 2
+    if grabando and (args.workload is None or args.model is None):
+        print(
+            "error: recording an estimate needs both --workload and --model (the cell)",
+            file=sys.stderr,
+        )
+        return 2
+    if grabando and (args.pp is None or args.usd is None):
+        print(
+            "error: recording an estimate needs both --pp (weekly pp, legacy) and "
+            "--usd (dollars of credits, new) - the estimate is in native units",
+            file=sys.stderr,
+        )
+        return 2
+    if math.isnan(args.s) or not (0.0 <= args.s <= 1.0):
+        print(f"error: --s must be in [0, 1] (S1 cache hit-rate); got {args.s!r}", file=sys.stderr)
+        return 2
+    try:
+        tabla = PriceTable.load(_pricing_dir(args), args.table_version)
+    except TableError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+    if args.report:
+        try:
+            doc = predict.build_report(_base(args), tabla=tabla, s=args.s)
+        except (predict.PredictError, analyze.AnalyzeError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        ruta = pathlib.Path(_base(args)) / predict.PREDICT_DIR / "report.json"
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        ruta.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+        if args.json:
+            print(json.dumps(doc, ensure_ascii=False, indent=2))
+            return 0
+        return _print_predict_report(doc, ruta)
+
+    if grabando:
+        try:
+            linea = predict.record_estimate(
+                _base(args),
+                phase=args.phase,
+                workload=args.workload,
+                model=args.model,
+                estimated_pp=args.pp,
+                estimated_usd=args.usd,
+                notes=args.notes,
+                tabla=tabla,
+            )
+        except predict.PredictError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        if args.json:
+            print(json.dumps(linea, ensure_ascii=False, indent=2))
+            return 0
+        print(
+            f"locked: {linea['phase']} estimate for {args.workload}/{args.model} - "
+            f"{linea['estimated_pp']:g} pp weekly, ${linea['estimated_usd']:g} credits "
+            f"(table {linea['table_version']}, hash {str(linea['hash'])[:12]})"
+        )
+        return 0
+
+    # The walk-through: the grid's state plus the pending cells' public brief.
+    try:
+        doc = predict.plan_doc(_base(args), tabla)
+    except predict.PredictError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    except TableError as e:  # a table that no longer prices a grid model: clean refusal
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(doc, ensure_ascii=False, indent=2))
+        return 0
+    counts = doc["counts"]
+    print(
+        f"predictability: table {doc['table_version']} - {counts['cells']} cells, "
+        f"{counts['blind']} blind, {counts['informed']} informed"
+    )
+    for fila in doc["cells"]:
+        etiqueta = f"{fila['workload']}/{fila['model']} [{fila['level']}]"
+        if fila["blind"] is None:
+            b = fila["brief"]
+            print(f"  {etiqueta} - PENDING blind: {b['description']}")
+            print(
+                f"      {b['requests_per_run']} requests/run, ~{b['tokens_in_per_request']:,} in / "
+                f"~{b['tokens_out_per_request']:,} out per request | rates: input "
+                f"${b['rates']['input']:g}, cached ${b['rates']['cached_input']:g}, output "
+                f"${b['rates']['output']:g} per {b['rates']['per']:,}"
+                + (" (cache discount)" if b["cache_discount"] else " (cached=input)")
+            )
+            print(
+                f"      estimate: bench predict --phase blind --workload {fila['workload']} "
+                f"--model {fila['model']} --pp <weekly pp> --usd <credits $>"
+            )
+        elif fila["informed"] is None:
+            c = fila["blind"]
+            print(
+                f"  {etiqueta} - blind locked ({c['estimated_pp']:g} pp, ${c['estimated_usd']:g}); "
+                "PENDING informed"
+            )
+        else:
+            c = fila["informed"]
+            print(
+                f"  {etiqueta} - done (blind {fila['blind']['estimated_pp']:g} pp / "
+                f"${fila['blind']['estimated_usd']:g}, informed {c['estimated_pp']:g} pp / "
+                f"${c['estimated_usd']:g})"
+            )
+    return 0
+
+
 def cmd_analyze(args: argparse.Namespace) -> int:
     """The re-run without re-measuring: the whole bundle from raw alone.
 
@@ -647,6 +835,7 @@ DESPACHO = {
     "run": cmd_run,
     "probe-concurrency": cmd_probe_concurrency,
     "calibrate-cache": cmd_calibrate_cache,
+    "predict": cmd_predict,
     "analyze": cmd_analyze,
     "status": cmd_status,
 }
@@ -710,6 +899,24 @@ def build_parser() -> argparse.ArgumentParser:
             # here would read as a re-measured density instead of a re-priced
             # bundle.
             parser.add_argument("--ancla", type=float, default=100.0, help="P_LEGADO USD/month")
+            parser.add_argument("--s", type=float, default=0.5, help="S1 cache hit-rate (0..1)")
+        elif nombre == "predict":
+            # predict's own knobs: --phase (the flow's mode), the cell's
+            # --workload, the estimate's native units (--pp weekly pp,
+            # --usd credits) and --report. No --ancla: the MAPEs are
+            # native-unit by decision, so the anchor never enters them; no
+            # --reps/--rep/--k: predict never spends anything.
+            parser.add_argument(
+                "--phase",
+                choices=[predict.BLIND, predict.INFORMED],
+                default=None,
+                help="record an estimate: blind (before the cell runs) or informed (after)",
+            )
+            parser.add_argument("--workload", default=None, help="the cell's workload")
+            parser.add_argument("--pp", type=float, default=None, help="estimated weekly pp")
+            parser.add_argument("--usd", type=float, default=None, help="estimated credits ($)")
+            parser.add_argument("--notes", default="", help="the estimator's reasoning (locked)")
+            parser.add_argument("--report", action="store_true", help="write the MAPE report")
             parser.add_argument("--s", type=float, default=0.5, help="S1 cache hit-rate (0..1)")
         else:
             parser.add_argument("--s", type=float, default=0.5, help="S1 cache hit-rate (0..1)")

@@ -131,8 +131,8 @@ class Manifest:
             "planned": planned,
             "batches": {},
         }
-        if catalog is not None:  # the /v1/models snapshot this run was prefighted against
-            doc["catalog"] = {"captured_at": round(time.time(), 3), **catalog}
+        if catalog is not None:  # /v1/models snapshots, one per attempt (provenance)
+            doc["catalog"] = [{"captured_at": round(time.time(), 3), **catalog}]
         m = cls(ruta, doc)
         m.save()
         return m
@@ -225,14 +225,21 @@ def _append_jsonl(ruta: pathlib.Path, line: dict) -> None:
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
-async def _burst(client: OllamaCloud, spec: BatchSpec, textos: list[str]) -> list[dict]:
-    """The batch's N requests, k-concurrent; no warmup, no auto-retry."""
+async def _burst(
+    client: OllamaCloud, spec: BatchSpec, textos: list[str], modelo_api: str
+) -> list[dict]:
+    """The batch's N requests, k-concurrent; no warmup, no auto-retry.
+
+    `modelo_api` is the id actually sent (the preflight's catalog match — the
+    live catalog tags ids the price table lists untagged); the dataset records
+    the slate id, the manifest's catalog history carries the mapping.
+    """
     semaforo = asyncio.Semaphore(spec.k)
 
     async def _one(i: int) -> dict:
         seed_value = fixtures.seed(spec.workload, spec.model, spec.rep, i)
         async with semaforo:
-            return await client.chat(model=spec.model, prompt=textos[i], seed=seed_value)
+            return await client.chat(model=modelo_api, prompt=textos[i], seed=seed_value)
 
     return list(await asyncio.gather(*(_one(i) for i in range(spec.n))))
 
@@ -271,6 +278,15 @@ async def _run_async(cfg: dict) -> dict:
         planned=len(specs),
         catalog=cfg.get("catalog"),
     )
+    if existente:
+        # A wider resume grows the run's scope; planned never shrinks (max union).
+        planned_previo = manifiesto.doc.get("planned")
+        if not isinstance(planned_previo, int) or len(specs) > planned_previo:
+            manifiesto.doc["planned"] = len(specs)
+        # The preflight of THIS attempt joins the catalog snapshot history.
+        if cfg.get("catalog"):
+            manifiesto.doc.setdefault("catalog", []).append(cfg["catalog"])
+        manifiesto.save()
     rutas_requests = runs_dir / f"requests-{manifiesto.run_id}.jsonl"
     ruta_batches = batches_dir / f"batches-{manifiesto.run_id}.jsonl"
 
@@ -296,15 +312,40 @@ async def _run_async(cfg: dict) -> dict:
                 continue
             manifiesto.set(spec.batch_id, "in_flight", workload=spec.workload, model=spec.model)
 
-            status, pre = await client.usage()
+            try:
+                status, pre = await client.usage()
+            except Exception as e:  # noqa: BLE001 - a meter failure aborts cleanly, loudly
+                manifiesto.set(
+                    spec.batch_id,
+                    "aborted",
+                    workload=spec.workload,
+                    model=spec.model,
+                    note=f"aborted: meter read failed ({type(e).__name__}: {e}) before the batch",
+                )
+                raise RunnerError(
+                    f"batch {spec.batch_id}: meter read failed ({type(e).__name__}: {e}) "
+                    "before the batch"
+                ) from None
             if status != 200 or pre is None:
                 manifiesto.set(spec.batch_id, "aborted")
                 raise RunnerError(f"meter read failed (HTTP {status}) before batch {spec.batch_id}")
 
+            modelo_api = cfg.get("model_map", {}).get(spec.model, spec.model)
+            nota_checker = ""
             try:
                 textos = fixtures.prompts(level, spec.workload, spec.n)
-                registros = await _burst(client, spec, textos)
-                veredictos = checkers.judge(spec.workload, textos, registros)
+                registros = await _burst(client, spec, textos, modelo_api)
+                try:
+                    veredictos = checkers.judge(spec.workload, textos, registros)
+                except checkers.CheckersError as e:
+                    # Checker drift is a harness bug, not a model outcome: the billed
+                    # requests are still logged (null verdicts) and the batch aborts.
+                    nota_checker = f"aborted: checker failure - {type(e).__name__}: {e}"
+                    if cfg["emit"]:
+                        cfg["emit"](
+                            f"batch {spec.batch_id} ({spec.workload}/{spec.model}): {nota_checker}"
+                        )
+                    veredictos = [None] * len(registros)
                 for idx, rec in enumerate(registros):
                     linea = _request_line(
                         rec,
@@ -327,22 +368,47 @@ async def _run_async(cfg: dict) -> dict:
                     f"batch {spec.batch_id} ({spec.workload}/{spec.model}): {nota}"
                 ) from None
             ok = sum(1 for r in registros if r["http"] == 200)
+            if ok == 0:
+                # A fully rejected burst bills nothing but measures nothing either:
+                # recorded as aborted (the request lines above carry the evidence),
+                # never as a silent done cell.
+                nota = (
+                    f"aborted: 0 of {spec.n} requests accepted - the endpoint rejected "
+                    "every request (model id or catalog drift?); nothing was billed"
+                )
+                manifiesto.set(
+                    spec.batch_id,
+                    "aborted",
+                    workload=spec.workload,
+                    model=spec.model,
+                    rep=spec.rep,
+                    note=nota,
+                )
+                raise RunnerError(f"batch {spec.batch_id} ({spec.workload}/{spec.model}): {nota}")
             t_burst_end = time.time()
 
             # Per-model count check, issued immediately after the burst (<= ~2 s):
             # the counter is instant and exact, so a dropped request aborts here.
-            status_c, leido = await client.usage()
+            error_lectura = ""
+            try:
+                status_c, leido = await client.usage()
+            except Exception as e:  # noqa: BLE001 - the bracket still closes below
+                status_c, leido, error_lectura = 0, None, f"{type(e).__name__}: {e}"
             count_check_s = round(time.time() - t_burst_end, 3)
             counts_pre = _counts(pre)
             counts_check = _counts(leido)
-            contados = counts_check.get(spec.model, 0) - counts_pre.get(spec.model, 0)
+            contados = counts_check.get(modelo_api, 0) - counts_pre.get(modelo_api, 0)
 
             post: dict | None = None
             if status_c == 200 and contados == ok:
                 await asyncio.sleep(cfg["settle_s"])  # >= 90 s: the % lags ~60-90 s
-                status_p, post = await client.usage()
+                try:
+                    status_p, post = await client.usage()
+                except Exception as e:  # noqa: BLE001 - the bracket still closes below
+                    status_p, post, error_lectura = 0, None, f"{type(e).__name__}: {e}"
                 if status_p != 200 or post is None:
-                    nota = f"aborted: meter read failed (HTTP {status_p}) after the settle"
+                    causa = error_lectura or f"HTTP {status_p}"
+                    nota = f"aborted: meter read failed ({causa}) after the settle"
                     _close_batch(
                         ruta_batches,
                         spec,
@@ -360,6 +426,10 @@ async def _run_async(cfg: dict) -> dict:
                         "aborted",
                         workload=spec.workload,
                         model=spec.model,
+                        rep=spec.rep,
+                        dpp_session=None,
+                        dpp_weekly=None,
+                        requests_ok=ok,
                         note=nota,
                     )
                     raise RunnerError(
@@ -370,14 +440,23 @@ async def _run_async(cfg: dict) -> dict:
                 # Close the bracket even on abort: the burst's real consumption belongs
                 # to THIS batch, not to the next run's pre-read.
                 nota = (
-                    f"aborted: request_count check failed - expected {ok} accepted "
-                    f"requests, meter counted {contados} (delta {contados - ok})"
+                    f"aborted: meter read failed ({error_lectura}) at the count check"
+                    if error_lectura
+                    else (
+                        f"aborted: request_count check failed - expected {ok} accepted "
+                        f"requests, meter counted {contados} (delta {contados - ok})"
+                    )
                 )
                 await asyncio.sleep(cfg["settle_s"])
-                status_p, post = await client.usage()
+                try:
+                    status_p, post = await client.usage()
+                except Exception:  # noqa: BLE001 - an aborted batch may lack a post
+                    status_p, post = 0, None
                 if status_p != 200:
                     post = None  # an aborted batch may carry a null post payload
 
+            if nota_checker:
+                nota = f"{nota_checker}; {nota}" if nota else nota_checker
             linea = _batch_line(
                 spec,
                 manifiesto=manifiesto,
@@ -533,6 +612,7 @@ def run_level(
     settle_s: float,
     table_version: str,
     catalog: dict | None = None,
+    model_map: dict[str, str] | None = None,
     transport=None,
     emit=print,
 ) -> dict:
@@ -548,6 +628,7 @@ def run_level(
         "settle_s": settle_s,
         "table_version": table_version,
         "catalog": catalog,
+        "model_map": model_map or {},
         "transport": transport,
         "emit": emit,
     }

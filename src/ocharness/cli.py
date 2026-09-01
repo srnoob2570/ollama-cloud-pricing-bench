@@ -154,8 +154,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     def _emit(msg: str) -> None:
         print(msg, flush=True, file=sys.stderr)  # progress is log noise: stdout stays parseable
 
-    # Preflight before consuming the mark: a catalog drift aborts with a diff and
-    # the dry-run approval stays valid — an aborted preflight is not a run.
+    gate.consume(_base(args), args.level)  # one dry-run enables exactly one run
+
+    # Preflight before a single request is billed. The mark is consumed first:
+    # the require->consume window stays a pair of adjacent filesystem ops (a
+    # concurrent run can never double the approved spend), and an aborted
+    # preflight only costs a fresh (free) dry-run.
     try:
         catalogo = preflight.verify(
             slate_ids=workloads.slate(args.level, tabla), table_models=tabla.models
@@ -164,7 +168,6 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 1
     _emit(_preflight_line(catalogo))
-    gate.consume(_base(args), args.level)  # one dry-run enables exactly one run
 
     try:
         resumen = run_level(
@@ -177,7 +180,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             k=args.k,
             settle_s=args.settle_s,
             table_version=tabla.table_version,
-            catalog={"http": catalogo.http, "ids": catalogo.ids},
+            catalog={"http": catalogo.http, "ids": catalogo.ids, "matched": catalogo.matched},
+            model_map={s: c for s, c in catalogo.matched.items() if c != s},
             emit=_emit,
         )
     except RunnerError as e:
@@ -204,8 +208,19 @@ def _stub(nombre: str):
     return _cmd
 
 
+def _numero(valor) -> float | None:
+    """A real number from a manifest (bools are not numbers here), or None."""
+    if isinstance(valor, bool) or not isinstance(valor, (int, float)):
+        return None
+    return valor
+
+
 def _status_doc(nivel: str, manifiesto: Manifest) -> dict:
-    """The status of one level's run, computed from its manifest (no API)."""
+    """The status of one level's run, computed from its manifest (no API).
+
+    The manifest is run state that a recovering operator may have hand-edited:
+    malformed entries render as unknown/corrupt instead of crashing the report.
+    """
     doc = manifiesto.doc
     counts: dict[str, int] = {"done": 0, "aborted": 0, "in_flight": 0}
     dpp_session = dpp_weekly = 0.0
@@ -213,19 +228,21 @@ def _status_doc(nivel: str, manifiesto: Manifest) -> dict:
     requests_ok = 0
     batches = []
     for batch_id, entrada in doc.get("batches", {}).items():
-        estado = entrada.get("status", "?")
+        if not isinstance(entrada, dict):
+            entrada = {"status": "corrupt"}
+        estado = str(entrada.get("status", "?"))
         counts[estado] = counts.get(estado, 0) + 1
-        dpp_s = entrada.get("dpp_session")
-        dpp_w = entrada.get("dpp_weekly")
+        dpp_s = _numero(entrada.get("dpp_session"))
+        dpp_w = _numero(entrada.get("dpp_weekly"))
         if estado in ("done", "aborted"):
             cerrados += 1
-        if isinstance(dpp_s, (int, float)) and isinstance(dpp_w, (int, float)):
+        if dpp_s is not None and dpp_w is not None:
             dpp_session += dpp_s
             dpp_weekly += dpp_w
             con_bracket += 1
-        ok = entrada.get("requests_ok")
-        if isinstance(ok, int):
-            requests_ok += ok
+        ok = _numero(entrada.get("requests_ok"))
+        if ok is not None:
+            requests_ok += int(ok)
         batches.append(
             {
                 "batch_id": batch_id,
@@ -235,11 +252,14 @@ def _status_doc(nivel: str, manifiesto: Manifest) -> dict:
                 "rep": entrada.get("rep"),
                 "dpp_session": dpp_s,
                 "dpp_weekly": dpp_w,
-                "requests_ok": ok,
+                "requests_ok": None if ok is None else int(ok),
                 "note": entrada.get("note"),
             }
         )
-    planned = int(doc.get("planned", len(batches)))
+    try:
+        planned = int(doc.get("planned", len(batches)))
+    except (TypeError, ValueError):
+        planned = len(batches)
     counts["pending"] = max(0, planned - len(batches))
     return {
         "level": doc.get("level", nivel),
@@ -278,14 +298,20 @@ def _print_status(doc: dict) -> None:
         f"({quota['batches_with_bracket']}/{quota['closed_batches']} closed batches with a "
         "readable bracket)"
     )
-    if counts["aborted"] or counts["in_flight"]:
-        print(f"  attention: {counts['aborted']} aborted, {counts['in_flight']} in_flight")
+    atencion = {
+        s: c
+        for s, c in counts.items()
+        if s not in ("done", "pending") and c  # aborted, in_flight, corrupt, anything unknown
+    }
+    if atencion:
+        print("  attention: " + ", ".join(f"{c} {s}" for s, c in sorted(atencion.items())))
         for b in doc["batches"]:
-            if b["status"] in ("aborted", "in_flight"):
-                coordenada = f"{b['workload']}/{b['model']}"
-                if b.get("rep"):
-                    coordenada += f" rep{b['rep']}"
-                print(f"    {b['status']}: {coordenada} [{b['batch_id'][:12]}]")
+            if b["status"] in ("done",):
+                continue
+            coordenada = f"{b['workload'] or '?'}/{b['model'] or '?'}"
+            if b.get("rep"):
+                coordenada += f" rep{b['rep']}"
+            print(f"    {b['status']}: {coordenada} [{str(b['batch_id'])[:12]}]")
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -303,8 +329,7 @@ def cmd_status(args: argparse.Namespace) -> int:
             else []
         )
     if not niveles:
-        print("no run manifests: nothing has run yet")
-        return 0
+        print("no run manifests: nothing has run yet", file=sys.stderr)
     resumen = []
     for nivel in niveles:
         try:
@@ -313,7 +338,8 @@ def cmd_status(args: argparse.Namespace) -> int:
             print(f"error: {e}", file=sys.stderr)
             return 1
         if manifiesto is None:
-            print(f"{nivel}: no run manifest - nothing has run for this level")
+            # stderr: stdout carries only the report, so --json stays parseable
+            print(f"{nivel}: no run manifest - nothing has run for this level", file=sys.stderr)
             continue
         resumen.append(_status_doc(nivel, manifiesto))
     if args.json:

@@ -44,23 +44,21 @@ class OllamaCloud:
             timeout=httpx.Timeout(10.0, read=600.0),
         )
 
-    async def usage(self) -> tuple[int, dict | None]:
-        """GET /api/usage -> (http status, full raw payload or None)."""
-        r = await self._client.get("/api/usage")
+    async def _get_json(self, path: str) -> tuple[int, dict | None]:
+        r = await self._client.get(path)
         try:
             payload = r.json()
         except ValueError:
             payload = None
         return r.status_code, payload
 
+    async def usage(self) -> tuple[int, dict | None]:
+        """GET /api/usage -> (http status, full raw payload or None)."""
+        return await self._get_json("/api/usage")
+
     async def models(self) -> tuple[int, dict | None]:
         """GET /v1/models -> (http status, payload or None): the preflight catalog."""
-        r = await self._client.get("/v1/models")
-        try:
-            payload = r.json()
-        except ValueError:
-            payload = None
-        return r.status_code, payload
+        return await self._get_json("/v1/models")
 
     async def chat(self, *, model: str, prompt: str, seed: int | None = None) -> dict:
         """One streaming chat request with chunk timestamps; errors are data, not raises."""

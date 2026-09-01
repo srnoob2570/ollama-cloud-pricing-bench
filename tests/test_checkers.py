@@ -134,3 +134,79 @@ def test_errored_request_carries_no_verdict(tmp_path, fake_cli):
     assert len(fallidas) == 1
     assert fallidas[0]["checker"] is None and fallidas[0]["err"]
     assert sum(1 for r in requests if r["checker"] is None) == 1
+
+
+def test_throughput_passes_with_prose_around_the_complete_list(tmp_path, fake_cli):
+    """Digits in the preamble ("from 1 to 150") do not break a complete structure."""
+    fake_cli.reply_for = lambda prompt: (
+        "Sure! Here are the numbers from 1 to 150:\n"
+        + ", ".join(str(i) for i in range(1, 151))
+        + "\nDONE"
+        if prompt == THROUGHPUT_PROMPT
+        else correct_transcript(prompt)
+    )
+    prepare(tmp_path)
+    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    assert code == 0, out or err
+    throughput = next(r for r in read_requests(tmp_path) if r["workload"] == "throughput")
+    assert throughput["checker"] == "pass"
+
+
+def test_qa_short_accepts_natural_phrasing_between_answer_tokens(tmp_path, fake_cli):
+    """'three hundred AND sixty-six' is the accepted spelling, with gaps allowed."""
+    pregunta = "How many days are there in a leap year?"
+    fake_cli.reply_for = lambda prompt: (
+        "There are three hundred and sixty-six days in a leap year."
+        if prompt.startswith(pregunta)
+        else correct_transcript(prompt)
+    )
+    prepare(tmp_path)
+    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    assert code == 0, out or err
+    requests = read_requests(tmp_path)
+    assert all(r["checker"] == "pass" for r in requests), [
+        (r["workload"], r["checker"]) for r in requests if r["checker"] != "pass"
+    ]
+
+
+def test_qa_short_accepts_a_unicode_reply(tmp_path, fake_cli):
+    pregunta = "What is the official language of Brazil?"
+    fake_cli.reply_for = lambda prompt: (
+        "A língua oficial do Brasil é o Português."
+        if prompt.startswith(pregunta)
+        else correct_transcript(prompt)
+    )
+    prepare(tmp_path)
+    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    assert code == 0, out or err
+    requests = read_requests(tmp_path)
+    assert all(r["checker"] == "pass" for r in requests)
+
+
+def test_qa_short_rejects_negated_answers(tmp_path, fake_cli):
+    """'is not Paris' is a wrong answer, however much it contains the right token."""
+    fake_cli.reply_for = lambda prompt: (
+        "The capital of France is not Paris, it is a myth."
+        if prompt.startswith("What is the capital of France?")
+        else "It is definitely not 56."
+        if prompt.startswith("What is 7 times 8?")
+        else correct_transcript(prompt)
+    )
+    prepare(tmp_path)
+    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    assert code == 0, out or err
+    requests = read_requests(tmp_path)
+    fallidos = {r["req_id"][-4:]: r["checker"] for r in requests if r["checker"] == "fail"}
+    assert set(fallidos) == {"0000", "0002"}  # the negated France and 7x8 answers only
+
+
+def test_calibration_rejects_zero_token_reports(tmp_path, fake_cli):
+    """A zero-token report is not a measurement: it can never be the median reference."""
+    fake_cli.reply_for = lambda prompt: "OK" if prompt == CALIBRATION_PROMPT else "world"
+    fake_cli.counts_for = lambda _prompt, _seed: (0, 0)
+    prepare(tmp_path)
+    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    assert code == 0, out or err
+    calibraciones = [r for r in read_requests(tmp_path) if r["workload"] == "calibration"]
+    assert len(calibraciones) == 3
+    assert all(r["checker"] == "fail" for r in calibraciones)

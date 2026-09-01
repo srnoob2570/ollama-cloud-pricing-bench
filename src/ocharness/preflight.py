@@ -58,7 +58,10 @@ def _drift_message(reporte: CatalogReport, slate_count: int) -> str:
         lineas.append(
             "catalog ids not in the price table (rename candidates?): " + ", ".join(reporte.unseen)
         )
-    lineas.append("aborted before any request; the dry-run mark was left intact")
+    lineas.append(
+        "aborted before any request; the dry-run mark was consumed - re-run "
+        "`bench dry-run --level <L>` before the next attempt"
+    )
     return "\n".join(lineas)
 
 
@@ -69,13 +72,13 @@ async def _verify_async(
     if status != 200 or not isinstance(payload, dict):
         raise PreflightError(
             f"preflight: catalog read failed (HTTP {status}) - aborting before any request; "
-            "the dry-run mark was left intact"
+            "the dry-run mark was consumed - re-run `bench dry-run --level <L>`"
         )
     data = payload.get("data")
     if not isinstance(data, list):
         raise PreflightError(
             "preflight: /v1/models returned an unrecognized payload - aborting before "
-            "any request; the dry-run mark was left intact"
+            "any request; the dry-run mark was consumed - re-run `bench dry-run --level <L>`"
         )
     catalog_ids = sorted(
         entrada["id"]
@@ -104,7 +107,9 @@ def verify(*, slate_ids: list[str], table_models) -> CatalogReport:
     """Reads the live catalog and validates the slate against it.
 
     Owns its client (and its one event loop, closed on the way out); the API key
-    comes from the environment exactly as everywhere else in the harness.
+    comes from the environment exactly as everywhere else in the harness. Any
+    transport failure (unreachable host, timeout, a misconfigured base URL)
+    surfaces as a clean PreflightError, never a traceback.
     """
 
     async def _corrida() -> CatalogReport:
@@ -114,4 +119,12 @@ def verify(*, slate_ids: list[str], table_models) -> CatalogReport:
         finally:
             await cliente.aclose()
 
-    return asyncio.run(_corrida())
+    try:
+        return asyncio.run(_corrida())
+    except PreflightError:
+        raise
+    except Exception as e:  # noqa: BLE001 - a transport failure is a clean abort, not a crash
+        raise PreflightError(
+            f"preflight: catalog read failed ({type(e).__name__}: {e}) - aborting before "
+            "any request; the dry-run mark was consumed - re-run `bench dry-run --level <L>`"
+        ) from None

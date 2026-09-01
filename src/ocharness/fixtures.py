@@ -48,18 +48,19 @@ THROUGHPUT_PROMPT = (
 # can never disagree about where the question ends).
 QA_SHORT_SUFFIX = " Answer in one short sentence."
 
-# The answer key the qa_short checker grades against. Each question accepts the
-# equivalent spellings a correct short answer may take (digits or words, common
-# aliases); any one of them suffices. Where the world has two defensible
-# answers (largest desert), both are accepted.
+# The answer key the qa_short checker grades against — the single source for
+# both the questions (QA_SHORT_QUESTIONS derives from it) and the accepted
+# spellings a correct short answer may take (digits or words, common aliases,
+# the natural-language equivalents of the study's own context). Any one of them
+# suffices; where the world has two defensible answers, both are accepted.
 QA_SHORT_ANSWERS: dict[str, tuple[str, ...]] = {
     "What is the capital of France?": ("Paris",),
     "How many days are there in a leap year?": ("366", "three hundred sixty six"),
     "What is 7 times 8?": ("56", "fifty six"),
     "Name the largest ocean on Earth.": ("Pacific",),
-    "What is the official language of Brazil?": ("Portuguese",),
+    "What is the official language of Brazil?": ("Portuguese", "português"),
     "Who wrote Romeo and Juliet?": ("Shakespeare", "William Shakespeare"),
-    "What is the boiling point of water in Celsius?": ("100", "one hundred"),
+    "What is the boiling point of water in Celsius?": ("100", "one hundred", "a hundred"),
     "How many continents are there?": ("7", "seven"),
     "What is the chemical symbol for gold?": ("Au",),
     "Which planet is closest to the Sun?": ("Mercury",),
@@ -74,6 +75,9 @@ QA_SHORT_ANSWERS: dict[str, tuple[str, ...]] = {
     "What is the largest desert in the world?": ("Sahara", "Antarctica"),
     "How many strings does a standard guitar have?": ("6", "six"),
 }
+
+# 20 short Q&A prompts (qa_short fires exactly one per request, in order).
+QA_SHORT_QUESTIONS: tuple[str, ...] = tuple(QA_SHORT_ANSWERS)
 
 
 def question_of(prompt: str) -> str:

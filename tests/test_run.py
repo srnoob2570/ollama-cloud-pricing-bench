@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 
+import httpx
 from test_dry_run import run_cli, with_pricing
 
 from ocharness.schema import validate_batch_line, validate_request_line
@@ -289,6 +290,108 @@ def test_recorded_seed_is_transmitted_to_the_api(tmp_path, fake_cli):
     semillas = {c["body"]["options"]["seed"] for c in chats}
     requests = read_jsonl(tmp_path, "runs", "requests-*.jsonl")
     assert {r["seed"] for r in requests} == semillas  # what was recorded is what was sent
+
+
+def test_fully_rejected_burst_aborts_instead_of_completing(tmp_path, fake_cli):
+    """ok == 0 measures nothing: aborted loudly (nothing billed), never a silent done."""
+    fake_cli.reject_all = True
+    prepare(tmp_path)
+    code, _out, err = run_t1(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")
+    assert code == 1
+    assert "0 of 20 requests accepted" in err and "nothing was billed" in err
+    requests = read_jsonl(tmp_path, "runs", "requests-*.jsonl")
+    assert len(requests) == 20 and all(r["http"] == 429 for r in requests)
+    assert not list((tmp_path / "batches").glob("batches-*.jsonl"))  # no bracket: zero spend
+    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    assert all(e["status"] == "aborted" for e in manifiesto["batches"].values())
+
+
+def test_requests_use_the_matched_catalog_id(tmp_path, fake_cli):
+    """The wire carries the catalog's tagged id; the dataset records the slate id."""
+    catalogo = full_catalog_less("nemotron-3-nano") + ["nemotron-3-nano:30b"]
+    fake_cli.catalog = sorted(catalogo)
+    prepare(tmp_path)
+    code, out, err = run_t1(tmp_path, "--model", "nemotron-3-nano", "--reps", "1")
+    assert code == 0, out or err
+    chats = [c for c in fake_cli.calls if c["path"] == "/api/chat"]
+    assert {c["body"]["model"] for c in chats} == {"nemotron-3-nano:30b"}
+    requests = read_jsonl(tmp_path, "runs", "requests-*.jsonl")
+    assert {r["model"] for r in requests} == {"nemotron-3-nano"}  # the study's unit
+    batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")
+    assert len(batches) == 3 and all(b["notes"] == "" for b in batches)  # clean cells
+    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    assert manifiesto["catalog"][-1]["matched"]["nemotron-3-nano"] == "nemotron-3-nano:30b"
+
+
+def full_catalog_less(modelo: str) -> list[str]:
+    from conftest import standard_table
+
+    return [m for m in sorted(standard_table()) if m != modelo]
+
+
+def test_meter_read_failure_mid_batch_closes_the_bracket_cleanly(tmp_path, fake_cli):
+    """A meter blip after billing is a clean abort with the spend attributed, not a crash."""
+    fake_cli.usage_raise = httpx.ConnectError("meter dropped")
+    fake_cli.usage_raise_from = 2  # the pre-read ok; the count-check read dies
+    prepare(tmp_path)
+    code, _out, err = run_t1(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")
+    assert code == 1
+    assert "meter read failed (ConnectError" in err and "Traceback" not in err
+    batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")  # the bracket closed
+    assert len(batches) == 1 and "meter read failed" in batches[0]["notes"]
+    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    entrada = next(iter(manifiesto["batches"].values()))
+    assert entrada["status"] == "aborted" and entrada["requests_ok"] == 20
+    # the 20 billed requests are in the dataset
+    assert len(read_jsonl(tmp_path, "runs", "requests-*.jsonl")) == 20
+
+
+def test_pre_batch_meter_failure_aborts_before_any_request(tmp_path, fake_cli):
+    fake_cli.usage_raise = httpx.ConnectError("meter dropped")
+    fake_cli.usage_raise_from = 1  # the very first read fails
+    prepare(tmp_path)
+    code, _out, err = run_t1(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")
+    assert code == 1
+    assert "before the batch" in err and "Traceback" not in err
+    assert not [c for c in fake_cli.calls if c["path"] == "/api/chat"]  # nothing was spent
+    assert not list((tmp_path / "batches").glob("batches-*.jsonl"))
+
+
+def test_settled_read_failure_still_records_the_batchs_spend(tmp_path, fake_cli):
+    """The post-settle read failing keeps the bracket: requests_ok, no dpp."""
+    fake_cli.usage_raise = httpx.ConnectError("meter dropped")
+    fake_cli.usage_raise_from = 3  # pre-read and count check ok; the post read dies
+    prepare(tmp_path)
+    code, _out, err = run_t1(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")
+    assert code == 1 and "after the settle" in err and "Traceback" not in err
+    batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")
+    assert len(batches) == 1 and batches[0]["medidor_post"] is None
+    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    entrada = next(iter(manifiesto["batches"].values()))
+    assert entrada["status"] == "aborted" and entrada["requests_ok"] == 20
+    assert entrada["rep"] == 1 and entrada["dpp_session"] is None
+
+
+def test_checker_failure_keeps_the_billed_evidence(tmp_path, fake_cli, monkeypatch):
+    """Checker drift stops the run loudly but never discards billed requests."""
+    import ocharness.checkers as checkers_mod
+    from ocharness.checkers import CheckersError
+
+    prepare(tmp_path)
+
+    def _boom(*_a, **_k):
+        raise CheckersError("scripted checker drift")
+
+    monkeypatch.setattr(checkers_mod, "judge", _boom)
+    code, _out, err = run_t1(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")
+    assert code == 1
+    assert "checker failure" in err and "Traceback" not in err
+    requests = read_jsonl(tmp_path, "runs", "requests-*.jsonl")
+    assert len(requests) == 20 and all(r["checker"] is None for r in requests)  # billed, kept
+    batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")
+    assert len(batches) == 1 and "checker failure" in batches[0]["notes"]
+    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    assert all(e["status"] == "aborted" for e in manifiesto["batches"].values())
 
 
 def test_run_t2_t3_are_not_implemented_yet(tmp_path, fake_cli):

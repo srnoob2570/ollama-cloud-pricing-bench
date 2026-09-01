@@ -24,10 +24,17 @@ def run_t1(tmp_path, *extra) -> tuple[int, str, str]:
 
 
 def test_status_without_any_run_is_quiet_and_free(tmp_path, fake):
-    code, out, _err = run_cli(tmp_path, "status")
+    code, out, err = run_cli(tmp_path, "status")
     assert code == 0
-    assert "no run manifest" in out
+    assert out == "" and "no run manifest" in err  # notices are log noise, not report
     assert fake.calls == []  # status never talks to the API
+
+
+def test_status_json_stdout_stays_parseable_without_any_run(tmp_path, fake):
+    code, out, err = run_cli(tmp_path, "status", "--json")
+    assert code == 0
+    assert json.loads(out) == {"levels": []}  # pure JSON stdout, always
+    assert "no run manifest" in err
 
 
 def test_status_summarizes_done_batches_and_consumed_quota(tmp_path, fake_cli):
@@ -114,3 +121,34 @@ def test_status_reports_a_corrupt_manifest_cleanly(tmp_path, fake_cli):
     code, _, err = run_cli(tmp_path, "status", "--level", "T1")
     assert code == 1
     assert "corrupt" in err and "Traceback" not in err
+
+
+def test_status_tolerates_structurally_corrupt_entries(tmp_path, fake_cli):
+    """Hand-edited run state renders as corrupt/unknown instead of crashing."""
+    prepare(tmp_path)
+    assert run_t1(tmp_path, "--settle-s", "0")[0] == 0
+    ruta = tmp_path / "runs" / "manifest-T1.json"
+    manifiesto = json.loads(ruta.read_text(encoding="utf-8"))
+    manifiesto["batches"]["broken00000000"] = "not a dict"  # a structurally broken entry
+    manifiesto["planned"] = "many"  # ...and a corrupt planned
+    ruta.write_text(json.dumps(manifiesto), encoding="utf-8")
+    code, out, err = run_cli(tmp_path, "status", "--level", "T1")
+    assert code == 0 and "Traceback" not in err
+    assert "4 planned | 3 done" in out  # planned falls back to the touched count
+    assert "attention: 1 corrupt" in out  # the broken entry is visible, not hidden
+    assert "corrupt: ?/? [broken000000" in out
+    assert "requests ok: 24" in out  # the real entries still sum correctly
+
+
+def test_status_planned_grows_with_a_wider_resume(tmp_path, fake_cli):
+    """A scope-widening resume updates the run's plan: no self-contradictory report."""
+    pricing = prepare(tmp_path)
+    assert run_t1(tmp_path, "--settle-s", "0")[0] == 0  # planned 3 (one model)
+    assert (
+        run_cli(tmp_path, "dry-run", "--level", "T1", "--reps", "1", "--pricing-dir", pricing)[0]
+        == 0
+    )
+    assert run_cli(tmp_path, "run", "--level", "T1", "--reps", "1", "--settle-s", "0")[0] == 0
+    code, out, _err = run_cli(tmp_path, "status", "--level", "T1")
+    assert code == 0
+    assert "57 planned | 57 done" in out and "0 pending" in out

@@ -46,6 +46,10 @@ class FakeOllama:
         # What /v1/models serves (list of ids); empty = an unscripted catalog.
         self.catalog: list[str] = []
         self.catalog_http = 200  # status the models endpoint answers with
+        self.catalog_raise: Exception | None = None  # transport failure on /v1/models
+        self.reject_all = False  # every chat request rejected (429), nothing billed
+        self.usage_raise: Exception | None = None  # transport failure on /api/usage
+        self.usage_raise_from = 10**9  # meter read ordinal from which it starts failing
 
     # ---- scripting ----
     def program_consumption(self, ticks: int) -> None:
@@ -78,10 +82,15 @@ class FakeOllama:
         if request.url.path == "/api/usage":
             if "authorization" not in request.headers:
                 return httpx.Response(401, json={"error": "invalid credentials"})
+            # _reads is 0-based before the increment: read ordinal = _reads + 1
+            if self.usage_raise is not None and self._reads + 1 >= self.usage_raise_from:
+                raise self.usage_raise
             return httpx.Response(200, json=self._read_meter())
         if request.url.path == "/v1/models":
             if "authorization" not in request.headers:
                 return httpx.Response(401, json={"error": "invalid credentials"})
+            if self.catalog_raise is not None:
+                raise self.catalog_raise
             return httpx.Response(
                 self.catalog_http,
                 json={
@@ -92,6 +101,8 @@ class FakeOllama:
         if request.url.path == "/api/chat":
             if "authorization" not in request.headers:
                 return httpx.Response(401, json={"error": "invalid credentials"})
+            if self.reject_all:
+                return httpx.Response(429, json={"error": "scripted: everything rejected"})
             self._n_chat += 1
             if self.fails_on is not None and self._n_chat == self.fails_on:
                 return httpx.Response(500, json={"error": "scripted one-shot failure"})

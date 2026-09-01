@@ -14,10 +14,14 @@ The goal is not comparing nominal prices, but answering with data:
 > **Status: methodology v1 consolidated (2026-09-01)** - the wayfinder map closed with all 14
 > decisions recorded; the benchmarks have not run yet (a later phase, spending gate in
 > [`docs/methodology-v1.md`](./docs/methodology-v1.md) §11). The harness (tickets #17-26) is
-> being implemented; Harness 01-05 are done (scaffold, T1 runner with bracketed
+> being implemented; Harness 01-06 are done (scaffold, T1 runner with bracketed
 > batches, catalog preflight + real T1 checkers + `status`, the T2 structural suites
-> with their real checkers, and the T3 synthetic mini-repos with the deterministic
-> agent loop and the sandboxed pytest checkers).
+> with their real checkers, the T3 synthetic mini-repos with the deterministic
+> agent loop and the sandboxed pytest checkers, and the concurrency workstream:
+> `bench probe-concurrency` sweeps k in short volleys to measure the real per-key
+> cut-off, then runs the k∈{1,4,8} cells on the T1 anchor with the same total
+> tokens per cell — a cell whose planned k exceeds the measured cut-off is
+> re-anchored to it, documented in the dataset).
 > [Leer en español →](./README.es.md)
 
 > **Transparency:** this project is generated and maintained with AI assistance

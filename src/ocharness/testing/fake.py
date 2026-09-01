@@ -12,6 +12,7 @@ reported token counts, `catalog` is what /v1/models serves.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 
@@ -61,21 +62,22 @@ class FakeOllama:
         self._pending_ticks += ticks
         self._reads_at_program = self._reads
 
-    def probe_concurrency(self, k: int) -> int:
-        """Direct probe (real 429s arrive through the transport with in-flight requests)."""
-        if self.concurrency_limit is not None and k > self.concurrency_limit:
-            return 429
-        return 200
-
     # ---- transport ----
-    # NOTE: the handler is synchronous, so through the async runner k>1 bursts never
-    # overlap (each chat blocks the event loop) and the 429 branch is unreachable via
-    # run_level. Scripting 429s against async bursts arrives with the concurrency
-    # ticket (Harness 06) — probe_concurrency and sync clients already cover the seam.
+    # The handler is a coroutine: the async transport (`async_transport`) awaits it,
+    # so a k-burst genuinely overlaps at `chat_latency` and the 429 branch fires
+    # exactly like the real endpoint's per-key limit. `transport()` is the SYNC
+    # seam only (it drives the same handler on a throwaway loop per request; its
+    # requests never overlap): the harness's AsyncClient must take
+    # `async_transport()` — this wrapper would call asyncio.run inside the live
+    # loop and raise per request.
     def transport(self) -> httpx.MockTransport:
+        return httpx.MockTransport(lambda request: asyncio.run(self._handle(request)))
+
+    def async_transport(self) -> httpx.MockTransport:
+        """Transport for AsyncClient seams: bursts overlap at `chat_latency`."""
         return httpx.MockTransport(self._handle)
 
-    def _handle(self, request: httpx.Request) -> httpx.Response:
+    async def _handle(self, request: httpx.Request) -> httpx.Response:
         body: dict = {}
         if request.content:
             body = json.loads(request.content)
@@ -114,9 +116,7 @@ class FakeOllama:
             self._in_flight += 1
             try:
                 if self.chat_latency:
-                    import time
-
-                    time.sleep(self.chat_latency)
+                    await asyncio.sleep(self.chat_latency)
                 self._bill(body)
                 if body.get("stream"):
                     return httpx.Response(200, content=self._chat_chunks(body))

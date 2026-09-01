@@ -13,7 +13,7 @@ import time
 
 import httpx
 
-PROTOCOL_VERSION = "1"
+PROTOCOL_VERSION = "2"  # v2: batch lines carry wall_clock_s; probe lines exist
 
 
 def default_transport() -> httpx.BaseTransport | None:

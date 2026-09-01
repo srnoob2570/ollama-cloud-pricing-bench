@@ -22,13 +22,16 @@ def fake() -> FakeOllama:
 def fake_cli(fake, monkeypatch):
     """The fake wired as the CLI's transport seam (client hits it, never the network).
 
-    The catalog defaults to the official table's ids so preflight passes; drift
+    The harness's client is an AsyncClient, so the seam is the fake's async
+    transport: with `chat_latency` set, concurrent bursts genuinely overlap and
+    the per-key 429 branch fires (the concurrency workstream's seam). The
+    catalog defaults to the official table's ids so preflight passes; drift
     tests script `fake.catalog` explicitly.
     """
     monkeypatch.setenv("OLLAMA_API_KEY", "test-key")
     from ocharness import client
 
-    monkeypatch.setattr(client, "default_transport", lambda: fake.transport())
+    monkeypatch.setattr(client, "default_transport", lambda: fake.async_transport())
     fake.catalog = sorted(standard_table())
     return fake
 

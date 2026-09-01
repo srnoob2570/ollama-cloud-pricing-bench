@@ -48,6 +48,17 @@ class BatchSpec:
     k: int
     n: int  # requests in the batch (the workload's requests per repetition)
     fixture_hash: str
+    plan_note: str = ""  # informational provenance carried on the batch line (no abort)
+
+
+@dataclasses.dataclass(frozen=True)
+class BatchOutcome:
+    """What one bracketed batch yielded, for the caller's counters and progress."""
+
+    ok: int
+    intentados: int
+    dpp_session: float | None
+    wall_clock_s: float | None
 
 
 def batch_id(run_id: str, level: str, workload: str, model: str, rep: int, k: int) -> str:
@@ -130,7 +141,7 @@ class Manifest:
         run_id: str,
         level: str,
         table_version: str,
-        k: int,
+        k: int | None,  # None: the workstream's cells carry their own k per batch
         planned: int,
         catalog: dict | None = None,
     ) -> Manifest:
@@ -214,6 +225,23 @@ def _dpp(pre: dict | None, post: dict | None, window: str) -> float | None:
     if not isinstance(antes, (int, float)) or not isinstance(despues, (int, float)):
         return None
     return round((despues - antes) * 100, 1)
+
+
+def _wall_clock_s(registros: list[dict]) -> float | None:
+    """The batch's makespan: last completion minus first launch across its requests.
+
+    For a k=1 cell this is the serialized total; for k>1 it is what parallelism
+    actually bought — the dp-vs-k and wall-clock-vs-k comparison reads this with
+    `k`. Null when the batch carried no request that ever reported both stamps.
+    """
+    tiempos = [
+        (r["t_start"], r["t_total"])
+        for r in registros
+        if isinstance(r.get("t_start"), (int, float)) and isinstance(r.get("t_total"), (int, float))
+    ]
+    if not tiempos:
+        return None
+    return round(max(fin for _ini, fin in tiempos) - min(ini for ini, _fin in tiempos), 6)
 
 
 def _sum_steps(pasos: list[dict], campo: str) -> int | None:
@@ -308,6 +336,237 @@ async def _burst(client: OllamaCloud, spec: BatchSpec, specs: tuple, modelo_api:
     return list(await asyncio.gather(*(_one(i) for i in range(spec.n))))
 
 
+@dataclasses.dataclass(frozen=True)
+class BatchContext:
+    """Everything one bracketed batch needs beyond its spec and the client."""
+
+    base: pathlib.Path
+    manifiesto: Manifest
+    cfg: dict
+    rutas_requests: pathlib.Path
+    ruta_batches: pathlib.Path
+
+
+def _notes(*partes: str) -> str:
+    """The batch line's notes: the non-empty parts, abort causes first."""
+    return "; ".join(p for p in partes if p)
+
+
+async def _execute_batch(
+    client: OllamaCloud, spec: BatchSpec, *, ctx: BatchContext
+) -> BatchOutcome:
+    """One bracketed batch, from in_flight to its closed bracket; raises RunnerError on abort.
+
+    The single protocol both spending paths share (`run`'s cells and the
+    concurrency workstream's k-cells alike): meter pre-read -> burst -> per-model
+    count check -> settle >= settle_s -> post read -> schema-validated raw lines.
+    `spec.plan_note` is informational provenance carried on the batch line; only
+    a checker failure or a bracket failure aborts the batch.
+    """
+    cfg = ctx.cfg
+    manifiesto = ctx.manifiesto
+    level = spec.level
+    manifiesto.set(spec.batch_id, "in_flight", workload=spec.workload, model=spec.model)
+
+    try:
+        status, pre = await client.usage()
+    except Exception as e:  # noqa: BLE001 - a meter failure aborts cleanly, loudly
+        manifiesto.set(
+            spec.batch_id,
+            "aborted",
+            workload=spec.workload,
+            model=spec.model,
+            note=f"aborted: meter read failed ({type(e).__name__}: {e}) before the batch",
+        )
+        raise RunnerError(
+            f"batch {spec.batch_id}: meter read failed ({type(e).__name__}: {e}) before the batch"
+        ) from None
+    if status != 200 or pre is None:
+        manifiesto.set(spec.batch_id, "aborted")
+        raise RunnerError(f"meter read failed (HTTP {status}) before batch {spec.batch_id}")
+
+    modelo_api = cfg.get("model_map", {}).get(spec.model, spec.model)
+    nota_checker = ""
+    try:
+        specs_requeridos = fixtures.build(level, spec.workload, spec.n)
+        if level == "T3":
+            # T3's burst IS the agent loop: each task consults the model
+            # step by step over its own working copy, and every step is
+            # one billed chat request.
+            registros = await agent.run_tasks(
+                client,
+                spec,
+                specs_requeridos,
+                modelo_api,
+                sandbox_root=ctx.base / "sandbox" / manifiesto.run_id,
+            )
+            ok = sum(1 for r in registros for p in r["steps"] if p["http"] == 200)
+            intentados = sum(len(r["steps"]) for r in registros)
+        else:
+            registros = await _burst(client, spec, specs_requeridos, modelo_api)
+            ok = sum(1 for r in registros if r["http"] == 200)
+            intentados = spec.n
+        try:
+            veredictos = checkers.judge(
+                spec.workload, [s.prompt for s in specs_requeridos], registros
+            )
+        except checkers.CheckersError as e:
+            # Checker drift is a harness bug, not a model outcome: the billed
+            # requests are still logged (null verdicts) and the batch aborts.
+            nota_checker = f"aborted: checker failure - {type(e).__name__}: {e}"
+            if cfg["emit"]:
+                cfg["emit"](f"batch {spec.batch_id} ({spec.workload}/{spec.model}): {nota_checker}")
+            veredictos = [None] * len(registros)
+        for idx, rec in enumerate(registros):
+            linea = _request_line(
+                rec,
+                spec,
+                run_id=manifiesto.run_id,
+                level=level,
+                index=idx,
+                seed_value=fixtures.seed(spec.workload, spec.model, spec.rep, idx),
+                table_version=cfg["table_version"],
+                checker=veredictos[idx],
+            )
+            schema.validate_request_line(linea)
+            _append_jsonl(ctx.rutas_requests, linea)
+    except Exception as e:  # noqa: BLE001 - any failure aborts the batch, loudly
+        nota = f"aborted: {type(e).__name__}: {e}"
+        manifiesto.set(
+            spec.batch_id, "aborted", workload=spec.workload, model=spec.model, note=nota
+        )
+        raise RunnerError(f"batch {spec.batch_id} ({spec.workload}/{spec.model}): {nota}") from None
+    if ok == 0:
+        # A fully rejected burst bills nothing but measures nothing either:
+        # recorded as aborted (the request lines above carry the evidence),
+        # never as a silent done cell.
+        nota = (
+            f"aborted: 0 of {intentados} requests accepted - the endpoint rejected "
+            "every request (model id or catalog drift?); nothing was billed"
+        )
+        manifiesto.set(
+            spec.batch_id,
+            "aborted",
+            workload=spec.workload,
+            model=spec.model,
+            rep=spec.rep,
+            note=nota,
+        )
+        raise RunnerError(f"batch {spec.batch_id} ({spec.workload}/{spec.model}): {nota}")
+    t_burst_end = time.time()
+
+    # Per-model count check, issued immediately after the burst (<= ~2 s):
+    # the counter is instant and exact, so a dropped request aborts here.
+    error_lectura = ""
+    try:
+        status_c, leido = await client.usage()
+    except Exception as e:  # noqa: BLE001 - the bracket still closes below
+        status_c, leido, error_lectura = 0, None, f"{type(e).__name__}: {e}"
+    count_check_s = round(time.time() - t_burst_end, 3)
+    counts_pre = _counts(pre)
+    counts_check = _counts(leido)
+    contados = counts_check.get(modelo_api, 0) - counts_pre.get(modelo_api, 0)
+
+    post: dict | None = None
+    abort_headline = ""
+    if status_c == 200 and contados == ok:
+        await asyncio.sleep(cfg["settle_s"])  # >= 90 s: the % lags ~60-90 s
+        try:
+            status_p, post = await client.usage()
+        except Exception as e:  # noqa: BLE001 - the bracket still closes below
+            status_p, post, error_lectura = 0, None, f"{type(e).__name__}: {e}"
+        if status_p != 200 or post is None:
+            causa = error_lectura or f"HTTP {status_p}"
+            # A checker-invalidated batch stays invalidated: the note must
+            # say BOTH causes, or the operator re-runs a suite whose
+            # verdicts were never valid.
+            nota = _notes(f"aborted: meter read failed ({causa}) after the settle", nota_checker)
+            _close_batch(
+                ctx.ruta_batches,
+                spec,
+                manifiesto,
+                cfg,
+                pre,
+                None,
+                counts_pre,
+                counts_check,
+                _wall_clock_s(registros),
+                ok,
+                _notes(nota, spec.plan_note),
+            )
+            manifiesto.set(
+                spec.batch_id,
+                "aborted",
+                workload=spec.workload,
+                model=spec.model,
+                rep=spec.rep,
+                dpp_session=None,
+                dpp_weekly=None,
+                requests_ok=ok,
+                note=nota,
+            )
+            raise RunnerError(f"batch {spec.batch_id} ({spec.workload}/{spec.model}): {nota}")
+    else:
+        # Close the bracket even on abort: the burst's real consumption belongs
+        # to THIS batch, not to the next run's pre-read.
+        abort_headline = (
+            f"aborted: meter read failed ({error_lectura}) at the count check"
+            if error_lectura
+            else (
+                f"aborted: request_count check failed - expected {ok} accepted "
+                f"requests, meter counted {contados} (delta {contados - ok})"
+            )
+        )
+        await asyncio.sleep(cfg["settle_s"])
+        try:
+            status_p, post = await client.usage()
+        except Exception:  # noqa: BLE001 - an aborted batch may lack a post
+            status_p, post = 0, None
+        if status_p != 200:
+            post = None  # an aborted batch may carry a null post payload
+
+    notas = _notes(abort_headline, nota_checker, spec.plan_note)
+    dpp_sesion = _dpp(pre, post, "session")
+    wall_clock = _wall_clock_s(registros)
+    linea = _batch_line(
+        spec,
+        manifiesto=manifiesto,
+        pre=pre,
+        post=post,
+        counts_pre=counts_pre,
+        counts_check=counts_check,
+        counts_post=_counts(post) if post else None,
+        count_check_s=count_check_s,
+        wall_clock_s=wall_clock,
+        ok=ok,
+        settle_s=cfg["settle_s"],
+        table_version=cfg["table_version"],
+        notes=notas,
+    )
+    schema.validate_batch_line(linea)
+    _append_jsonl(ctx.ruta_batches, linea)
+    # Only a real failure aborts; spec.plan_note is provenance, never a verdict.
+    estado_final = "aborted" if (abort_headline or nota_checker) else "done"
+    manifiesto.set(
+        spec.batch_id,
+        estado_final,
+        workload=spec.workload,
+        model=spec.model,
+        rep=spec.rep,
+        dpp_session=dpp_sesion,
+        dpp_weekly=_dpp(pre, post, "weekly"),
+        requests_ok=ok,
+    )
+    if estado_final == "aborted":
+        raise RunnerError(f"batch {spec.batch_id} ({spec.workload}/{spec.model}): {notas}")
+    return BatchOutcome(
+        ok=ok,
+        intentados=intentados,
+        dpp_session=dpp_sesion,
+        wall_clock_s=wall_clock,
+    )
+
+
 async def _run_async(cfg: dict) -> dict:
     base: pathlib.Path = cfg["base"]
     level: str = cfg["level"]
@@ -363,6 +622,13 @@ async def _run_async(cfg: dict) -> dict:
     ruta_batches = batches_dir / f"batches-{manifiesto.run_id}.jsonl"
 
     client = OllamaCloud(transport=cfg["transport"])
+    contexto = BatchContext(
+        base=base,
+        manifiesto=manifiesto,
+        cfg=cfg,
+        rutas_requests=rutas_requests,
+        ruta_batches=ruta_batches,
+    )
     hechos = omitidos = en_vuelo = abortados_previos = escritas = 0
     try:
         for spec in specs:
@@ -384,211 +650,14 @@ async def _run_async(cfg: dict) -> dict:
                             "in an earlier attempt - skipped; its spend is already in the dataset"
                         )
                 continue
-            manifiesto.set(spec.batch_id, "in_flight", workload=spec.workload, model=spec.model)
-
-            try:
-                status, pre = await client.usage()
-            except Exception as e:  # noqa: BLE001 - a meter failure aborts cleanly, loudly
-                manifiesto.set(
-                    spec.batch_id,
-                    "aborted",
-                    workload=spec.workload,
-                    model=spec.model,
-                    note=f"aborted: meter read failed ({type(e).__name__}: {e}) before the batch",
-                )
-                raise RunnerError(
-                    f"batch {spec.batch_id}: meter read failed ({type(e).__name__}: {e}) "
-                    "before the batch"
-                ) from None
-            if status != 200 or pre is None:
-                manifiesto.set(spec.batch_id, "aborted")
-                raise RunnerError(f"meter read failed (HTTP {status}) before batch {spec.batch_id}")
-
-            modelo_api = cfg.get("model_map", {}).get(spec.model, spec.model)
-            nota_checker = ""
-            try:
-                specs_requeridos = fixtures.build(level, spec.workload, spec.n)
-                if level == "T3":
-                    # T3's burst IS the agent loop: each task consults the model
-                    # step by step over its own working copy, and every step is
-                    # one billed chat request.
-                    registros = await agent.run_tasks(
-                        client,
-                        spec,
-                        specs_requeridos,
-                        modelo_api,
-                        sandbox_root=base / "sandbox" / manifiesto.run_id,
-                    )
-                    ok = sum(1 for r in registros for p in r["steps"] if p["http"] == 200)
-                    intentados = sum(len(r["steps"]) for r in registros)
-                else:
-                    registros = await _burst(client, spec, specs_requeridos, modelo_api)
-                    ok = sum(1 for r in registros if r["http"] == 200)
-                    intentados = spec.n
-                try:
-                    veredictos = checkers.judge(
-                        spec.workload, [s.prompt for s in specs_requeridos], registros
-                    )
-                except checkers.CheckersError as e:
-                    # Checker drift is a harness bug, not a model outcome: the billed
-                    # requests are still logged (null verdicts) and the batch aborts.
-                    nota_checker = f"aborted: checker failure - {type(e).__name__}: {e}"
-                    if cfg["emit"]:
-                        cfg["emit"](
-                            f"batch {spec.batch_id} ({spec.workload}/{spec.model}): {nota_checker}"
-                        )
-                    veredictos = [None] * len(registros)
-                for idx, rec in enumerate(registros):
-                    linea = _request_line(
-                        rec,
-                        spec,
-                        run_id=manifiesto.run_id,
-                        level=level,
-                        index=idx,
-                        seed_value=fixtures.seed(spec.workload, spec.model, spec.rep, idx),
-                        table_version=cfg["table_version"],
-                        checker=veredictos[idx],
-                    )
-                    schema.validate_request_line(linea)
-                    _append_jsonl(rutas_requests, linea)
-            except Exception as e:  # noqa: BLE001 - any failure aborts the batch, loudly
-                nota = f"aborted: {type(e).__name__}: {e}"
-                manifiesto.set(
-                    spec.batch_id, "aborted", workload=spec.workload, model=spec.model, note=nota
-                )
-                raise RunnerError(
-                    f"batch {spec.batch_id} ({spec.workload}/{spec.model}): {nota}"
-                ) from None
-            if ok == 0:
-                # A fully rejected burst bills nothing but measures nothing either:
-                # recorded as aborted (the request lines above carry the evidence),
-                # never as a silent done cell.
-                nota = (
-                    f"aborted: 0 of {intentados} requests accepted - the endpoint rejected "
-                    "every request (model id or catalog drift?); nothing was billed"
-                )
-                manifiesto.set(
-                    spec.batch_id,
-                    "aborted",
-                    workload=spec.workload,
-                    model=spec.model,
-                    rep=spec.rep,
-                    note=nota,
-                )
-                raise RunnerError(f"batch {spec.batch_id} ({spec.workload}/{spec.model}): {nota}")
-            t_burst_end = time.time()
-
-            # Per-model count check, issued immediately after the burst (<= ~2 s):
-            # the counter is instant and exact, so a dropped request aborts here.
-            error_lectura = ""
-            try:
-                status_c, leido = await client.usage()
-            except Exception as e:  # noqa: BLE001 - the bracket still closes below
-                status_c, leido, error_lectura = 0, None, f"{type(e).__name__}: {e}"
-            count_check_s = round(time.time() - t_burst_end, 3)
-            counts_pre = _counts(pre)
-            counts_check = _counts(leido)
-            contados = counts_check.get(modelo_api, 0) - counts_pre.get(modelo_api, 0)
-
-            post: dict | None = None
-            if status_c == 200 and contados == ok:
-                await asyncio.sleep(cfg["settle_s"])  # >= 90 s: the % lags ~60-90 s
-                try:
-                    status_p, post = await client.usage()
-                except Exception as e:  # noqa: BLE001 - the bracket still closes below
-                    status_p, post, error_lectura = 0, None, f"{type(e).__name__}: {e}"
-                if status_p != 200 or post is None:
-                    causa = error_lectura or f"HTTP {status_p}"
-                    # A checker-invalidated batch stays invalidated: the note must
-                    # say BOTH causes, or the operator re-runs a suite whose
-                    # verdicts were never valid.
-                    nota = f"aborted: meter read failed ({causa}) after the settle"
-                    if nota_checker:
-                        nota = f"{nota_checker}; {nota}"
-                    _close_batch(
-                        ruta_batches,
-                        spec,
-                        manifiesto,
-                        cfg,
-                        pre,
-                        None,
-                        counts_pre,
-                        counts_check,
-                        ok,
-                        nota,
-                    )
-                    manifiesto.set(
-                        spec.batch_id,
-                        "aborted",
-                        workload=spec.workload,
-                        model=spec.model,
-                        rep=spec.rep,
-                        dpp_session=None,
-                        dpp_weekly=None,
-                        requests_ok=ok,
-                        note=nota,
-                    )
-                    raise RunnerError(
-                        f"batch {spec.batch_id} ({spec.workload}/{spec.model}): {nota}"
-                    )
-                nota = ""
-            else:
-                # Close the bracket even on abort: the burst's real consumption belongs
-                # to THIS batch, not to the next run's pre-read.
-                nota = (
-                    f"aborted: meter read failed ({error_lectura}) at the count check"
-                    if error_lectura
-                    else (
-                        f"aborted: request_count check failed - expected {ok} accepted "
-                        f"requests, meter counted {contados} (delta {contados - ok})"
-                    )
-                )
-                await asyncio.sleep(cfg["settle_s"])
-                try:
-                    status_p, post = await client.usage()
-                except Exception:  # noqa: BLE001 - an aborted batch may lack a post
-                    status_p, post = 0, None
-                if status_p != 200:
-                    post = None  # an aborted batch may carry a null post payload
-
-            if nota_checker:
-                nota = f"{nota_checker}; {nota}" if nota else nota_checker
-            linea = _batch_line(
-                spec,
-                manifiesto=manifiesto,
-                pre=pre,
-                post=post,
-                counts_pre=counts_pre,
-                counts_check=counts_check,
-                counts_post=_counts(post) if post else None,
-                count_check_s=count_check_s,
-                ok=ok,
-                settle_s=cfg["settle_s"],
-                table_version=cfg["table_version"],
-                notes=nota,
-            )
-            schema.validate_batch_line(linea)
-            _append_jsonl(ruta_batches, linea)
-            estado_final = "done" if not nota else "aborted"
-            manifiesto.set(
-                spec.batch_id,
-                estado_final,
-                workload=spec.workload,
-                model=spec.model,
-                rep=spec.rep,
-                dpp_session=_dpp(pre, post, "session"),
-                dpp_weekly=_dpp(pre, post, "weekly"),
-                requests_ok=ok,
-            )
-            if nota:
-                raise RunnerError(f"batch {spec.batch_id} ({spec.workload}/{spec.model}): {nota}")
+            resultado = await _execute_batch(client, spec, ctx=contexto)
             hechos += 1
             escritas += spec.n
             if cfg["emit"]:
                 cfg["emit"](
                     f"[{hechos + omitidos}/{len(specs)}] {spec.workload}/{spec.model} "
-                    f"rep{spec.rep} k{spec.k}: {ok}/{intentados} ok, "
-                    f"dpp_session={_dpp(pre, post, 'session')}"
+                    f"rep{spec.rep} k{spec.k}: {resultado.ok}/{resultado.intentados} ok, "
+                    f"dpp_session={resultado.dpp_session}"
                 )
     finally:
         await client.aclose()
@@ -630,10 +699,11 @@ def _check_drift(existente: Manifest, cfg: dict) -> None:
             f"{FIXTURE_VERSION!r} - the batch hashes are not comparable - keep the "
             "datasets apart"
         )
-    if existente.doc.get("k") != cfg["k"]:
+    k_cfg = cfg.get("k")
+    if k_cfg is not None and existente.doc.get("k") != k_cfg:
         raise RunnerError(
             f"manifest {existente.ruta.name} records k={existente.doc.get('k')!r} but this "
-            f"run would use k={cfg['k']!r} - mixing k inside one run_id would duplicate cells"
+            f"run would use k={k_cfg!r} - mixing k inside one run_id would duplicate cells"
         )
 
 
@@ -646,26 +716,27 @@ def _close_batch(
     post: dict | None,
     counts_pre: dict[str, int],
     counts_check: dict[str, int],
+    wall_clock_s: float | None,
     ok: int,
     notes: str,
 ) -> None:
-    _append_jsonl(
-        ruta_batches,
-        _batch_line(
-            spec,
-            manifiesto=manifiesto,
-            pre=pre,
-            post=post,
-            counts_pre=counts_pre,
-            counts_check=counts_check,
-            counts_post=_counts(post) if post else None,
-            count_check_s=None,
-            ok=ok,
-            settle_s=cfg["settle_s"],
-            table_version=cfg["table_version"],
-            notes=notes,
-        ),
+    linea = _batch_line(
+        spec,
+        manifiesto=manifiesto,
+        pre=pre,
+        post=post,
+        counts_pre=counts_pre,
+        counts_check=counts_check,
+        counts_post=_counts(post) if post else None,
+        count_check_s=None,
+        wall_clock_s=wall_clock_s,
+        ok=ok,
+        settle_s=cfg["settle_s"],
+        table_version=cfg["table_version"],
+        notes=notes,
     )
+    schema.validate_batch_line(linea)
+    _append_jsonl(ruta_batches, linea)
 
 
 def _batch_line(
@@ -678,6 +749,7 @@ def _batch_line(
     counts_check: dict[str, int],
     counts_post: dict[str, int] | None,
     count_check_s: float | None,
+    wall_clock_s: float | None,
     ok: int,
     settle_s: float,
     table_version: str,
@@ -694,6 +766,7 @@ def _batch_line(
         "n": spec.n,
         "settle_s": settle_s,
         "count_check_s": count_check_s,
+        "wall_clock_s": wall_clock_s,
         "medidor_pre": pre,
         "medidor_post": post,
         "dpp_session": _dpp(pre, post, "session"),

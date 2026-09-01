@@ -91,7 +91,12 @@ def _t1_prompts(workload: str, n: int) -> list[str]:
                 "workload table disagrees with the fixture"
             )
         return [f"{q}{QA_SHORT_SUFFIX}" for q in QA_SHORT_QUESTIONS[:n]]
-    if workload == "calibration":
+    if workload in ("calibration", "concurrency"):
+        # The study's cheapest bracketable request. `concurrency` is the
+        # concurrency workstream's anchor fixture (methodology v1 §6): n copies
+        # per cell so every k∈{1,4,8} cell carries the same total tokens, and
+        # the probe's volleys fire the same single short request at increasing
+        # k. Both grade the same contract (the aliased checker).
         return [CALIBRATION_PROMPT] * n
     if workload == "throughput":
         return [THROUGHPUT_PROMPT] * n

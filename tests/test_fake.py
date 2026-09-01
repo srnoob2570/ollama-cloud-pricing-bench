@@ -82,14 +82,8 @@ def test_request_count_is_instant_and_exact_per_model(fake):
     assert counts.get("glm-5.3-flash", 0) == 1
 
 
-def test_429_by_concurrency_scriptable(fake):
-    fake.concurrency_limit = 3
-    assert fake.probe_concurrency(k=3) == 200
-    assert fake.probe_concurrency(k=4) == 429
-
-
 def test_429_reachable_through_transport(fake):
-    """The seam's 429 must be reachable over HTTP, not only via the direct probe."""
+    """The seam's per-key limit rejects over HTTP when the burst holds slots."""
     import concurrent.futures
 
     fake.concurrency_limit = 1
@@ -160,6 +154,33 @@ def test_undercount_drops_requests_from_the_reported_counts(fake):
         r = client.get("https://fake.ollama/api/usage", headers=auth).json()
     counts = {m["name"]: m["request_count"] for m in r["limits"]["session"]["models"]}
     assert counts["glm-5.3-flash"] == 1  # two billed, one dropped from the report
+
+
+def test_429_by_concurrency_reachable_through_the_async_transport(fake):
+    """Harness 06's seam: through AsyncClient the k-burst overlaps at chat_latency,
+    and the per-key limit rejects deterministically (single event loop, no races)."""
+    import asyncio
+
+    fake.concurrency_limit = 3
+    fake.chat_latency = 0.05  # admitted requests hold their slot; the rest see the limit
+
+    async def volley():
+        auth = {"Authorization": "Bearer test-key"}
+        transport = fake.async_transport()
+        async with httpx.AsyncClient(transport=transport) as client:
+
+            async def one():
+                r = await client.post(
+                    "https://fake.ollama/api/chat",
+                    json={"model": "glm-5.3-flash", "stream": False},
+                    headers=auth,
+                )
+                return r.status_code
+
+            return await asyncio.gather(*(one() for _ in range(6)))
+
+    resultados = asyncio.run(volley())
+    assert sorted(resultados) == [200, 200, 200, 429, 429, 429]
 
 
 def test_standard_table_covers_the_full_catalog():

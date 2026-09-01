@@ -39,7 +39,8 @@ import sys
 import time
 
 import ocharness
-from .sandbox_runner import SANDBOX_READY, PYTEST_UNAVAILABLE_EXIT
+
+from .sandbox_runner import SANDBOX_READY
 
 SANDBOX_TIMEOUT_S = 60.0  # hard per-run ceiling, in-loop run_tests included
 OUTPUT_TAIL = 4000  # combined pytest output kept on the sandbox record

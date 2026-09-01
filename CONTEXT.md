@@ -100,7 +100,9 @@ _Avoid_: batch (without k), oleada · _es_: celda (de concurrencia)
 
 **Probe**:
 A short, cheap request fired at increasing k to locate the real per-key concurrency cut-off
-(429 / queueing / acceptance) before measuring cells. _Avoid_: ping, healthcheck · _es_: sonda
+(429 / queueing / acceptance) before measuring cells; the cells then **re-anchor** to the
+measured cut-off (a planned k above it runs at the cut-off, documented in the dataset —
+never at a published guess). _Avoid_: ping, healthcheck · _es_: sonda
 
 **Checker**:
 A deterministic binary (pass / fail) validator of a task's outcome: tests or compilation for

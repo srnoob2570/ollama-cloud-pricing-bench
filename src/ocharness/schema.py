@@ -50,6 +50,7 @@ _BATCH_SCHEMA: dict[str, tuple] = {
     "n": (int,),
     "settle_s": (float, int),
     "count_check_s": (float, int, None),  # null on an aborted batch closed without a check
+    "wall_clock_s": (float, int, None),  # the cell's makespan (null when nothing completed)
     "medidor_pre": (dict,),
     # medidor_post is null on an aborted batch whose post read itself failed
     "medidor_post": (dict, None),
@@ -59,6 +60,29 @@ _BATCH_SCHEMA: dict[str, tuple] = {
     "table_version": (str,),
     "protocol_version": (str,),
     "notes": (str,),
+}
+
+# The concurrency probe's volley line (runs/probe-*.jsonl): one line per k level.
+# The probe is discovery, not a bracketed measurement: no meter payload, no
+# checker — the per-request outcomes (accepted / 429 / error) are its evidence.
+_PROBE_SCHEMA: dict[str, tuple] = {
+    "probe_id": (str,),
+    "run_id": (str,),
+    "level": (str,),
+    "model": (str,),
+    "workload": (str,),
+    "k": (int,),
+    "requested": (int,),
+    "accepted": (int,),
+    "rejected": (int,),
+    "errored": (int,),
+    "t_start": (float, int),
+    "t_total": (float, int),
+    "outcomes": (list,),  # per request: {http, err, done}, in launch order
+    "seeds": (list,),  # the volley's transmitted seeds, aligned with outcomes
+    "fixture_hash": (str,),
+    "table_version": (str,),
+    "protocol_version": (str,),
 }
 
 
@@ -98,3 +122,7 @@ def validate_request_line(line: dict) -> None:
 
 def validate_batch_line(line: dict) -> None:
     _validate(line, _BATCH_SCHEMA, "batch")
+
+
+def validate_probe_line(line: dict) -> None:
+    _validate(line, _PROBE_SCHEMA, "probe")

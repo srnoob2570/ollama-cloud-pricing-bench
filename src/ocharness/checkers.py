@@ -16,6 +16,10 @@ Every request line carries a `checker` verdict instead of a placeholder:
     of the cell's median — three identical requests whose token reports
     disagree beyond the band are a polluted calibration point, not a
     measurement; a zero-token report is no measurement at all;
+  * concurrency (the calibration fixture fired k-wide): the contracted single
+    word and the token band over the siblings that DID report — a request the
+    endpoint rejected mid-cell is the phenomenon under test and never voids
+    the verdicts of the responses that landed;
   * throughput: the complete, untruncated structure — the ordered 1..150 list
     (digits in surrounding prose don't break it) and the final DONE word.
 
@@ -145,6 +149,38 @@ def _judge_calibration(_prompt: str, rec: dict, registros: list[dict]) -> bool:
             return False
         if abs(valor - mediana) > CALIBRATION_BAND * mediana:
             return False
+    return True
+
+
+def _judge_concurrency(_prompt: str, rec: dict, registros: list[dict]) -> bool:
+    """The concurrency cell's contract: the exact word, plus the token band over
+    the siblings that DID report.
+
+    Unlike `calibration` (whose n=3 exists to prove reproducibility, so a
+    missing sibling voids the cell), a concurrency cell exists to measure k —
+    a request the endpoint rejected mid-cell is the phenomenon under test, and
+    it must not void the verdicts of the responses that did land. The band is
+    computed over the reporting siblings; a lone survivor has no band evidence
+    and grades on the word alone.
+    """
+    if _tokens(rec["content"]) != ["ok"]:
+        return False
+    for done_campo in ("prompt_eval_count", "eval_count"):
+        valor = rec["done"].get(done_campo) if rec["done"] else None
+        if not isinstance(valor, int) or valor <= 0:
+            return False
+        hermanos = [
+            r["done"][done_campo]
+            for r in registros
+            if r is not rec
+            and r["done"]
+            and isinstance(r["done"].get(done_campo), int)
+            and r["done"][done_campo] > 0
+        ]
+        if len(hermanos) >= 2:
+            mediana = statistics.median(hermanos)
+            if abs(valor - mediana) > CALIBRATION_BAND * mediana:
+                return False
     return True
 
 
@@ -342,6 +378,7 @@ def _make_sandbox_judge(workload: str):
 _JUDGES = {
     "qa_short": _judge_qa_short,
     "calibration": _judge_calibration,
+    "concurrency": _judge_concurrency,  # the calibration fixture, the cell's own band rule
     "throughput": _judge_throughput,
     "long_context": _judge_register,
     "long_generation": _judge_long_generation,

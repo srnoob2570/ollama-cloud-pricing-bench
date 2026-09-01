@@ -16,7 +16,8 @@ import time
 
 from test_dry_run import run_cli, with_pricing
 
-from ocharness import fixtures_t3, sandbox as sandbox_mod
+from ocharness import fixtures_t3
+from ocharness import sandbox as sandbox_mod
 from ocharness.fixtures import build, fixture_hash
 from ocharness.schema import validate_batch_line, validate_request_line
 

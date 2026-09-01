@@ -10,7 +10,7 @@ import os
 import pathlib
 import sys
 
-from . import cost, gate, preflight, workloads
+from . import concurrency, cost, gate, preflight, workloads
 from .pricing import PriceTable, TableError
 from .runner import Manifest, RunnerError, run_level
 
@@ -350,7 +350,143 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
-DESPACHO = {"dry-run": cmd_dry_run, "run": cmd_run, "status": cmd_status}
+def _require_api_key() -> bool:
+    """False when the key is missing (the guard's message is printed)."""
+    if os.environ.get("OLLAMA_API_KEY"):
+        return True
+    print(
+        "error: OLLAMA_API_KEY is not set - the harness reads the key only from the "
+        "environment and never writes it to any dataset",
+        file=sys.stderr,
+    )
+    return False
+
+
+def _fmt_cost(valor: float | None) -> str:
+    """A per-task cost for the human report; the metric is null when unmeasurable."""
+    return "n/a" if valor is None else f"${valor:.6f}"
+
+
+def _fmt(valor: float | None, sufijo: str = "") -> str:
+    """A nullable metric for the human report (dpp, wall-clock)."""
+    return "n/a" if valor is None else f"{valor:g}{sufijo}"
+
+
+def cmd_probe_concurrency(args: argparse.Namespace) -> int:
+    """The concurrency workstream: cut-off probe + re-anchored k∈{1,4,8} cells."""
+    if args.level is not None and args.level != "T1":
+        print(
+            "error: probe-concurrency runs on the T1 anchor only (its cell is the "
+            "calibration fixture); the gate mark it consumes is T1's",
+            file=sys.stderr,
+        )
+        return 2
+    if not args.model:
+        print(
+            "error: probe-concurrency requires --model (the cells run on one model)",
+            file=sys.stderr,
+        )
+        return 2
+    if not concurrency.PROBE_K_FROM <= args.k_max <= concurrency.PROBE_K_CEILING:
+        print(
+            f"error: --k-max must be in [{concurrency.PROBE_K_FROM}, "
+            f"{concurrency.PROBE_K_CEILING}] (the probe floor and spend ceiling); "
+            f"got {args.k_max!r}",
+            file=sys.stderr,
+        )
+        return 2
+    if args.settle_s < 0 or not math.isfinite(args.settle_s):
+        print(
+            f"error: --settle-s must be a finite number >= 0; got {args.settle_s!r}",
+            file=sys.stderr,
+        )
+        return 2
+    if not math.isfinite(args.ancla) or args.ancla <= 0:
+        print(f"error: --ancla must be a finite number > 0; got {args.ancla!r}", file=sys.stderr)
+        return 2
+    try:
+        tabla = PriceTable.load(_pricing_dir(args), args.table_version)
+        if args.model not in tabla.models:
+            print(
+                f"error: --model {args.model!r} is not in the price table "
+                f"{tabla.table_version!r} ({len(tabla.models)} models)",
+                file=sys.stderr,
+            )
+            return 2
+        gate.require_dry_run(_base(args), "T1", table_version=tabla.table_version)
+    except TableError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    except gate.GateClosed as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    if not _require_api_key():
+        return 2
+
+    def _emit(msg: str) -> None:
+        print(msg, flush=True, file=sys.stderr)  # progress is log noise: stdout stays parseable
+
+    gate.consume(_base(args), "T1")  # one dry-run enables exactly one probe invocation
+    try:
+        catalogo = preflight.verify(slate_ids=[args.model], table_models=tabla.models)
+    except preflight.PreflightError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    _emit(_preflight_line(catalogo))
+    try:
+        resumen = concurrency.run_probe(
+            _base(args),
+            model=args.model,
+            k_max=args.k_max,
+            settle_s=args.settle_s,
+            ancla=args.ancla,
+            table_version=tabla.table_version,
+            catalog={"http": catalogo.http, "ids": catalogo.ids, "matched": catalogo.matched},
+            model_map={s: c for s, c in catalogo.matched.items() if c != s},
+            emit=_emit,
+        )
+    except RunnerError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(resumen, ensure_ascii=False, indent=2))
+        return 0
+    corte = resumen["probe"]["cut_off"]
+    corte_txt = "below the probe floor" if corte is None else str(corte)
+    print(
+        f"concurrency run {resumen['run_id']} - models {', '.join(resumen['models']) or '(none)'}, "
+        f"anchor ${resumen['ancla']:g}/mo ({resumen['usd_per_pp']:.6f} USD/pp)"
+    )
+    print(f"  cut-off: {corte_txt} - {resumen['probe']['cut_off_note']}")
+    modelo_actual = None
+    for celda in resumen["cells"]:
+        if celda["model"] != modelo_actual:  # the doc covers every model of the run
+            modelo_actual = celda["model"]
+            print(f"  model {modelo_actual}:")
+        print(
+            f"    k={celda['k']}"
+            + (" (re-anchored)" if celda["re_anchored"] else "")
+            + f": {celda['completed']}/{celda['n']} completed, "
+            f"dpp_weekly={_fmt(celda['dpp_weekly'], ' pp')}, "
+            f"wall={_fmt(celda['wall_clock_s'], 's')}, "
+            f"{_fmt_cost(celda['cost_per_attempted_task_usd'])}/task attempted"
+            + (
+                f", {_fmt_cost(celda['cost_per_completed_task_usd'])}/task completed"
+                if celda["cost_per_completed_task_usd"] is not None
+                else ""
+            )
+        )
+        if celda["notes"]:
+            print(f"        {celda['notes']}")
+    return 0
+
+
+DESPACHO = {
+    "dry-run": cmd_dry_run,
+    "run": cmd_run,
+    "probe-concurrency": cmd_probe_concurrency,
+    "status": cmd_status,
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -358,18 +494,40 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--base", default=".", help="working directory (pricing/, runs/)")
     sub = p.add_subparsers(dest="comando", required=True)
     for nombre in SUBCOMMANDS:
-        parser = sub.add_parser(nombre)
-        parser.add_argument("--level", choices=["T1", "T2", "T3"], default=None)
+        # allow_abbrev off for the probe: `--k 8` would otherwise prefix-match
+        # --k-max and silently raise the probe's spend ceiling instead of erroring
+        parser = sub.add_parser(nombre, allow_abbrev=(nombre != "probe-concurrency"))
+        if nombre == "status":
+            # status also reports the workstreams' manifests (e.g. T1-concurrency):
+            # free-form, filtered by manifest file name
+            parser.add_argument("--level", default=None)
+        else:
+            parser.add_argument("--level", choices=["T1", "T2", "T3"], default=None)
         parser.add_argument("--model", default=None)
         parser.add_argument(
             "--pricing-dir", default="pricing", help="tables directory (relative to --base)"
         )
         parser.add_argument("--table-version", default=None)
-        parser.add_argument("--s", type=float, default=0.5, help="S1 cache hit-rate (0..1)")
+        if nombre == "probe-concurrency":
+            # The probe reads none of --s/--reps/--rep/--k: a silent no-op flag
+            # would read as a tuned cell (--k) or an approved density (--reps)
+            # it ignores. Its knobs are --model and --k-max; the cell ks are the
+            # workstream's own (1, 4, 8), re-anchored to the measured cut-off.
+            parser.add_argument(
+                "--k-max",
+                type=int,
+                default=20,
+                help=(
+                    "the probe's ceiling k (the sweep is 4..k-max; default 20, "
+                    f"hard ceiling {concurrency.PROBE_K_CEILING})"
+                ),
+            )
+        else:
+            parser.add_argument("--s", type=float, default=0.5, help="S1 cache hit-rate (0..1)")
+            parser.add_argument("--reps", type=int, default=5)
+            parser.add_argument("--rep", type=int, default=None, help="run only this repetition")
+            parser.add_argument("--k", type=int, default=1, help="concurrency of the burst")
         parser.add_argument("--ancla", type=float, default=100.0, help="P_LEGADO USD/month")
-        parser.add_argument("--reps", type=int, default=5)
-        parser.add_argument("--rep", type=int, default=None, help="run only this repetition")
-        parser.add_argument("--k", type=int, default=1, help="concurrency of the burst")
         parser.add_argument(
             "--settle-s", type=float, default=90.0, help="settle between read and read (s)"
         )

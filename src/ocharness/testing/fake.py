@@ -1,10 +1,9 @@
-"""Fake de ollama.com — el seam de tests del harness.
+"""Fake ollama.com — the harness's test seam.
 
-Reproduce el comportamiento MEDIDO en la verificación en vivo del medidor
-(docs/research/medidor-vivo-2026-08-31.md): usage en ticks de 0.001 con lag de
-lecturas, request_count instantáneo y exacto por modelo, 401 sin auth, y
-429s/fallos puntuales scriptables. Se inyecta como transport de httpx; nunca
-toca la red.
+Reproduces the behavior MEASURED during the live meter verification
+(docs/research/medidor-vivo-2026-08-31.md): usage in 0.001 ticks with read lag,
+instant and exact per-model request_count, and scriptable errors. Injected as an
+httpx transport; never touches the network.
 """
 
 from __future__ import annotations
@@ -15,83 +14,89 @@ import httpx
 
 
 class FakeOllama:
-    def __init__(self, *, uso_sesion: float = 0.234, uso_semanal: float = 0.146,
-                 lag_lecturas: int = 2) -> None:
-        self.llamadas: list[dict] = []
-        self.lag_lecturas = lag_lecturas
-        self.limite_concurrencia: int | None = None
-        self.falla_en: int | None = None  # 1-based: SOLO esa request falla
-        self._uso_sesion = round(uso_sesion, 3)
-        self._uso_semanal = round(uso_semanal, 3)
+    def __init__(
+        self, *, session_usage: float = 0.234, weekly_usage: float = 0.146, lag_reads: int = 2
+    ) -> None:
+        self.calls: list[dict] = []
+        self.lag_reads = lag_reads
+        self.concurrency_limit: int | None = None
+        self.fails_on: int | None = None  # 1-based: ONLY that request fails
+        self._session_usage = round(session_usage, 3)
+        self._weekly_usage = round(weekly_usage, 3)
         self._n_chat = 0
-        self._lecturas = 0
-        self._lecturas_al_programar = 0
-        self._ticks_pendientes = 0
-        self._en_vuelo = 0
+        self._reads = 0
+        self._reads_at_program = 0
+        self._pending_ticks = 0
+        self._in_flight = 0
+        self.chat_latency = 0.0  # seconds the chat handler holds (for overlap tests)
         self._counts: dict[str, int] = {}
 
     # ---- scripting ----
-    def programar_consumo(self, ticks: int) -> None:
-        """Cuota a facturar (se ACUMULA con lo pendiente); el medidor no la refleja
-        hasta que pasen `lag_lecturas` lecturas desde este punto."""
-        self._ticks_pendientes += ticks
-        self._lecturas_al_programar = self._lecturas
+    def program_consumption(self, ticks: int) -> None:
+        """Quota to bill (ACCUMULATES with pending); the meter reflects it only after
+        `lag_reads` meter reads since this call."""
+        self._pending_ticks += ticks
+        self._reads_at_program = self._reads
 
-    def sondear_concurrencia(self, k: int) -> int:
-        """Sonda directa (los 429 reales llegan por el transport con requests en vuelo)."""
-        if self.limite_concurrencia is not None and k > self.limite_concurrencia:
+    def probe_concurrency(self, k: int) -> int:
+        """Direct probe (real 429s arrive through the transport with in-flight requests)."""
+        if self.concurrency_limit is not None and k > self.concurrency_limit:
             return 429
         return 200
 
     # ---- transport ----
     def transport(self) -> httpx.MockTransport:
-        return httpx.MockTransport(self._manejar)
+        return httpx.MockTransport(self._handle)
 
-    def _manejar(self, request: httpx.Request) -> httpx.Response:
-        cuerpo: dict = {}
+    def _handle(self, request: httpx.Request) -> httpx.Response:
+        body: dict = {}
         if request.content:
-            cuerpo = json.loads(request.content)
-        self.llamadas.append({"path": request.url.path, "auth": "authorization" in request.headers,
-                              "body": cuerpo})
+            body = json.loads(request.content)
+        self.calls.append(
+            {"path": request.url.path, "auth": "authorization" in request.headers, "body": body}
+        )
         if request.url.path == "/api/usage":
             if "authorization" not in request.headers:
                 return httpx.Response(401, json={"error": "invalid credentials"})
-            return httpx.Response(200, json=self._leer_medidor())
+            return httpx.Response(200, json=self._read_meter())
         if request.url.path == "/api/chat":
             if "authorization" not in request.headers:
                 return httpx.Response(401, json={"error": "invalid credentials"})
             self._n_chat += 1
-            if self.falla_en is not None and self._n_chat == self.falla_en:
-                return httpx.Response(500, json={"error": "fallo puntual scriptado"})
-            if (self.limite_concurrencia is not None
-                    and self._en_vuelo >= self.limite_concurrencia):
-                return httpx.Response(429, json={"error": "concurrencia excedida"})
-            self._en_vuelo += 1
+            if self.fails_on is not None and self._n_chat == self.fails_on:
+                return httpx.Response(500, json={"error": "scripted one-shot failure"})
+            if self.concurrency_limit is not None and self._in_flight >= self.concurrency_limit:
+                return httpx.Response(429, json={"error": "concurrency limit exceeded"})
+            self._in_flight += 1
             try:
-                self._facturar(cuerpo)
-                if cuerpo.get("stream"):
-                    return httpx.Response(200, content=self._chunks_chat(cuerpo))
-                return httpx.Response(200, json=self._done(cuerpo))
+                if self.chat_latency:
+                    import time
+
+                    time.sleep(self.chat_latency)
+                self._bill(body)
+                if body.get("stream"):
+                    return httpx.Response(200, content=self._chat_chunks(body))
+                return httpx.Response(200, json=self._done(body))
             finally:
-                self._en_vuelo -= 1
+                self._in_flight -= 1
         return httpx.Response(404, json={"error": "not found"})
 
-    def _facturar(self, cuerpo: dict) -> None:
-        modelo = cuerpo.get("model", "?")
+    def _bill(self, body: dict) -> None:
+        modelo = body.get("model", "?")
         self._counts[modelo] = self._counts.get(modelo, 0) + 1
 
-    def _chunks_chat(self, cuerpo: dict) -> bytes:
-        modelo = cuerpo.get("model", "glm-5.3-flash")
+    def _chat_chunks(self, body: dict) -> bytes:
+        modelo = body.get("model", "glm-5.3-flash")
         parciales = [
-            {"model": modelo, "message": {"role": "assistant", "content": "mun"}, "done": False},
-            {"model": modelo, "message": {"role": "assistant", "content": "do"}, "done": False},
-            self._done(cuerpo),
+            {"model": modelo, "message": {"role": "assistant", "content": "wor"}, "done": False},
+            {"model": modelo, "message": {"role": "assistant", "content": "ld"}, "done": False},
+            self._done(body),
         ]
         return b"".join((json.dumps(c) + "\n").encode() for c in parciales)
 
-    def _done(self, cuerpo: dict) -> dict:
+    def _done(self, body: dict) -> dict:
         return {
-            "model": cuerpo.get("model", "glm-5.3-flash"),
+            "model": body.get("model", "glm-5.3-flash"),
             "done": True,
             "done_reason": "stop",
             "total_duration": 500_000_000,
@@ -102,19 +107,18 @@ class FakeOllama:
             "eval_duration": None,
         }
 
-    def _leer_medidor(self) -> dict:
-        self._lecturas += 1
-        if self._ticks_pendientes and (self._lecturas - self._lecturas_al_programar
-                                       >= self.lag_lecturas):
-            delta = round(self._ticks_pendientes * 0.001, 3)
-            self._uso_sesion = round(self._uso_sesion + delta, 3)
-            self._uso_semanal = round(self._uso_semanal + delta, 3)
-            self._ticks_pendientes = 0
+    def _read_meter(self) -> dict:
+        self._reads += 1
+        if self._pending_ticks and (self._reads - self._reads_at_program >= self.lag_reads):
+            delta = round(self._pending_ticks * 0.001, 3)
+            self._session_usage = round(self._session_usage + delta, 3)
+            self._weekly_usage = round(self._weekly_usage + delta, 3)
+            self._pending_ticks = 0
         modelos = [{"name": m, "request_count": c} for m, c in sorted(self._counts.items())]
         return {
             "activity": {"cost": "0.00000", "period": {"type": "last_4_weeks"}, "models": []},
             "limits": {
-                "session": {"usage": self._uso_sesion, "models": modelos},
-                "weekly": {"usage": self._uso_semanal, "models": [dict(m) for m in modelos]},
+                "session": {"usage": self._session_usage, "models": modelos},
+                "weekly": {"usage": self._weekly_usage, "models": [dict(m) for m in modelos]},
             },
         }

@@ -1,53 +1,57 @@
 # ollama-cloud-pricing-bench
 
-Metodología de benchmarks para medir el **costo efectivo** de ejecutar cargas de trabajo LLM
-en [Ollama Cloud](https://ollama.com) durante su transición del sistema de facturación
-**legado por GPU-time** al nuevo **por tokens** (anunciado el 2026-08-31 en
+Benchmark methodology to measure the **effective cost** of running LLM workloads on
+[Ollama Cloud](https://ollama.com) during its transition from **legacy GPU-time** billing to
+**token-based** billing (announced 2026-08-31 in
 [`ollama.com/blog/transparent-pricing`](https://ollama.com/blog/transparent-pricing)).
 
-El objetivo no es comparar precios nominales, sino responder con datos:
+The goal is not comparing nominal prices, but answering with data:
 
-- ¿El pricing por tokens es más económico para el usuario? ¿Para qué workloads y para cuáles es más caro?
-- ¿Se sostiene el argumento de que "GPU-time es difícil de predecir"?
-- ¿Qué incentivos económicos tiene Ollama para el cambio, y el cambio beneficia a quién?
+- Is token-based pricing more economical for the user? For which workloads, and for which is it more expensive?
+- Does the "GPU-time is hard to predict" argument hold?
+- What economic incentives does Ollama have for the change, and who does the change benefit?
 
-> **Estado: metodología v1 consolidada (2026-09-01)** — el mapa wayfinder cerró con las 14
-> decisiones registradas; los benchmarks aún no se han ejecutado (fase posterior, compuerta de
-> gasto en [`docs/metodologia-v1.md`](./docs/metodologia-v1.md) §11).
+> **Status: methodology v1 consolidated (2026-09-01)** - the wayfinder map closed with all 14
+> decisions recorded; the benchmarks have not run yet (a later phase, spending gate in
+> [`docs/methodology-v1.md`](./docs/methodology-v1.md) §11). The harness (tickets #17-26) is
+> being implemented; Harness 01 (CLI scaffold, spending gate, dry-run, fake) is done.
+> [Leer en español →](./README.es.md)
 
-> **Transparencia:** este proyecto se genera y mantiene con asistencia de IA
-> ([Claude Code](https://claude.com/claude-code)). No está afiliado ni avalado por Ollama.
-> Revisa el código y los datos antes de confiar en ellos.
+> **Transparency:** this project is generated and maintained with AI assistance
+> ([Claude Code](https://claude.com/claude-code)). Not affiliated with or endorsed by Ollama.
+> Review the code and data before trusting it.
 
-## Decisiones de diseño ya fijadas
+## Design decisions already fixed
 
-- **Doble rama de facturación**: medición viva bajo el **plan legado** GPU-time (la única
-  cuenta disponible; congelada, sin migrar) + **extrapolación** al plan nuevo con la tabla
-  oficial de tokens, hasta disponer de una key del plan nuevo.
-- **Unidad de cuenta**: cuota % del plan legado + ancla a dólares (precio mensual ÷ cuota);
-  puente a $ por token para la misma tarea, con y sin cache estándar.
-- **Catálogo completo** (19 modelos de la tabla oficial) con densidad escalonada: micro T1
-  en todos, suites estructurales T2 en ~6, workloads agénticos T3 en 2–3.
-- **Calidad**: éxito binario verificable (tests/compilación/checkers). Sin LLM-judge en v1.
-- **Concurrencia** como workstream de primera clase; harness agéntico propio y determinista.
+- **Dual billing branch**: live measurement under the **legacy plan** (the only available
+  account; frozen, not migrated) + **extrapolation** to the new plan with the official token
+  table, until a new-plan key exists.
+- **Unit of account**: legacy quota % + the dollar **anchor** (monthly price ÷ quota); token-$
+  bridge for the same task, with and without standard cache.
+- **Full catalog** (19 models in the official table) with staged density: T1 micro on all,
+  T2 structural suites on ~6, T3 code agents on 2-3.
+- **Quality**: verifiable binary success (tests/compilation/checkers). No LLM-judge in v1.
+- **Concurrency** as a first-class workstream; own deterministic agentic harness.
 
-## Archivos
+## Repository
 
-| Ruta | Contenido |
+| Path | Content |
 |---|---|
-| [`docs/metodologia-v1.md`](./docs/metodologia-v1.md) | **La metodología v1 consolidada** (el entregable del mapa) |
-| [`CONTEXT.md`](./CONTEXT.md) | Glosario del dominio (GPU-time, cuota, ancla, escenario de cache, umbral crítico…) |
-| `docs/research/base-pricing-2026-08-31.md` | Línea base verificable de ambos sistemas de facturación |
-| `docs/research/medidor-vivo-2026-08-31.md` | Verificación en vivo del medidor (API key, lag, cuantización) |
-| `docs/research/medidor-uso-ollama.md` | Research documental del medidor |
-| `docs/research/comparables-open-weights.md` | Comparables de precios por familia open-weights |
-| `docs/research/logs/` | Logs crudos de la verificación del medidor |
+| [`docs/methodology-v1.md`](./docs/methodology-v1.md) | **The consolidated methodology v1** (the map's deliverable) |
+| [`CONTEXT.md`](./CONTEXT.md) | Domain glossary (GPU-time, quota, anchor, cache scenario, critical threshold...) |
+| `docs/research/base-pricing-2026-08-31.md` | Verifiable baseline of both billing systems |
+| `docs/research/medidor-vivo-2026-08-31.md` | Live meter verification (API key, lag, quantization) |
+| `docs/research/medidor-uso-ollama.md` | Documentary research on the usage meter |
+| `docs/research/comparables-open-weights.md` | Per-family open-weights price comparables |
+| `docs/research/logs/` | Raw logs of the meter verification |
+| `pricing/2026-08-31.json` | Versioned official price table (the harness's input) |
+| `src/ocharness/` + `tests/` | The `bench` CLI: spending gate, dry-run, fake ollama.com seam |
 
-## Repos hermanos de este workspace
+## Sibling repos in this workspace
 
-- [`ollama-usage-breakdown`](https://github.com/srnoob2570/ollama-usage-breakdown) —
-  userscript que lee los medidores de `ollama.com/settings` (fuente candidata del delta de cuota).
-- [`OMeter`](https://github.com/srnoob2570/OMeter) — benchmarks TTFT/TPS para endpoints de Ollama
-  (a reutilizar donde aplique).
-- [`opencode-ollama-cloud`](https://github.com/srnoob2570/opencode-ollama-cloud) — catálogo vivo
-  de `ollama.com/v1/models` (fuente de la lista de modelos).
+- [`ollama-usage-breakdown`](https://github.com/srnoob2570/ollama-usage-breakdown) -
+  userscript that reads the `ollama.com/settings` meters (candidate source of the quota delta).
+- [`OMeter`](https://github.com/srnoob2570/OMeter) - TTFT/TPS benchmarks for Ollama endpoints
+  (reused where applicable).
+- [`opencode-ollama-cloud`](https://github.com/srnoob2570/opencode-ollama-cloud) - live catalog
+  from `ollama.com/v1/models` (source of the model list).

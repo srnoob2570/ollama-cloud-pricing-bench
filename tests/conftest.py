@@ -1,4 +1,4 @@
-"""Fixtures compartidos: el fake de ollama.com como seam de tests y helper de CLI."""
+"""Shared fixtures: the fake ollama.com as the test seam, plus CLI helpers."""
 
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ def fake() -> FakeOllama:
     return FakeOllama()
 
 
-def escribir_tabla(pricing_dir: pathlib.Path, version: str, modelos: dict) -> pathlib.Path:
-    """Escribe una tabla de precios versionada de prueba; devuelve el DIRECTORIO."""
+def write_table(pricing_dir: pathlib.Path, version: str, models: dict) -> pathlib.Path:
+    """Writes a test versioned price table; returns the DIRECTORY."""
     pricing_dir.mkdir(parents=True, exist_ok=True)
     ruta = pricing_dir / f"{version}.json"
     ruta.write_text(
@@ -27,10 +27,10 @@ def escribir_tabla(pricing_dir: pathlib.Path, version: str, modelos: dict) -> pa
             {
                 "table_version": version,
                 "captured": version,
-                "source": "fake de test",
+                "source": "test fake",
                 "per": 1_000_000,
                 "currency": "USD",
-                "models": modelos,
+                "models": models,
             },
             indent=2,
         ),
@@ -39,26 +39,20 @@ def escribir_tabla(pricing_dir: pathlib.Path, version: str, modelos: dict) -> pa
     return pricing_dir
 
 
-def tabla_estandar() -> dict:
-    """Las 19 tarifas oficiales (2026-08-31) — el slate T2/T3 del dry-run las necesita."""
-    return {
-        "deepseek-v4-flash": {"input": 0.44, "cached_input": 0.014, "output": 1.32},
-        "deepseek-v4-pro": {"input": 1.32, "cached_input": 0.044, "output": 3.96},
-        "gemma4": {"input": 0.14, "cached_input": 0.05, "output": 0.40},
-        "glm-5.3": {"input": 1.40, "cached_input": 0.26, "output": 4.40},
-        "glm-5.3-flash": {"input": 0.15, "cached_input": 0.03, "output": 0.50},
-        "glm-5.2": {"input": 1.40, "cached_input": 0.26, "output": 4.40},
-        "glm-5.1": {"input": 1.00, "cached_input": 0.20, "output": 3.20},
-        "gpt-oss:120b": {"input": 0.15, "cached_input": 0.014, "output": 0.60},
-        "gpt-oss:20b": {"input": 0.07, "cached_input": 0.035, "output": 0.30},
-        "kimi-k3": {"input": 3.00, "cached_input": 0.30, "output": 15.00},
-        "kimi-k2.7-code": {"input": 0.95, "cached_input": 0.19, "output": 4.00},
-        "kimi-k2.6": {"input": 0.95, "cached_input": 0.16, "output": 4.00},
-        "minimax-m3": {"input": 0.60, "cached_input": 0.12, "output": 2.40},
-        "minimax-m2.7": {"input": 0.30, "cached_input": 0.06, "output": 1.20},
-        "mistral-large-3": {"input": 0.50, "cached_input": 0.50, "output": 1.50},
-        "nemotron-3-nano": {"input": 0.06, "cached_input": 0.06, "output": 0.24},
-        "nemotron-3-super": {"input": 0.015, "cached_input": 0.015, "output": 0.60},
-        "nemotron-3-ultra": {"input": 0.10, "cached_input": 0.10, "output": 3.00},
-        "qwen3.5:397b": {"input": 0.60, "cached_input": 0.60, "output": 3.60},
-    }
+def standard_table() -> dict:
+    """The 19 official rates (2026-08-31) - T2/T3 slates need them in dry-runs.
+
+    Single source of truth: read from the versioned table in pricing/ when it
+    exists (kept in sync by definition, per the Harness-01 review note).
+    """
+    real = pathlib.Path(__file__).resolve().parents[1] / "pricing" / "2026-08-31.json"
+    if real.exists():
+        return json.loads(real.read_text(encoding="utf-8"))["models"]
+    raise FileNotFoundError(
+        "pricing/2026-08-31.json is missing: tests validate against the official table"
+    )
+
+
+def no_discount_table() -> dict:
+    """A table where every model prices cached_input = input (S1 == S0)."""
+    return {m: {"input": 0.60, "cached_input": 0.60, "output": 3.60} for m in standard_table()}

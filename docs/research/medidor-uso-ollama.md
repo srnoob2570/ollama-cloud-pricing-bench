@@ -1,178 +1,183 @@
-# El medidor de uso de ollama.com — qué expone y con qué granularidad (2026-09-01)
+# The ollama.com usage meter — what it exposes and at what granularity (2026-09-01)
 
-Resolución del issue
+Resolves issue
 [srnoob2570/ollama-cloud-pricing-bench#2](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/2).
-Pregunta: ¿puede un cliente externo medir el consumo del plan legado **GPU-time** por request,
-y con qué granularidad? Todo lo marcado como sondeo se ejecutó sin credenciales el
-2026-09-01 (UTC±, `x-build-commit: fcafe397` del servidor); cero peticiones de inferencia,
-cero cuota gastada, ninguna key inventada.
+Question: can an external client measure the legacy **GPU-time** plan's consumption per
+request, and at what granularity? Everything marked as a probe was executed without
+credentials on 2026-09-01 (UTC±, server `x-build-commit: fcafe397`); zero inference
+requests, zero quota spent, no invented keys.
 
-## 1. ¿Existe un endpoint del medidor y qué auth pide?
+## 1. Does a meter endpoint exist, and what auth does it require?
 
-- **`https://ollama.com/api/usage` existe.** Sondeo propio: `GET /api/usage` sin auth →
-  **HTTP 401**, `content-type: application/json`, cuerpo `{"error":"invalid credentials"}`.
-  Los endpoints vecinos no existen: `/api/usage/session`, `/api/usage/weekly`,
-  `/api/user` y `/api/rates` responden **404** JSON. Es decir, hay un único endpoint
-  agregado, no uno por ventana.
-- **Preflight CORS bloqueado**: `OPTIONS /api/usage` → **405 Method Not Allowed** en JSON,
-  sin headers `Access-Control-*`. El endpoint no está diseñado para clientes web de
-  terceros; consumirlo externamente exige un script propio (curl/Python) con credenciales.
-- **`GET https://ollama.com/settings` sin sesión → HTTP 303** a `/signin`: la página del
-  medidor requiere sesión web.
-- **Qué credencial acepta no es verificable sin cuenta.** El 401 es idéntico con o sin
-  `Authorization: Bearer` (probado con valor dummy `oml-invalid-key-probe`: mismo cuerpo
-  `{"error":"invalid credentials"}`), así que no se puede distinguir por respuesta si
-  admite API key, cookie de sesión, o ambas. Lo relevante: la API de `ollama.com` se
-  documenta con `Authorization: Bearer $OLLAMA_API_KEY`
+- **`https://ollama.com/api/usage` exists.** Own probe: `GET /api/usage` without auth →
+  **HTTP 401**, `content-type: application/json`, body `{"error":"invalid credentials"}`.
+  The neighboring endpoints do not exist: `/api/usage/session`, `/api/usage/weekly`,
+  `/api/user` and `/api/rates` return **404** JSON. That is, there is a single aggregated
+  endpoint, not one per window.
+- **CORS preflight blocked**: `OPTIONS /api/usage` → **405 Method Not Allowed** in JSON,
+  with no `Access-Control-*` headers. The endpoint is not designed for third-party web
+  clients; consuming it externally requires a script of your own (curl/Python) with
+  credentials.
+- **`GET https://ollama.com/settings` without a session → HTTP 303** to `/signin`: the
+  meter page requires a web session.
+- **Which credential it accepts is not verifiable without an account.** The 401 is
+  identical with or without `Authorization: Bearer` (tested with the dummy value
+  `oml-invalid-key-probe`: same body `{"error":"invalid credentials"}`), so the response
+  alone cannot distinguish whether it accepts an API key, a session cookie, or both. The
+  relevant part: the `ollama.com` API is documented with
+  `Authorization: Bearer $OLLAMA_API_KEY`
   ([docs.ollama.com/api/authentication](https://docs.ollama.com/api/authentication.md),
-  keys en `ollama.com/settings/keys`), y `{"error":"invalid credentials"}` es el formato
-  de error de esa API. Dato (inferencia) vs. hecho: que el `401` no cambie con un Bearer
-  inválido es compatible con "acepta Bearer pero esta key es inválida" — no lo confirma.
-- **Evidencia de terceros**: el único cliente externo conocido que lee el medidor,
+  keys at `ollama.com/settings/keys`), and `{"error":"invalid credentials"}` is that API's
+  error format. Inference vs. fact: that the `401` does not change with an invalid Bearer
+  is consistent with "it accepts Bearer but this key is invalid" — it does not confirm it.
+- **Third-party evidence**: the only known external client that reads the meter,
   [dzackgarza/usage-limits](https://github.com/dzackgarza/usage-limits/blob/main/src/usage_limits/providers/ollama.py),
-  **no usa API key**: hace *scrape* del HTML de `https://ollama.com/settings` con las
-  cookies de Chromium del usuario (`browser_cookie3`) y `allow_redirects=False`.
-  Confirmación de que la vía probada externamente es la **cookie de sesión web**, no una key.
-- Contexto de demanda insatisfecha: [ollama/ollama#15663](https://github.com/ollama/ollama/issues/15663)
-  pedía exactamente esto (quota vía headers o body de la API) y fue **cerrado como
-  duplicado el 2026-05-23 sin implementación ni respuesta de maintainer**;
-  [#17223](https://github.com/ollama/ollama/issues/17223) (dashboard, abierto) y
-  [#17639](https://github.com/ollama/ollama/issues/17639) (abierto) siguen pidiendo
-  lectura programática. No existe endpoint de cuota documentado.
+  **does not use an API key**: it scrapes the HTML of `https://ollama.com/settings` with
+  the user's Chromium cookies (`browser_cookie3`) and `allow_redirects=False`.
+  Confirmation that the externally proven path is the **web session cookie**, not a key.
+- Unmet-demand context: [ollama/ollama#15663](https://github.com/ollama/ollama/issues/15663)
+  asked for exactly this (quota via headers or the API body) and was **closed as a
+  duplicate on 2026-05-23 with no implementation and no maintainer response**;
+  [#17223](https://github.com/ollama/ollama/issues/17223) (dashboard, open) and
+  [#17639](https://github.com/ollama/ollama/issues/17639) (open) keep asking for
+  programmatic reads. No quota endpoint is documented.
 
-## 2. ¿Qué campos y unidades expone?
+## 2. What fields and units does it expose?
 
-Fuente primaria: el HTML de `ollama.com/settings`, decodificado por el userscript local
+Primary source: the HTML of `ollama.com/settings`, decoded by the local userscript
 `~/Documentos/srnoob2570/ollama-usage-breakdown/` ([ollama-usage-breakdown.user.js](https://github.com/srnoob2570/ollama-usage-breakdown/blob/main/ollama-usage-breakdown.user.js),
-v1.3.7) e independiente por el scraper de dzackgarza. Coinciden selector por selector.
+v1.3.7) and independently by dzackgarza's scraper. They match selector by selector.
 
-| Dato | Dónde vive en el HTML | Unidad real |
+| Data | Where it lives in the HTML | Actual unit |
 |---|---|---|
-| Total usado del período | `div[data-usage-track]` → `aria-label` `"Session usage N.N%"` / `"Weekly usage N.N%"` (dzackgarza) | **% de la cuota** de la ventana (1 decimal) |
-| Desglose por modelo | `div[data-usage-segment]` por modelo: `data-model` (nombre), `data-requests` (entero), `aria-label` `"modelo: N requests"`, `style.width` (ancho % del total usado) | share ∝ ancho; **nº de requests entero por modelo** |
-| Ventanas | dos tracks: **sesión 5 h** y **semanal 7 días** | períodos fijos |
-| Reset | `.local-time[data-time]` junto a cada meter (ISO 8601 absoluto) | timestamp |
-| Lo que NO hay | — | **ni GPU-segundos, ni tokens, ni dólares** en el medidor |
+| Total used of the period | `div[data-usage-track]` → `aria-label` `"Session usage N.N%"` / `"Weekly usage N.N%"` (dzackgarza) | **% of the window's quota** (1 decimal) |
+| Per-model breakdown | `div[data-usage-segment]` per model: `data-model` (name), `data-requests` (integer), `aria-label` `"model: N requests"`, `style.width` (width as % of total used) | share ∝ width; **integer request count per model** |
+| Windows | two tracks: **5 h session** and **7-day weekly** | fixed periods |
+| Reset | `.local-time[data-time]` next to each meter (absolute ISO 8601) | timestamp |
+| What is NOT there | — | **no GPU-seconds, no tokens, no dollars** in the meter |
 
-- El README del userscript lo resume: *"Ollama only reports the overall 'X% used' and the
+- The userscript's README sums it up: *"Ollama only reports the overall 'X% used' and the
   request counts. Each model's share exists only in the page HTML, encoded as bar segment
-  widths."* El porcentaje por modelo se recalcula como `ancho_del_segmento × %_total`
-  (ejemplo citado: 84.2 % de una sesión al 10.7 % → 9.01 % de la cuota).
-- Crucial según el README: *"Percentages are read from Ollama's page (bar segment widths),
-  **not from a private API**."* El userscript no hace ninguna llamada (`@grant none`,
-  cero red). El nombre `data-usage-*` es del markup de Ollama, del que extrae con
-  `MutationObserver` porque la página "se re-renderiza in place" (htmx).
-- Testimonio de usuario sobre el medidor en vivo
+  widths."* The per-model percentage is recomputed as `segment_width × total_%`
+  (cited example: 84.2 % of a session at 10.7 % → 9.01 % of the quota).
+- Crucial per the README: *"Percentages are read from Ollama's page (bar segment widths),
+  **not from a private API**."* The userscript makes no calls (`@grant none`,
+  zero network). The `data-usage-*` names are from Ollama's markup, which it watches with
+  a `MutationObserver` because the page "re-renders in place" (htmx).
+- User testimony about the live meter
   ([ollama/ollama#17639](https://github.com/ollama/ollama/issues/17639), 2026-08-09):
   "Session usage: 0%", "Weekly usage: ~68.5% remaining", "Models used this week includes
-  `glm-5.2` with **thousands of requests**", más "Extra usage balance: $0". Coherente con
-  la tabla de arriba (la ventana semanal también lista request counts por modelo).
-- La API de inferencia no aporta cuota: `docs.ollama.com/api/usage.md` documenta la
-  "usage" como métricas **por-request** (`prompt_eval_count`, `eval_count`, duraciones en
-  ns) — nada de cuenta. Y en las respuestas cloud no hay headers de cuota (hecho central
-  de [#15663](https://github.com/ollama/ollama/issues/15663): "Response headers also
+  `glm-5.2` with **thousands of requests**", plus "Extra usage balance: $0". Consistent
+  with the table above (the weekly window also lists per-model request counts).
+- The inference API contributes no quota: `docs.ollama.com/api/usage.md` documents the
+  "usage" as **per-request** metrics (`prompt_eval_count`, `eval_count`, durations in
+  ns) — nothing account-level. And cloud responses carry no quota headers (central fact
+  of [#15663](https://github.com/ollama/ollama/issues/15663): "Response headers also
   contain no quota metadata").
-- El medidor session/weekly es exclusivo del **sistema legado**: la página de pricing dice
-  de los planes migrados que *"the session and weekly limits of the old plans no longer
-  apply"* ([ollama.com/pricing](https://ollama.com/pricing)); los planes nuevos se miden en
-  créditos $ y tokens. El plan Max legado congelado del estudio sigue mostrándolos.
+- The session/weekly meter is exclusive to the **legacy system**: the pricing page says
+  of migrated plans that *"the session and weekly limits of the old plans no longer
+  apply"* ([ollama.com/pricing](https://ollama.com/pricing)); the new plans are measured
+  in $ credits and tokens. The study's frozen legacy Max plan still shows them.
 
-## 3. ¿Los deltas son atribuibles a requests individuales o agregados?
+## 3. Are the deltas attributable to individual requests or to aggregates?
 
-**Agregados con retardo, con dos ayudas parciales para la atribución** (no un contador
-por-request):
+**Aggregates with delay, with two partial aids for attribution** (not a per-request
+counter):
 
-1. **Resolución del total: 1 decimal de % por track.** El `aria-label` da el total con
-   una cifra decimal (10.7 % en el ejemplo del README). El incremento mínimo observable
-   entre dos lecturas es ~0.1 % de la cuota del período. Sobre la ventana de 7 días esa
-   resolución es gruesa: puede corresponder a muchas requests cortas o ninguna (si bien
-   el medidor puede refrescar con más precisión interna, lo publicado queda redondeado).
-2. **Anchos de segmento: más resolución interna por modelo.** La anchura
-   viene de `style.width` con decimales y el userscript la reescala a `% de cuota` con 2
-   decimales; ese es el mejor proxy de magnitud por modelo. Pero es una fracción del
-   total redondeado, no un contador absoluto independiente.
-3. **Request counts por modelo: cardinalidad exacta.** `data-requests` / `aria-label`
-   dan el **número entero de requests por modelo** en la sesión (y la lista nativa
-   semanal también las muestra, #17639). Esto permite saber *cuántas* requests hizo cada
-   modelo entre N-1 y N mediciones — la magnitud se divide entre ellas a posteriori.
-4. **Lag de backend: no verificable por fuentes públicas.** Que la página se actualiza
-   via htmx sin recargar es un hecho (README: *"Survives htmx updates"*); cuánto tarda el
-   backend en reflejar una request acabada en el `%` servido no lo documenta nadie. Es
-   exactamente lo que debe medir el ticket hijo de verificación en vivo.
+1. **Resolution of the total: 1 decimal of % per track.** The `aria-label` gives the
+   total with one decimal digit (10.7 % in the README example). The minimum observable
+   increment between two reads is ~0.1 % of the period's quota. Over the 7-day window
+   that resolution is coarse: it can correspond to many short requests or to none (even
+   if the meter may refresh with more internal precision, what is published stays
+   rounded).
+2. **Segment widths: more internal resolution per model.** The width
+   comes from `style.width` with decimals and the userscript rescales it to `% of quota`
+   with 2 decimals; that is the best per-model magnitude proxy. But it is a fraction of
+   the rounded total, not an independent absolute counter.
+3. **Per-model request counts: exact cardinality.** `data-requests` / `aria-label`
+   give the **integer number of requests per model** in the session (and the native
+   weekly list shows them too, #17639). This makes it possible to know *how many*
+   requests each model made between measurement N-1 and N — the magnitude is divided
+   among them a posteriori.
+4. **Backend lag: not verifiable from public sources.** That the page updates
+   via htmx without reloading is a fact (README: *"Survives htmx updates"*); how long the
+   backend takes to reflect a finished request in the served `%` is documented by no one.
+   This is exactly what the live-verification child ticket must measure.
 
-Conclusión: el delta **por-request estricto** (lectura → 1 request → lectura =
-% exacto de esa request) no está garantizado en ningún dato público; lo observable es un
-**delta agregado por modelo** (Δ% total + Δrequests por modelo), donde la imputación a
-cada request individual es un redondeo de resolución 0.1 % (mejor caso) y está sujeto a
-un lag de actualización no cuantificado.
+Conclusion: the **strictly per-request** delta (read → 1 request → read = that request's
+exact %) is not guaranteed by any public data; what is observable is an
+**aggregate delta per model** (total Δ% + per-model Δrequests), where attributing to each
+individual request is a rounding of 0.1 % resolution (best case) and is subject to
+an unquantified update lag.
 
-## 4. ¿Polling frecuente tiene límites?
+## 4. Does frequent polling have limits?
 
-- **No documentado.** Ni docs.ollama.com ni la FAQ de `ollama.com/pricing` publican rate
-  limits de `/api/usage` ni de `/settings` (la palabra "usage" en docs.ollama.com solo
-  existe como métricas por-request; en pricing, como créditos/tokens). Distinguir del
-  **429 de inferencia** por uso excesivo, que sí existe y es lo único documentado por la
-  comunidad (p. ej. el PR comunitario "wait out Ollama 429 rate/usage limits").
-- El sondeo no autenticado no puede medir el rate limit real (probarlo exigiría sesionar
-  y golpear el endpoint). Señales indirectas: la infra es Google Frontend (headers
-  `x-cloud-trace-context`), y `OPTIONS` está prohibido explícitamente (405), lo que
-  sugiere superficie mínima. **No verificable**: umbral de 429/403 del endpoint.
-- Indirecta de prudencia de terceros: ollamatps.com muestrea la inferencia "about hourly
-  to avoid burning through the weekly free-tier balance" — nadie publica mediciones de
-  polling del medidor; el consumo de cuota viene de las requests de inferencia, no
-  (que sepamos) de leer el medidor.
+- **Not documented.** Neither docs.ollama.com nor the FAQ on `ollama.com/pricing` publishes
+  rate limits for `/api/usage` or `/settings` (the word "usage" on docs.ollama.com only
+  exists as per-request metrics; on pricing, as credits/tokens). Distinguish from the
+  **inference 429** for excessive use, which does exist and is the only thing documented
+  by the community (e.g. the community PR "wait out Ollama 429 rate/usage limits").
+- The unauthenticated probe cannot measure the real rate limit (testing it would require
+  logging in and hitting the endpoint). Indirect signals: the infra is Google Frontend
+  (`x-cloud-trace-context` headers), and `OPTIONS` is explicitly forbidden (405), which
+  suggests a minimal surface. **Unverifiable**: the endpoint's 429/403 threshold.
+- Indirect sign of third-party prudence: ollamatps.com samples inference "about hourly
+  to avoid burning through the weekly free-tier balance" — nobody publishes measurements
+  of polling the meter; quota consumption comes from inference requests, not
+  (as far as we know) from reading the meter.
 
-## Implicaciones para la metodología
+## Implications for the methodology
 
-**Qué es medible**: la unidad de cuenta observable del plan legado es el **% de cuota**
-por ventana (sesión 5 h y semanal 7 días), con **desglose por modelo** (share + nº de
-requests) y **timestamp de reset** absoluto (`data-time`). GPU-segundos y tokens **no
-son observables** en ninguna fuente pública (confirma el glosario: la tarifa de GPU-time
-nunca se publicó).
+**What is measurable**: the observable unit of account of the legacy plan is the
+**quota %** per window (5 h session and 7-day weekly), with a **per-model breakdown**
+(share + request count) and an absolute **reset timestamp** (`data-time`). GPU-seconds
+and tokens are **not observable** in any public source (confirms the glossary: the
+GPU-time rate was never published).
 
-**Qué esquema de delta es viable**:
+**Which delta scheme is viable**:
 
-1. **Por-request estricto: NO viable de forma fiable.** El medidor publica % con 1
-   decimal y backend con lag desconocido; no hay garantía de que dos lecturas alrededor
-   de una única request la aíslen. Cualquier estimación por-request dependería de
-   espaciar las requests y reconciliar ventanas, y seguiría siendo una estimación.
-2. **Delta agregado con lag: viable y recomendado.** Polleando las dos ventanas se
-   registran `(timestamp, %_total, share_ por modelo, n_requests por modelo, reset_at)`
-   por track; el delta entre polls atribuye el consumo a nivel de **modelo + tramo de
-   tiempo**, con cardinalidad exacta de requests (Δrequests) y magnitud agregada (Δ%).
-   Para el bench: ejecutar un workload, esperar el refresh, tomar snapshot — los Δ%
-   con Δrequests son la observación primaria ("uso medido" del glosario).
-3. **El nº entero de requests por modelo (`data-requests`) es el conector clave** para
-   la atribución fina: dado un tramo con 1 modelo y Δrequests = 1, el Δ% de ese tramo
-   es el coste de esa request (con resolución 0.1 % del total — suficiente para
-   workloads T1 micro? se decide con datos del ticket de verificación en vivo).
-4. **Vía técnica del cliente externo**: cookie de sesión web (la que usa la comunidad);
-   las API keys autentican la inferencia y no hay evidencia de que `/api/usage` las
-   acepte. Sin CORS: polling desde script propio (curl/Python con cookies), no desde
-   una página. Mejor aún, dentro del propio navegador: el userscript ya decodifica todo
-   el DOM y puede exportar snapshots sin tocar la red.
-5. **Pendiente del ticket de verificación en vivo** (hijo de este issue): (a) lag real
-   del medidor tras una request; (b) rate limit efectivo del polling; (c) confirmación
-   de si `Authorization: Bearer <key>` (o solo cookie) abre `/api/usage`, y de paso su
-   JSON — nunca observado por nosotros, solo inferido del 401 y del flujo htmx.
+1. **Strictly per-request: NOT reliably viable.** The meter publishes % with 1
+   decimal and the backend has unknown lag; there is no guarantee that two reads around
+   a single request isolate it. Any per-request estimate would depend on
+   spacing the requests and reconciling windows, and would remain an estimate.
+2. **Aggregate delta with lag: viable and recommended.** Polling the two windows
+   records `(timestamp, total_%, per-model share, per-model n_requests, reset_at)`
+   per track; the delta between polls attributes consumption at the **model + time-span**
+   level, with exact request cardinality (Δrequests) and aggregate magnitude (Δ%).
+   For the bench: run a workload, wait for the refresh, take a snapshot — the Δ%
+   with Δrequests are the primary observation ("measured usage" in the glossary).
+3. **The integer request count per model (`data-requests`) is the key connector** for
+   fine attribution: given a span with 1 model and Δrequests = 1, that span's Δ%
+   is the cost of that request (at 0.1 % resolution of the total — enough for
+   T1 micro workloads? to be decided with data from the live-verification ticket).
+4. **Technical path for the external client**: web session cookie (the one the community
+   uses); API keys authenticate inference and there is no evidence that `/api/usage`
+   accepts them. No CORS: polling from a script of your own (curl/Python with cookies),
+   not from a page. Better still, inside the browser itself: the userscript already
+   decodes the whole DOM and can export snapshots without touching the network.
+5. **Pending on the live-verification ticket** (child of this issue): (a) the meter's
+   real lag after a request; (b) the effective rate limit of polling; (c) confirmation
+   of whether `Authorization: Bearer <key>` (or cookie only) opens `/api/usage`, and
+   along the way its JSON — never observed by us, only inferred from the 401 and the
+   htmx flow.
 
-## Fuentes
+## Sources
 
-- Sondeo propio sin credenciales (2026-09-01): `401 {"error":"invalid credentials"}` en
-  `/api/usage`; 404 en variantes; 405 OPTIONS; 303 `/settings` → `/signin`.
-- Userscript local `~/Documentos/srnoob2570/ollama-usage-breakdown/ollama-usage-breakdown.user.js`
+- Own probe without credentials (2026-09-01): `401 {"error":"invalid credentials"}` on
+  `/api/usage`; 404 on variants; 405 OPTIONS; 303 `/settings` → `/signin`.
+- Local userscript `~/Documentos/srnoob2570/ollama-usage-breakdown/ollama-usage-breakdown.user.js`
   (v1.3.7, repo [srnoob2570/ollama-usage-breakdown](https://github.com/srnoob2570/ollama-usage-breakdown))
-  + su [README](https://github.com/srnoob2570/ollama-usage-breakdown#what-it-does).
+  + its [README](https://github.com/srnoob2570/ollama-usage-breakdown#what-it-does).
 - [dzackgarza/usage-limits — providers/ollama.py](https://github.com/dzackgarza/usage-limits/blob/main/src/usage_limits/providers/ollama.py)
-  (scrape con cookies de Chromium; `aria-label` "Session/Weekly usage N%"; `div[data-time]`).
-- [docs.ollama.com/api/usage.md](https://docs.ollama.com/api/usage.md) (usage = métricas
-  por-request, ns/counts) · [docs.ollama.com/api/authentication.md](https://docs.ollama.com/api/authentication.md)
-  (Bearer key para ollama.com) · [docs.ollama.com/llms.txt](https://docs.ollama.com/llms.txt)
-  (índice: no hay página de "usage meter" ni de rate limits de cloud).
-- [ollama/ollama#15663](https://github.com/ollama/ollama/issues/15663) (petición de cuota
-  via API; cerrado como duplicado) · [#17223](https://github.com/ollama/ollama/issues/17223)
-  (dashboard; abierto) · [#17639](https://github.com/ollama/ollama/issues/17639)
-  (medidor leído a mano; abierto).
+  (scrape with Chromium cookies; `aria-label` "Session/Weekly usage N%"; `div[data-time]`).
+- [docs.ollama.com/api/usage.md](https://docs.ollama.com/api/usage.md) (usage = per-request
+  metrics, ns/counts) · [docs.ollama.com/api/authentication.md](https://docs.ollama.com/api/authentication.md)
+  (Bearer key for ollama.com) · [docs.ollama.com/llms.txt](https://docs.ollama.com/llms.txt)
+  (index: there is no "usage meter" page nor cloud rate limits).
+- [ollama/ollama#15663](https://github.com/ollama/ollama/issues/15663) (request for quota
+  via the API; closed as duplicate) · [#17223](https://github.com/ollama/ollama/issues/17223)
+  (dashboard; open) · [#17639](https://github.com/ollama/ollama/issues/17639)
+  (meter read by hand; open).
 - [ollama.com/pricing](https://ollama.com/pricing) ("session and weekly limits of the old
-  plans no longer apply") · [ollamatps.com](https://ollamatps.com) (solo referencias
-  indirectas a su propio muestreo horario).
+  plans no longer apply") · [ollamatps.com](https://ollamatps.com) (only indirect
+  references to its own hourly sampling).

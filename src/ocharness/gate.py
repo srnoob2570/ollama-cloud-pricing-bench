@@ -1,8 +1,8 @@
-"""La compuerta de gasto: un nivel solo corre si su dry-run vigente lo autoriza.
+"""The spending gate: a level only runs if a live dry-run authorizes it.
 
-La marca registra el presupuesto aprobado y la `table_version` con la que se estimó:
-`run` la valida (nivel, integridad y tabla vigente) y la consume al arrancar —
-un dry-run habilita exactamente una corrida.
+The mark records the approved budget and the `table_version` it was estimated with:
+`run` validates it (level, integrity, and the live table) and consumes it at startup —
+one dry-run enables exactly one run.
 """
 
 from __future__ import annotations
@@ -12,50 +12,53 @@ import pathlib
 import time
 
 
-class CompuertaCerrada(Exception):
-    """Se pidió `run` de un nivel sin dry-run vigente o con presupuesto invalidado."""
+class GateClosed(Exception):
+    """`run` was requested for a level with no live dry-run or an invalidated budget."""
 
 
-def _ruta_marca(base: pathlib.Path | str, nivel: str) -> pathlib.Path:
-    return pathlib.Path(base) / "runs" / f"gate-{nivel}.json"
+def _mark_path(base, level: str) -> pathlib.Path:
+    return pathlib.Path(base) / "runs" / f"gate-{level}.json"
 
 
-def marcar_dry_run(base: pathlib.Path | str, nivel: str, estimado: dict) -> pathlib.Path:
-    """Registra el dry-run del nivel de forma atómica (crash-safe: tmp + rename)."""
-    ruta = _ruta_marca(base, nivel)
+def mark_dry_run(base, level: str, estimado: dict) -> pathlib.Path:
+    """Registers the level's dry-run atomically (crash-safe: tmp + rename)."""
+    ruta = _mark_path(base, level)
     ruta.parent.mkdir(parents=True, exist_ok=True)
-    marca = {"dry_run_at": round(time.time(), 3), "level": nivel,
-             "table_version": str(estimado.get("table_version")), "estimado": estimado}
+    marca = {
+        "dry_run_at": round(time.time(), 3),
+        "level": level,
+        "table_version": str(estimado.get("table_version")),
+        "estimado": estimado,
+    }
     tmp = ruta.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(marca), encoding="utf-8")
     tmp.replace(ruta)
     return ruta
 
 
-def exigir_dry_run(base: pathlib.Path | str, nivel: str, *,
-                   table_version: str | None = None) -> None:
-    """Lanza CompuertaCerrada si la marca falta, está corrupta o cambió de tabla."""
-    ruta = _ruta_marca(base, nivel)
+def require_dry_run(base, level: str, *, table_version: str | None = None) -> None:
+    """Raises GateClosed if the mark is missing, corrupt, or from another table."""
+    ruta = _mark_path(base, level)
     if not ruta.exists():
-        raise CompuertaCerrada(
-            f"compuerta: ejecuta primero `bench dry-run --level {nivel}` antes de correr")
+        raise GateClosed(f"gate: run `bench dry-run --level {level}` before running this level")
     try:
         marca = json.loads(ruta.read_text(encoding="utf-8"))
-        assert marca["level"] == nivel
+        assert marca["level"] == level
         assert isinstance(marca["dry_run_at"], (int, float))
-        assert marca["estimado"]["filas"]
+        assert marca["estimado"]["rows"]
     except (json.JSONDecodeError, KeyError, AssertionError, TypeError):
-        raise CompuertaCerrada(
-            f"compuerta: la marca de {nivel} está corrupta — re-ejecuta "
-            f"`bench dry-run --level {nivel}`") from None
+        raise GateClosed(
+            f"gate: the mark for {level} is corrupt - re-run `bench dry-run --level {level}`"
+        ) from None
     if table_version is not None and marca.get("table_version") != str(table_version):
-        raise CompuertaCerrada(
-            f"compuerta: el dry-run aprobó la tabla {marca.get('table_version')!r} pero se "
-            f"usaría {table_version!r}; re-ejecuta `bench dry-run --level {nivel}`")
+        raise GateClosed(
+            f"gate: the dry-run approved table {marca.get('table_version')!r} but the run "
+            f"would use {table_version!r}; re-run `bench dry-run --level {level}`"
+        )
 
 
-def consumir(base: pathlib.Path | str, nivel: str) -> None:
-    """Consume la marca del nivel (su corrida ya arrancó)."""
-    ruta = _ruta_marca(base, nivel)
+def consume(base, level: str) -> None:
+    """Consumes the level's mark (its run has started): one dry-run, one run."""
+    ruta = _mark_path(base, level)
     if ruta.exists():
         ruta.unlink()

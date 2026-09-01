@@ -1,33 +1,34 @@
-# Línea base de pricing — los dos sistemas (2026-08-31)
+# Pricing baseline — the two systems (2026-08-31)
 
-Fuente del día de la transición: [ollama.com/pricing](https://ollama.com/pricing) (snapshot en
-[`pricing-snapshot/`](./pricing-snapshot/)) y el post oficial
-[ollama.com/blog/transparent-pricing](https://ollama.com/blog/transparent-pricing) del 2026-08-31.
-Marcado explícito de lo **no verificable** en la sección final.
+Sources from transition day: [ollama.com/pricing](https://ollama.com/pricing) (snapshot in
+[`pricing-snapshot/`](./pricing-snapshot/)) and the official post
+[ollama.com/blog/transparent-pricing](https://ollama.com/blog/transparent-pricing) dated
+2026-08-31. Anything **unverifiable** is explicitly flagged in the final section.
 
-## 1. Plan nuevo (token-based) — vigente para nuevos signups
+## 1. New plan (token-based) — in effect for new signups
 
-| Plan | Precio | Créditos incluidos/mes | Concurrencia |
+| Plan | Price | Included credits/month | Concurrency |
 |---|---|---|---|
-| Free | $0 | "starter usage credits" (monto no publicado) | 1 |
-| Pro | $20/mes (o $200/año = $16.67/mes) | $60 | 3 |
-| Max | $100/mes | $300 | 10 |
-| Team | $500/mes | $1,000 (compartido, usuarios ilimitados) | 10 |
+| Free | $0 | "starter usage credits" (amount not published) | 1 |
+| Pro | $20/month (or $200/year = $16.67/month) | $60 | 3 |
+| Max | $100/month | $300 | 10 |
+| Team | $500/month | $1,000 (shared, unlimited users) | 10 |
 | Enterprise | custom | volume pricing | custom |
 
-- La facturación es **por tokens a la tarifa de cada modelo** ("Usage is measured in tokens
-  at each model's rates" — FAQ oficial).
-- Los créditos **no se acumulan** ("unused credits do not roll over"); se refrescan en el
-  reset mensual. Agotados, se dibuja del balance extra pay-as-you-go (disponible incluso en Free).
-- Pro anuncia **"Fast mode (coming soon)"**: velocidad por plan anunciada, no implementada;
-  hoy "Speed depends on model size, architecture, and hardware optimization. […] Priority
+- Billing is **per token at each model's rates** ("Usage is measured in tokens
+  at each model's rates" — official FAQ).
+- Credits **do not accumulate** ("unused credits do not roll over"); they refresh at the
+  monthly reset. Once exhausted, usage draws from the extra pay-as-you-go balance
+  (available even on Free).
+- Pro advertises **"Fast mode (coming soon)"**: per-plan speed announced, not implemented;
+  today "Speed depends on model size, architecture, and hardware optimization. […] Priority
   tiers with faster performance may be available in the future."
-- La FAQ dice que los limites viejos de 5 h de sesión y 7 días semanales **ya no aplican**
-  a los planes nuevos.
+- The FAQ states that the old limits of 5 h sessions and 7-day weekly windows **no longer
+  apply** to the new plans.
 
-### Tabla oficial por 1M tokens (input / cached input / output)
+### Official per-1M-token table (input / cached input / output)
 
-| Modelo | Input | Cached input | Output |
+| Model | Input | Cached input | Output |
 |---|---|---|---|
 | deepseek-v4-flash | $0.44 | $0.014 | $1.32 |
 | deepseek-v4-pro | $1.32 | $0.044 | $3.96 |
@@ -49,79 +50,81 @@ Marcado explícito de lo **no verificable** en la sección final.
 | nemotron-3-ultra | $0.10 | $0.10 | $3.00 |
 | qwen3.5:397b | $0.60 | $0.60 | $3.60 |
 
-## 2. Sistema legado — GPU-time (estado del suscriptor existente a 2026-08-31)
+## 2. Legacy system — GPU-time (status of the existing subscriber as of 2026-08-31)
 
-- Los suscriptores existentes de Pro/Max/Team "**remain on your current plan**" y pueden
-  migrar voluntariamente en billing settings; los nuevos signups ya entran al sistema nuevo.
-- El plan legado del dueño del estudio: **Max bajo GPU-time** (única cuenta disponible — ver
-  guardarraíl: no migrar durante la recolección).
-- **No verificable**: cuánto GPU-time representa la cuota (% sesión 5 h / % semanal 7 días/
-  niveles por modelo); nunca se publicó la tarifa en $ ni el mapeo nivel → GPU-segundos.
-  La frase oficial eliminada del dashboard decía: *"Usage reflects actual utilization of
-  Ollama's cloud infrastructure – primarily GPU time, which depends on model size and
-  request duration"* (citada por [ollamatps.com/limits](https://ollamatps.com/limits/) y
+- Existing Pro/Max/Team subscribers "**remain on your current plan**" and may migrate
+  voluntarily in billing settings; new signups already enter the new system.
+- The study owner's legacy plan: **Max on GPU-time** (the only account available — see
+  guardrail: do not migrate during collection).
+- **Unverifiable**: how much GPU-time the quota represents (% of the 5 h session / % of the
+  7-day weekly window / per-model levels); neither the rate in $ nor the level → GPU-seconds
+  mapping was ever published. The official phrase removed from the dashboard said: *"Usage
+  reflects actual utilization of Ollama's cloud infrastructure – primarily GPU time, which
+  depends on model size and request duration"* (cited by
+  [ollamatps.com/limits](https://ollamatps.com/limits/) and
   [BSWEN](https://docs.bswen.com/blog/2026-04-20-what-is-ollama-cloud/)).
-- La API por request reporta `prompt_eval_count`, `eval_count` y duraciones en ns
+- The per-request API reports `prompt_eval_count`, `eval_count` and durations in ns
   (`total_duration`, `load_duration`, `prompt_eval_duration`, `eval_duration`)
-  ([docs.ollama.com/api/usage.md](https://docs.ollama.com/api/usage.md)); en streaming los
-  usage fields llegan en el último chunk (`done: true`). **No documentado**: GPU-time por
-  request, costo facturado por request, tokens cacheados, cabeceras de cuota, webhooks
-  (issue [15663](https://github.com/ollama/ollama/issues/15663) sigue abierto; inconsistencia
-  de billing `402 "extra usage only"` en
+  ([docs.ollama.com/api/usage.md](https://docs.ollama.com/api/usage.md)); in streaming the
+  usage fields arrive in the last chunk (`done: true`). **Not documented**: GPU-time per
+  request, billed cost per request, cached tokens, quota headers, webhooks
+  (issue [15663](https://github.com/ollama/ollama/issues/15663) still open; billing
+  inconsistency `402 "extra usage only"` in
   [17639](https://github.com/ollama/ollama/issues/17639)).
 
-## 3. Términos de migración
+## 3. Migration terms
 
-- Migración **voluntaria** para suscriptores existentes (billing settings); irreversible.
-- Al cambiar de plan: "Your usage is reset: the new plan's full monthly amount is available
+- Migration is **voluntary** for existing subscribers (billing settings); irreversible.
+- On plan change: "Your usage is reset: the new plan's full monthly amount is available
   right away."
-- **No declarado** en ningún lado: período de doble facturación o prorrateo; destino de los
-  créditos extra ya comprados bajo el sistema legado; política de reembolsos.
+- **Not stated** anywhere: any double-billing or proration period; the fate of extra
+  credits already purchased under the legacy system; refund policy.
 
-## 4. Justificación pública de Ollama
+## 4. Ollama's public justification
 
-Post oficial del 2026-08-31 (`/blog/transparent-pricing`):
+Official post of 2026-08-31 (`/blog/transparent-pricing`):
 
 > "GPU-time based billing was difficult to predict, especially as open models have grown
 > much larger (Kimi K3 has 2.8 trillion parameters)."
 
-Además: "no service fees and no 5-hour or weekly limits"; costo por request visible en
-account settings. Contexto previo de presión (no es quote de Ollama):
+Also: "no service fees and no 5-hour or weekly limits"; per-request cost visible in
+account settings. Prior pressure context (not an Ollama quote):
 
 - [Issue 17435](https://github.com/ollama/ollama/issues/17435) — "Usage quota silently
-  slashed ~70% with ZERO notification" (GPU-time "completely opaque" para un usuario Pro anual).
-- [Issue 15663](https://github.com/ollama/ollama/issues/15663) — pedido de exponer cuota/uso
-  por API; "the outlier" frente a OpenAI/Anthropic.
-- [Issue 15741](https://github.com/ollama/ollama/issues/15741) — modelos grandes detrás de un
-  paywall 403 sin anuncio previo.
+  slashed ~70% with ZERO notification" (GPU-time "completely opaque" for an annual Pro user).
+- [Issue 15663](https://github.com/ollama/ollama/issues/15663) — request to expose
+  quota/usage via the API; "the outlier" compared to OpenAI/Anthropic.
+- [Issue 15741](https://github.com/ollama/ollama/issues/15741) — large models behind a
+  403 paywall without prior notice.
 
-## 5. Comparables open-weights servidos en la nube
+## 5. Open-weights comparables served in the cloud
 
-Verificado para **Kimi K2 Thinking** (1T params, open-weights, INT4) — fuentes secundarias
-(agregadores), no páginas de precio en vivo:
+Verified for **Kimi K2 Thinking** (1T params, open-weights, INT4) — secondary sources
+(aggregators), not live pricing pages:
 
-| Proveedor | Input | Output |
+| Provider | Input | Output |
 |---|---|---|
-| Moonshot AI (directo) | $0.60 | $2.50 |
+| Moonshot AI (direct) | $0.60 | $2.50 |
 | Fireworks AI | $0.60 | $2.50 |
 | Together AI | $1.20 | $4.00 |
 | OpenRouter | $0.60 (+$0.15 cache) | $2.50 |
 
-El modelo comparable directo hoy en Ollama sería kimi-k2.6 ($0.95/$4.00); **no hay datos
-públicos comparables para kimi-k3**. Sin verificar en esta pasada: Gemini API y DeepSeek directos.
+The direct comparable model on Ollama today would be kimi-k2.6 ($0.95/$4.00); **no
+comparable public data exists for kimi-k3**. Not verified in this pass: Gemini API and
+DeepSeek direct.
 
-## 6. No verificable (explícito)
+## 6. Unverifiable (explicit)
 
-- Tarifa en $ del GPU-time del sistema legado y el mapeo cuota % → GPU-segundos ($ de un
-  "100 %" del plan legado): nunca publicado.
-- Monto exacto de los "starter credits" del plan Free.
-- Política sobre créditos extra ya comprados al migrar; prorrateo/doble facturación.
-- TPM/RPM/tok/s publicados por plan: no existen; los reportes de velocidad (8–22 tok/s en
-  modelos pesados) son anecdóticos de terceros.
+- The $ rate of the legacy system's GPU-time and the quota % → GPU-seconds mapping (the $
+  value of "100 %" of the legacy plan): never published.
+- The exact amount of the Free plan's "starter credits".
+- Policy on extra credits already purchased when migrating; proration/double billing.
+- Published per-plan TPM/RPM/tok/s: they do not exist; the speed reports (8–22 tok/s on
+  heavy models) are third-party anecdotes.
 
 ## Sources
 
-- [ollama.com/pricing](https://ollama.com/pricing) · snapshot local: [`pricing-snapshot/`](./pricing-snapshot/)
+- [ollama.com/pricing](https://ollama.com/pricing) · local snapshot: [`pricing-snapshot/`](./pricing-snapshot/)
 - [ollama.com/blog/transparent-pricing](https://ollama.com/blog/transparent-pricing)
 - [docs.ollama.com/api/usage.md](https://docs.ollama.com/api/usage.md) · [docs.ollama.com/cloud](https://docs.ollama.com/cloud) · [docs.ollama.com/api/openai-compatibility.md](https://docs.ollama.com/api/openai-compatibility.md)
 - [ollamatps.com/limits](https://ollamatps.com/limits/) · [docs.bswen.com](https://docs.bswen.com/blog/2026-04-20-what-is-ollama-cloud/)

@@ -1,21 +1,22 @@
-# Verificación en vivo del medidor de uso (2026-08-31)
+# Live verification of the usage meter (2026-08-31)
 
-Resolución del ticket «Verificar en vivo el medidor de uso» — la única corrida con cuenta real
-de este mapa (guardarraíl del mapa: ~10 requests triviales). Gasto real: 6 requests
-`nemotron-3-nano:30b` (156 in + 72 out tokens, ~3.4 s de `total_duration` agregado).
+Resolves the ticket "Verify the usage meter live" — the only run with a real account of
+this map (map guardrail: ~10 trivial requests). Actual spend: 6 requests to
+`nemotron-3-nano:30b` (156 in + 72 out tokens, ~3.4 s of aggregate `total_duration`).
 
-Logs crudo: [`logs/medidor-vivo-2026-08-31/reads.jsonl`](./logs/medidor-vivo-2026-08-31/reads.jsonl)
-(y `requests.jsonl` hermano) — sin credenciales. Complemento teórico:
-[`medidor-uso-ollama.md`](./medidor-uso-ollama.md), que este doc corrige en vivo.
+Raw logs: [`logs/medidor-vivo-2026-08-31/reads.jsonl`](./logs/medidor-vivo-2026-08-31/reads.jsonl)
+(and sibling `requests.jsonl`) — no credentials. Theoretical complement:
+[`medidor-uso-ollama.md`](./medidor-uso-ollama.md), which this doc corrects live.
 
-## 1. La API key (Bearer) SÍ autentica el medidor
+## 1. The API key (Bearer) DOES authenticate the meter
 
-`GET https://ollama.com/api/usage` con `Authorization: Bearer <API key>` → **200**.
-Sin auth → 401 (`{"error":"invalid credentials"}`); `/api/usage/session` y `/api/usage/weekly` → 404.
-El research documental decía que solo la cookie de sesión estaba probada: queda **corregido** —
-la propuesta original del dueño (poll del endpoint entre peticiones) funciona directamente, sin navegador.
+`GET https://ollama.com/api/usage` with `Authorization: Bearer <API key>` → **200**.
+Without auth → 401 (`{"error":"invalid credentials"}`); `/api/usage/session` and
+`/api/usage/weekly` → 404. The documentary research said only the session cookie was
+proven: now **corrected** — the owner's original proposal (polling the endpoint between
+requests) works directly, without a browser.
 
-## 2. Qué expone exactamente (estructura observada)
+## 2. What exactly it exposes (observed structure)
 
 ```json
 {"activity": {"cost": "0.00000", "period": {"type": "last_4_weeks", ...}, "models": []},
@@ -24,91 +25,98 @@ la propuesta original del dueño (poll del endpoint entre peticiones) funciona d
    "weekly":  {"usage": 0.146, "models": [{"name": "kimi-k3", "request_count": 209}, ...]}}}
 ```
 
-- `limits.session.usage` y `limits.weekly.usage`: **fracción de cuota** (0.234 = 23.4 %), resolución
-  observada **0.001 (0.1 %)** por lectura. Ni GPU-seg, ni tokens, ni dólares por request.
-  ⚠️ **Convención de este doc y de las tablas**: los valores de `usage` se escriben siempre como
-  fracción tal cual los da el API (`0.235` equivale a 23.5 %; un paso de `0.001` = 0.1 puntos
-  porcentuales). No leerlos como "0.235 %".
-- `limits.*.models[]`: `request_count` **entero por modelo** (nombre = id del catálogo, con tag:
-  `nemotron-3-nano:30b`).
-- `activity.cost`: saldo en $ a 5 decimales, **quedó invariante** ("0.00000") durante todo el
-  experimento bajo cuota incluida. Hipótesis: solo acumula con *balance extra* pay-as-you-go —
-  no verificable sin fondos (queda como niebla del mapa).
+- `limits.session.usage` and `limits.weekly.usage`: **quota fraction** (0.234 = 23.4 %),
+  observed resolution **0.001 (0.1 %)** per read. No GPU-sec, no tokens, no dollars per
+  request.
+  ⚠️ **Convention of this doc and of the tables**: `usage` values are always written as
+  the fraction exactly as the API returns it (`0.235` means 23.5 %; one step of `0.001`
+  = 0.1 percentage points). Do not read them as "0.235 %".
+- `limits.*.models[]`: `request_count` **integer per model** (name = catalog id, with
+  tag: `nemotron-3-nano:30b`).
+- `activity.cost`: balance in $ at 5 decimals, **stayed invariant** ("0.00000")
+  throughout the experiment, quota-based usage included. Hypothesis: it only accumulates
+  with the *extra* pay-as-you-go balance — not verifiable without funds (remains in the
+  map's fog).
 
-## 3. Lag y cuantización medidos
+## 3. Measured lag and quantization
 
-**Convención**: `sess`/`week` son fracciones tal como las devuelve el API — `0.235` = 23.5 % de la cuota.
+**Convention**: `sess`/`week` are fractions exactly as the API returns them —
+`0.235` = 23.5 % of the quota.
 
-| Lectura | t (s) | sess | week | nemotron reqs |
+| Read | t (s) | sess | week | nemotron reqs |
 |---|---|---|---|---|
 | baseline / pre_r1 | 0.4 / 2.7 | 0.234 | 0.146 | — |
-| lag+0s (r1 completada 0.35 s antes) | 3.9 | 0.234 | 0.146 | **1** |
+| lag+0s (r1 completed 0.35 s earlier) | 3.9 | 0.234 | 0.146 | **1** |
 | lag+39s | 44.4 | 0.234 | 0.146 | 1 |
 | lag+69s | 74.7 | **0.235** | 0.146 | 1 |
 | pre_r3 | 83.2 | 0.235 | **0.147** | 2 |
 | pre_r4..r6 | 92–108 | 0.235 | 0.147 | 3,4,5 |
 | settle_final (+45 s) | 161.4 | **0.236** | 0.147 | **6** |
 
-- **`request_count` se registra casi instantáneo**: r1 estaba contada ~1 s después de completarse,
-  mucho antes de que el % se moviera. Es el atribuidor por-request fiable y el "acuse de recibo"
-  de que una request ya entró a la contabilidad.
-- **El % de cuota laguea ~60–90 s** (primer cambio de sesión ∈ (39 s, 69 s] tras r1; weekly ~76–83 s)
-  y **cuantiza en pasos de 0.1 %**: las 6 requests movieron solo +0.002 (sesión) y +0.001 (weekly).
-- Con estos datos, **la atribución de Δ% a una request individual queda descartada** (tal como
-  anticipaba el research); lo que este ticket añade es que **el contador por modelo no solo no
-  laguea sino que es exacto**: `nemotron-3-nano:30b` → 1,1,2,3,4,5,6 con 6 requests.
+- **`request_count` registers almost instantly**: r1 was counted ~1 s after completing,
+  long before the % moved. It is the reliable per-request attributor and the
+  acknowledgment that a request has already entered the accounting.
+- **The quota % lags ~60–90 s** (first session change ∈ (39 s, 69 s] after r1; weekly
+  ~76–83 s) and **quantizes in 0.1 % steps**: the 6 requests moved only +0.002 (session)
+  and +0.001 (weekly).
+- With these data, **attributing Δ% to an individual request is ruled out** (as the
+  research anticipated); what this ticket adds is that **the per-model counter not only
+  does not lag but is exact**: `nemotron-3-nano:30b` → 1,1,2,3,4,5,6 with 6 requests.
 
-## 4. Protocolo de medición derivado (insumo para «Modelo de costo» y «Protocolo de medición»)
+## 4. Derived measurement protocol (input for "Cost model" and "Measurement protocol")
 
-**Primitiva = lote bracketeado**, no request individual:
+**Primitive = bracketed batch**, not an individual request:
 
-1. Lectura del medidor (crudo JSON completo guardado).
-2. Lote de N requests, **un modelo o pocos**, todos los `request_count` presentes en la lectura pre.
-3. Confirmación de registro inmediata vía Δ`request_count` (≈1 s), útil también como sanity-check
-   de que todo el lote se facturó.
-4. Espera **≥ 90 s** y segunda lectura: Δ% de cuota **por lote** (no por request).
-5. Los tokens por request (`prompt_eval_count`/`eval_count` de la API) se cruzan con el Δ% del
-   lote para construir el mapeo tokens↔cuota; la resolución de ese mapeo es **0.001 de cuota**,
-   así que los lotes deben ser grandes frente al quantum (p. ej. ≥ 30× el contenido de un lote
-   trivial como este, o el Δ% es indistinguible del redondeo).
+1. Meter read (full raw JSON saved).
+2. Batch of N requests, **one model or few**, all `request_count` values present in the
+   pre read.
+3. Immediate registration confirmation via Δ`request_count` (≈1 s), also useful as a
+   sanity check that the whole batch was billed.
+4. Wait **≥ 90 s** and second read: quota Δ% **per batch** (not per request).
+5. The tokens per request (`prompt_eval_count`/`eval_count` from the API) are
+   cross-checked against the batch's Δ% to build the tokens↔quota mapping; the resolution
+   of that mapping is **0.001 of quota**, so batches must be large relative to the
+   quantum (e.g. ≥ 30× the content of a trivial batch like this one, or the Δ% is
+   indistinguishable from rounding).
 
-Corolario para las fórmulas: el error de cualquier Δ% por lote es ±0.001 (resolución) y el
-reloj de facturación se estabiliza a ~90 s — las corridas del benchmark deben dormir ~90 s
-entre lotes o aceptar arrastre de un lote a otro.
+Corollary for the formulas: the error of any per-batch Δ% is ±0.001 (resolution) and the
+billing clock stabilizes at ~90 s — benchmark runs must sleep ~90 s between batches or
+accept carryover from one batch to the next.
 
-## 5. Descubrimientos colaterales
+## 5. Side discoveries
 
-- **Ids de catálogo con tag** (`nemotron-3-nano:30b`, `gemma4:31b`, `deepseek-v4-pro:0813`,
-  `mistral-large-3:675b`…) frente a la tabla de precios sin tags (`nemotron-3-nano`):
-  el harness necesita regla de mapeo por prefijo.
-- **Uso real del dueño** (contexto de la línea base): glm-5.3-flash domina con 2391 requests
-  semanales y 962 de sesión — perfecto como modelo-ancla y como proxy de "usuario con muchas
-  solicitudes pequeñas".
-- `activity.cost` (campo $ con 5 decimales) es el candidato natural a lectura directa de costo
-  si alguna vez acumula; hoy, con 0.00000, no se puede confirmar nada.
+- **Catalog ids with tag** (`nemotron-3-nano:30b`, `gemma4:31b`, `deepseek-v4-pro:0813`,
+  `mistral-large-3:675b`…) versus the price table without tags (`nemotron-3-nano`):
+  the harness needs a prefix mapping rule.
+- **Owner's real usage** (baseline context): glm-5.3-flash dominates with 2391 weekly
+  requests and 962 session ones — perfect as anchor model and as a proxy for "a user
+  with many small requests".
+- `activity.cost` (a $ field with 5 decimals) is the natural candidate for a direct cost
+  read if it ever accumulates; today, at 0.00000, nothing can be confirmed.
 
-## 6. Añadido post-cierre: segunda lectura del dueño (~23:04, uso real entre medias)
+## 6. Post-closing addition: the owner's second read (~23:04, real usage in between)
 
-Lectura del dueño ~25 min después del experimento (42 requests reales de glm-5.3-flash entre
-medias, 1004/2433 en su sesión/semana frente a 962/2391 al arrancar este ticket):
+Owner's read ~25 min after the experiment (42 real glm-5.3-flash requests in between,
+1004/2433 in their session/week versus 962/2391 when this ticket started):
 
-- **Experimento natural de calibración**: 42 requests reales de glm-5.3-flash movieron la cuota
-  de sesión +0.005 (0.236 → 0.241, es decir **23.6 % → 24.1 %**) — ~0.00012 %/request en un
-  modelo "flash" mediano, coherente
-  con el quantum de 0.001 por lote. Segundo punto de calibración tokens↔cuota (sin tokens por
-  request conocidos de esas 42, queda como cotación de orden de magnitud, no como ratio exacto).
-- **`activity.period` es ventana rodante de 4 semanas** (`type: "last_4_weeks"`,
-  `starting_at: 2026-08-10T00:00:00Z`, `ending_at` avanza con cada llamada) — dato para el
-  **ancla** a dólares: la "cuota mensual" de los límites no es un mes calendario; el period
-  de activity rueda.
-- **"web search" cuenta como pseudo-modelo** en `request_count` (9 sesiones / 51 semana del
-  dueño) — el harness debe decidir si contarlo o filtrarlo.
-- `nemotron-3-nano:30b` quedó estable en **6** en ambas tracks exactamente como dejó el
-  experimento: los contadores no decaen ni se revierten.
+- **Natural calibration experiment**: 42 real glm-5.3-flash requests moved the session
+  quota +0.005 (0.236 → 0.241, i.e. **23.6 % → 24.1 %**) — ~0.00012 %/request on a
+  mid-size "flash" model, consistent
+  with the 0.001 quantum per batch. Second tokens↔quota calibration point (with no
+  known tokens per request for those 42, it stands as an order-of-magnitude figure,
+  not as an exact ratio).
+- **`activity.period` is a rolling 4-week window** (`type: "last_4_weeks"`,
+  `starting_at: 2026-08-10T00:00:00Z`, `ending_at` advances with each call) — data for
+  the **anchor** to dollars: the limits' "monthly quota" is not a calendar month; the
+  activity period rolls.
+- **"web search" counts as a pseudo-model** in `request_count` (9 session / 51 weekly
+  for the owner) — the harness must decide whether to count it or filter it out.
+- `nemotron-3-nano:30b` stayed stable at **6** in both tracks exactly as the experiment
+  left it: the counters do not decay or revert.
 
-## 7. Preguntas que quedan abiertas (niebla del mapa)
+## 7. Questions that remain open (fog of the map)
 
-- ¿`activity.cost` se incrementa por request cuando hay balance extra activo? (requiere fondos;
-  si sí, sería la lectura directa de costo faltante).
-- ¿El lag de ~60–90 s es batching del backend o propagación? (irrelevante para el protocolo
-  mientras se espere el settle, y por eso no sube a ticket).
+- Does `activity.cost` increase per request when an extra balance is active? (requires
+  funds; if yes, it would be the missing direct cost read).
+- Is the ~60–90 s lag backend batching or propagation? (irrelevant to the protocol as
+  long as the settle is awaited, which is why it does not become a ticket).

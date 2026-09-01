@@ -28,6 +28,7 @@ class CatalogReport:
     matched: dict[str, str]  # slate id -> catalog id that satisfied it
     missing: list[str]  # slate ids with no catalog match (the aborting drift)
     unseen: list[str]  # catalog ids outside the price table (rename candidates)
+    ambiguous: dict[str, list[str]]  # slate id -> the several variants it matched between
 
 
 def _base(model_id: str) -> str:
@@ -87,17 +88,31 @@ async def _verify_async(
     )
     matched: dict[str, str] = {}
     missing: list[str] = []
+    ambiguous: dict[str, list[str]] = {}
     for slate_id in slate_ids:
         coincidencias = _match(slate_id, catalog_ids)
         if not coincidencias:
             missing.append(slate_id)
         else:
             matched[slate_id] = coincidencias[0]
+            if len(coincidencias) > 1:
+                # Several tagged variants refer to the same slate id: requests
+                # will bill whichever sorted first, while the price table prices
+                # the untagged row. Surfaced loudly, never silently swallowed.
+                ambiguous[slate_id] = coincidencias
     bases_tabla = {_base(m) for m in table_models}
     unseen = sorted(c for c in catalog_ids if _base(c) not in bases_tabla)
     reporte = CatalogReport(
-        http=status, ids=catalog_ids, matched=matched, missing=missing, unseen=unseen
+        http=status,
+        ids=catalog_ids,
+        matched=matched,
+        missing=missing,
+        unseen=unseen,
+        ambiguous=ambiguous,
     )
+    if missing:
+        raise PreflightError(_drift_message(reporte, len(slate_ids)))
+    return reporte
     if missing:
         raise PreflightError(_drift_message(reporte, len(slate_ids)))
     return reporte

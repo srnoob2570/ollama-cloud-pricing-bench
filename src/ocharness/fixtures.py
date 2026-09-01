@@ -15,6 +15,11 @@ import functools
 import hashlib
 import json
 
+# Version of the fixture_hash derivation (sha256 over the JSON of prompts +
+# tool schemas). Any change to the algorithm re-rolls every hash: resumed runs
+# refuse to mix schemes under one run_id (the runner checks the manifest).
+FIXTURE_VERSION = "2"
+
 CALIBRATION_PROMPT = (
     "This is a calibration request for a cost benchmark. Reply with exactly the single word: OK"
 )
@@ -77,6 +82,13 @@ def question_of(prompt: str) -> str:
 
 def _t1_prompts(workload: str, n: int) -> list[str]:
     if workload == "qa_short":
+        if n > len(QA_SHORT_QUESTIONS):
+            # Silent truncation would send fewer requests than the batch's n and
+            # crash the burst mid-gather AFTER the requests were billed.
+            raise ValueError(
+                f"qa_short carries {len(QA_SHORT_QUESTIONS)} prompts, not {n} - the "
+                "workload table disagrees with the fixture"
+            )
         return [f"{q}{QA_SHORT_SUFFIX}" for q in QA_SHORT_QUESTIONS[:n]]
     if workload == "calibration":
         return [CALIBRATION_PROMPT] * n

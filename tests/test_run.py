@@ -413,3 +413,59 @@ def test_run_t3_is_not_implemented_yet(tmp_path, fake_cli):
     code, _, err = run_cli(tmp_path, "run", "--level", "T3", "--reps", "1", "--settle-s", "0")
     assert code == 3 and "Harness 05" in err
     assert fake_cli.calls == []  # refusing also spends nothing
+
+
+def test_meter_payload_without_request_counts_aborts_cleanly(tmp_path, fake_cli):
+    """A meter payload lacking request_count aborts the batch - never a traceback."""
+    prepare(tmp_path)
+    original = fake_cli._read_meter
+
+    def payload_sin_counts():
+        payload = original()
+        for ventana in payload["limits"].values():
+            for entrada in ventana["models"]:
+                entrada.pop("request_count", None)
+        return payload
+
+    fake_cli._read_meter = payload_sin_counts
+    code, _out, err = run_t1(tmp_path, "--model", "glm-5.3-flash", "--rep", "1", "--reps", "1")
+    assert code == 1 and "Traceback" not in err
+    assert "request_count" in err  # a clean count-check failure, loudly
+    # The cell is recoverable run state (aborted), not a stranded in_flight:
+    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    estados = [e["status"] for e in manifiesto["batches"].values()]
+    assert "in_flight" not in estados and estados.count("aborted") == 1
+    # And the bracket closed: the batch's real spend is attributed to it.
+    batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")
+    assert len(batches) == 1 and "request_count" in batches[0]["notes"]
+
+
+def test_run_refuses_a_manifest_with_a_corrupt_batch_entry(tmp_path, fake_cli):
+    """A hand-edited entry must look corrupt to `run`, never 'unseen' (re-billing)."""
+    prepare(tmp_path)
+    assert run_t1(tmp_path, "--model", "glm-5.3-flash", "--reps", "1", "--settle-s", "0")[0] == 0
+    ruta = tmp_path / "runs" / "manifest-T1.json"
+    manifiesto = json.loads(ruta.read_text(encoding="utf-8"))
+    manifiesto["batches"]["broken00000000"] = "not a dict"
+    ruta.write_text(json.dumps(manifiesto), encoding="utf-8")
+    antes = len(fake_cli.calls)
+    assert (
+        run_cli(
+            tmp_path,
+            "dry-run",
+            "--level",
+            "T1",
+            "--reps",
+            "1",
+            "--pricing-dir",
+            str(tmp_path / "pricing"),
+        )[0]
+        == 0
+    )
+    code, _out, err = run_t1(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")
+    assert code == 1 and "Traceback" not in err
+    assert "corrupt" in err  # the promised corrupt-manifest RunnerError, not a crash
+    assert [c for c in fake_cli.calls[antes:] if c["path"] == "/api/chat"] == []
+    # `status` stays tolerant: it renders the entry as corrupt without crashing.
+    code, out, _err = run_cli(tmp_path, "status", "--level", "T1")
+    assert code == 0 and "attention: 1 corrupt" in out

@@ -210,3 +210,52 @@ def test_calibration_rejects_zero_token_reports(tmp_path, fake_cli):
     calibraciones = [r for r in read_requests(tmp_path) if r["workload"] == "calibration"]
     assert len(calibraciones) == 3
     assert all(r["checker"] == "fail" for r in calibraciones)
+
+
+def test_qa_short_fails_when_a_negation_follows_the_answer(tmp_path, fake_cli):
+    """A negation AFTER the answer flips it too ("Paris is not the capital")."""
+    fake_cli.reply_for = lambda prompt: (
+        "Paris is not the capital of France."
+        if prompt.startswith(PRIMERA_PREGUNTA)
+        else correct_transcript(prompt)
+    )
+    prepare(tmp_path)
+    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    assert code == 0, out or err
+    requests = read_requests(tmp_path)
+    fallidos = [r for r in requests if r["checker"] == "fail"]
+    assert len(fallidos) == 1
+    assert fallidos[0]["workload"] == "qa_short" and fallidos[0]["req_id"].endswith("-0000")
+
+
+def test_calibration_fails_without_full_sibling_evidence(tmp_path, fake_cli):
+    """2 of 3 identical requests truncated: the survivor has no reproducibility
+    evidence (its median would be itself) and must not grade pass."""
+    fake_cli.reply_for = lambda prompt: "OK" if prompt == CALIBRATION_PROMPT else "world"
+    # requests 21-23 are the calibration burst; #22 (its second request) gets a 500
+    fake_cli.fails_on = 22
+    prepare(tmp_path)
+    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    assert code == 0, out or err
+    calibraciones = [r for r in read_requests(tmp_path) if r["workload"] == "calibration"]
+    assert len(calibraciones) == 3
+    veredictos = [r["checker"] for r in calibraciones]
+    assert None in veredictos  # the failed request is a null attempt
+    assert "pass" not in veredictos  # the lone survivor cannot vouch for itself
+
+
+def test_throughput_blob_of_digits_is_graded_never_a_harness_error(tmp_path, fake_cli):
+    """A degenerate digit run must not crash int-parsing: it grades, never aborts."""
+    fake_cli.reply_for = lambda prompt: (
+        ", ".join(str(i) for i in range(1, 151)) + "\n" + "9" * 5000 + "\nDONE"
+        if prompt == THROUGHPUT_PROMPT
+        else correct_transcript(prompt)
+    )
+    prepare(tmp_path)
+    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    assert code == 0, out or err  # a model outcome, graded - not a CheckersError abort
+    throughput = [r for r in read_requests(tmp_path) if r["workload"] == "throughput"]
+    # The complete list + final DONE is the contract; the degenerate blob is
+    # bounded digit noise that neither crashes int() nor breaks the structure.
+    assert throughput[0]["checker"] == "pass"
+    assert "Traceback" not in err

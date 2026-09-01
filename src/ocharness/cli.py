@@ -110,6 +110,11 @@ def _preflight_line(catalogo: preflight.CatalogReport) -> str:
     por_tag = sorted((s, c) for s, c in catalogo.matched.items() if s != c)
     if por_tag:
         partes.append("by tag: " + ", ".join(f"{s} -> {c}" for s, c in por_tag))
+    for slate_id, variantes in sorted(catalogo.ambiguous.items()):
+        partes.append(
+            f"AMBIGUOUS: {slate_id} matches {len(variantes)} catalog variants "
+            f"({', '.join(variantes)}); billing the first ({variantes[0]})"
+        )
     if catalogo.unseen:
         partes.append("new in catalog (not in the price table): " + ", ".join(catalogo.unseen))
     return "; ".join(partes)

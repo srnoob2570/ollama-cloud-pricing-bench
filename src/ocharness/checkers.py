@@ -22,8 +22,8 @@ Every request line carries a `checker` verdict instead of a placeholder:
 T2 (structural suites, same rules):
 
   * long_context / ratio_in: every datum the register's task block asks for
-    (code or inspection days) appears in the reply, anchored to the prompt's
-    own grammar — a reply quoting the wrong unit's datum fails;
+    appears in a sentence that also names its unit — a right value attached to
+    the wrong unit's label fails (the binding lives in the reply's own text);
   * multi_turn: the access code the FINAL turn's question asks about appears
     in the reply (the transcript accumulated it turns earlier);
   * tool_calling: the emitted tool-call sequence matches the scenario's
@@ -51,8 +51,9 @@ CALIBRATION_BAND = 0.02
 
 _THROUGHPUT_SEQUENCE = list(range(1, 151))
 
-# A qa_short match is invalid when a negation sits right before it ("is not
-# Paris"); an enumeration of wrong candidates ending in the right number is a
+# A match is invalid when a negation hugs it — the few tokens right before it
+# ("is NOT Paris") or right after its last token ("Paris is NOT the capital").
+# An enumeration of wrong candidates ending in the right number is a
 # documented residual ambiguity, not worth NLU.
 _NEGATIONS = {"not", "no", "never"}
 _NEGATION_WINDOW = 3
@@ -68,36 +69,44 @@ def _tokens(texto: str) -> list[str]:
     return [t for t in re.split(r"[^\w]+", texto.casefold()) if t]
 
 
-def _subsequence(secuencia: list[str], patron: list[str]) -> bool:
-    """Whether `patron` appears in `secuencia` in order, gaps allowed."""
-    resto = iter(secuencia)
-    return all(token in resto for token in patron)
+def _match_end(secuencia: list[str], patron: list[str], inicio: int) -> int | None:
+    """Index of the LAST token of the first in-order match starting at `inicio`."""
+    fin = inicio
+    for esperado in patron[1:]:
+        try:
+            fin += 1 + secuencia[fin + 1 :].index(esperado)
+        except ValueError:
+            return None
+    return fin
 
 
-def _match_starts(secuencia: list[str], patron: list[str]) -> list[int]:
-    """Indexes where the pattern's FIRST token begins a full in-order match."""
-    return [
-        i
-        for i, token in enumerate(secuencia)
-        if token == patron[0] and _subsequence(secuencia[i + 1 :], patron[1:])
-    ]
+def _negated_around(secuencia: list[str], inicio: int, fin: int) -> bool:
+    """A negation hugging the match — just before it or right after it — flips it.
 
-
-def _negated_before(secuencia: list[str], inicio: int) -> bool:
-    """A negation among the few tokens right before a match flips its meaning."""
+    Both sides: "is NOT Paris" fails, and so does "Paris is not the capital".
+    A negation further out ("Paris, not London, is the capital") stays a
+    documented residual ambiguity, like the listed-wrong-answers enumeration.
+    """
     antes = secuencia[max(0, inicio - _NEGATION_WINDOW) : inicio]
-    return any(t in _NEGATIONS for t in antes)
+    despues = secuencia[fin + 1 : fin + 1 + _NEGATION_WINDOW]
+    return any(t in _NEGATIONS for t in antes) or any(t in _NEGATIONS for t in despues)
+
+
+def _match_clean(secuencia: list[str], patron: list[str]) -> bool:
+    """Whether `patron` appears in order somewhere, un-negated at some match."""
+    for i, token in enumerate(secuencia):
+        if token != patron[0]:
+            continue
+        fin = _match_end(secuencia, patron, i)
+        if fin is not None and not _negated_around(secuencia, i, fin):
+            return True
+    return False
 
 
 def _judge_qa_short(prompt: str, rec: dict, _registros: list[dict]) -> bool:
     aceptadas = fixtures.QA_SHORT_ANSWERS[fixtures.question_of(prompt)]
     tokens = _tokens(rec["content"])
-    for aceptada in aceptadas:
-        patron = _tokens(aceptada)
-        for inicio in _match_starts(tokens, patron):
-            if not _negated_before(tokens, inicio):
-                return True
-    return False
+    return any(_match_clean(tokens, _tokens(aceptada)) for aceptada in aceptadas)
 
 
 def _judge_calibration(_prompt: str, rec: dict, registros: list[dict]) -> bool:
@@ -110,7 +119,12 @@ def _judge_calibration(_prompt: str, rec: dict, registros: list[dict]) -> bool:
             for r in registros
             if r["done"] and isinstance(r["done"].get(done_campo), int)
         ]
-        medianas[done_campo] = statistics.median(valores) if valores else None
+        # The 2 % band is reproducibility EVIDENCE: with any sibling missing its
+        # token report (truncated, failed), the survivor's median is itself and
+        # the band is a tautology — the cell has no reproducibility to show.
+        medianas[done_campo] = (
+            statistics.median(valores) if len(valores) == len(registros) else None
+        )
     done = rec["done"]
     for done_campo in ("prompt_eval_count", "eval_count"):
         valor = done.get(done_campo)
@@ -123,9 +137,16 @@ def _judge_calibration(_prompt: str, rec: dict, registros: list[dict]) -> bool:
     return True
 
 
+def _integers_bounded(contenido: str, digits: int) -> list[int]:
+    """The reply's digit runs as ints; runs longer than `digits` are structure
+    violations (a degenerate blob cannot carry the contracted list) — never a
+    ValueError from Python's int-parsing cap."""
+    return [int(x) for x in re.findall(rf"\d{{1,{digits}}}", contenido)]
+
+
 def _judge_throughput(_prompt: str, rec: dict, _registros: list[dict]) -> bool:
     contenido = rec["content"]
-    enteros = [int(x) for x in re.findall(r"\d+", contenido)]
+    enteros = _integers_bounded(contenido, digits=4)
     # The ordered list must appear complete and contiguous; digits in surrounding
     # prose ("Here are the numbers from 1 to 150:") do not break the structure.
     n = len(_THROUGHPUT_SEQUENCE)
@@ -136,16 +157,26 @@ def _judge_throughput(_prompt: str, rec: dict, _registros: list[dict]) -> bool:
 
 
 def _match_anywhere(tokens: list[str], patron: list[str]) -> bool:
-    """Whether `patron` appears in order anywhere, un-negated at some match start."""
-    return any(not _negated_before(tokens, inicio) for inicio in _match_starts(tokens, patron))
+    """Whether `patron` appears in order anywhere, un-negated at some match."""
+    return _match_clean(tokens, patron)
 
 
 def _datum_presente(prompt: str, label: str, campo: str, rec: dict) -> bool:
-    """Whether the reply carries the labeled datum the task block asked for."""
+    """Whether the reply attaches the labeled datum to ITS unit.
+
+    The value must appear in a sentence that also names the unit: a reply that
+    carries every right value but attached to the wrong units fails.
+    """
     datums = fixtures_t2.register_datums(prompt)  # ValueError -> CheckersError (judge wraps)
     if label not in datums:
         raise CheckersError(f"register task asks about unknown unit [R-{label}]")
-    return _match_anywhere(_tokens(rec["content"]), _tokens(datums[label][campo]))
+    esperado = datums[label][campo]
+    contenido = rec["content"].casefold()
+    etiqueta = f"r-{label}"
+    for oracion in re.split(r"[.\n]", contenido):
+        if etiqueta in oracion and _match_clean(_tokens(oracion), _tokens(esperado)):
+            return True
+    return False
 
 
 def _judge_register(prompt: str, rec: dict, _registros: list[dict]) -> bool:
@@ -161,6 +192,19 @@ def _judge_multi_turn(prompt: str, rec: dict, _registros: list[dict]) -> bool:
     return _match_anywhere(_tokens(rec["content"]), _tokens(esperado))
 
 
+def _valor_del_tipo(valor, tipo: str) -> bool:
+    """Type conformance for the scalar JSON types (bool is never a number)."""
+    if tipo == "string":
+        return isinstance(valor, str)
+    if tipo == "boolean":
+        return isinstance(valor, bool)
+    if tipo == "integer":
+        return isinstance(valor, int) and not isinstance(valor, bool)
+    if tipo == "number":
+        return isinstance(valor, (int, float)) and not isinstance(valor, bool)
+    return False
+
+
 def _args_validos(valor, esquema) -> bool:
     """JSON-Schema subset: type, enum, required, properties, items, numeric bounds.
 
@@ -169,9 +213,11 @@ def _args_validos(valor, esquema) -> bool:
     """
     if not isinstance(esquema, dict) or not esquema:
         return True  # unconstrained
-    if "enum" in esquema:
-        return valor in esquema["enum"]
     tipo = esquema.get("type")
+    if "enum" in esquema:
+        if tipo is not None and not _valor_del_tipo(valor, tipo):
+            return False  # an enum member of the wrong Python type is a violation too
+        return valor in esquema["enum"]
     if tipo == "object":
         if not isinstance(valor, dict):
             return False
@@ -186,19 +232,13 @@ def _args_validos(valor, esquema) -> bool:
         if not isinstance(valor, list):
             return False
         return all(_args_validos(item, esquema.get("items") or {}) for item in valor)
-    if tipo == "string":
-        return isinstance(valor, str)
-    if tipo == "boolean":
-        return isinstance(valor, bool)
-    if tipo in ("integer", "number"):
-        if isinstance(valor, bool) or not isinstance(valor, (int, float)):
-            return False
-        if tipo == "integer" and not isinstance(valor, int):
+    if tipo in ("string", "boolean", "integer", "number"):
+        if not _valor_del_tipo(valor, tipo):
             return False
         if "minimum" in esquema and valor < esquema["minimum"]:
             return False
         return not ("maximum" in esquema and valor > esquema["maximum"])
-    return tipo is None
+    return tipo is None  # no declared type: the value is unconstrained
 
 
 def _judge_tool_calling(prompt: str, rec: dict, _registros: list[dict]) -> bool:
@@ -223,7 +263,9 @@ def _judge_long_generation(prompt: str, rec: dict, _registros: list[dict]) -> bo
     contenido = rec["content"].casefold()
     seccion = 0
     items = 0
-    for m in re.finditer(r"section (\d+):|item (\d+):", contenido):
+    # Section/item numbers never exceed two digits: a longer digit run is prose
+    # noise (and would overflow Python's int parsing at ~4300 digits).
+    for m in re.finditer(r"section (\d{1,3}):|item (\d{1,3}):", contenido):
         if m.group(1) is not None:
             if seccion and items != fixtures_t2.LONG_GENERATION_ITEMS:
                 return False  # the previous section was incomplete
@@ -253,7 +295,7 @@ def _judge_reasoning(prompt: str, rec: dict, _registros: list[dict]) -> bool:
 
 def _judge_ratio_out(_prompt: str, rec: dict, _registros: list[dict]) -> bool:
     contenido = rec["content"].casefold()
-    notas = [int(x) for x in re.findall(r"note (\d+)", contenido)]
+    notas = [int(x) for x in re.findall(r"note (\d{1,3})", contenido)]  # 1..10 only
     n = fixtures_t2.RATIO_OUT_NOTES
     if not any(notas[i : i + n] == list(range(1, n + 1)) for i in range(len(notas) - n + 1)):
         return False
@@ -293,26 +335,13 @@ def judge(workload: str, textos: list[str], registros: list[dict]) -> list[str |
             continue
         try:
             veredicto = juez(texto, rec, registros)
-        except ValueError as e:
-            # Fixture/prompt drift is a harness bug, never a model verdict: the
-            # runner turns this into null verdicts + an aborted batch.
-            raise CheckersError(f"checker for {workload!r}: {e}") from None
+        except CheckersError:
+            raise
+        except Exception as e:  # noqa: BLE001 - fixture drift keeps the billed evidence
+            # A judge that cannot grade (unknown prompt shape, drift between the
+            # fixture table and the data) is a harness bug, never a model verdict:
+            # the runner turns any CheckersError into null verdicts + an aborted
+            # batch, so the billed requests stay in the dataset.
+            raise CheckersError(f"checker for {workload!r}: {type(e).__name__}: {e}") from None
         veredictos.append("pass" if veredicto else "fail")
-    return veredictos
-    """One verdict per request of the batch, aligned with `textos`/`registros`."""
-    juez = _JUDGES.get(workload)
-    if juez is None:
-        raise CheckersError(f"no checker implemented for workload {workload!r}")
-    if len(textos) != len(registros):
-        raise CheckersError(
-            f"checker for {workload!r}: {len(textos)} prompts vs {len(registros)} responses"
-        )
-    veredictos: list[str | None] = []
-    for texto, rec in zip(textos, registros):
-        if rec["done"] is None:
-            # No completed response: a transport/HTTP failure stays null (the request
-            # is a failed attempt, not a graded outcome); a truncated 200 fails.
-            veredictos.append(None if not rec["content"] and rec["http"] != 200 else "fail")
-            continue
-        veredictos.append("pass" if juez(texto, rec, registros) else "fail")
     return veredictos

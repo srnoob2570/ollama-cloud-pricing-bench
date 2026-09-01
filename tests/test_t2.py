@@ -269,6 +269,7 @@ def test_tool_calling_grades_the_call_sequence_and_the_arguments(tmp_path, fake_
 
 
 def test_tool_schemas_reach_the_api_verbatim(tmp_path, fake_cli):
+    """The wire payload carries the scenario's tool declarations byte-for-byte."""
     fake_cli.reply_for = correct_transcript
     fake_cli.tool_calls_for = declared_calls
     prepare(tmp_path)
@@ -278,8 +279,13 @@ def test_tool_schemas_reach_the_api_verbatim(tmp_path, fake_cli):
     for c in tool_chats:
         prompt = c["body"]["messages"][0]["content"]
         escenario = fixtures_t2.tool_scenario(prompt)
-        assert [t["function"]["name"] for t in c["body"]["tools"]] == list(escenario["sequence"])
-        assert escenario["sequence"]  # the declared order, verbatim
+        enviadas = c["body"]["tools"]
+        # The FULL schemas travel on the wire — names, parameters, required —
+        # not just the names (a payload that dropped the schemas must fail here).
+        enviadas_json = {json.dumps(t, sort_keys=True) for t in enviadas}
+        esperadas_json = {json.dumps(t, sort_keys=True) for t in escenario["tools"]}
+        assert enviadas_json == esperadas_json  # verbatim, order-independent
+        assert [t["function"]["name"] for t in enviadas] == list(escenario["sequence"])
 
 
 def test_prose_instead_of_tool_calls_fails(tmp_path, fake_cli):
@@ -315,3 +321,37 @@ def test_structural_checkers_fail_on_broken_output(tmp_path, fake_cli):
     assert set(por_workload) == set(T2_NAMES)
     assert all(veredictos == {"fail"} for veredictos in por_workload.values())
     assert all(r["http"] == 200 for r in requests)  # billed attempts, graded as failures
+
+
+def test_register_grading_binds_values_to_their_units(tmp_path, fake_cli):
+    """Right values attached to the wrong units fail: the binding is per-sentence."""
+    fake_cli.reply_for = lambda prompt: (
+        _wrong_unit_transcript(prompt)
+        if fixtures_t2.workload_of(prompt) == "long_context"
+        else correct_transcript(prompt)
+    )
+    fake_cli.tool_calls_for = declared_calls
+    prepare(tmp_path)
+    assert run_t2(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")[0] == 0
+    requests = read_requests(tmp_path)
+    long_context = [r for r in requests if r["workload"] == "long_context"]
+    assert long_context[0]["checker"] == "fail"
+    # The other suites keep their correct verdicts: only the wrong binding fails.
+    others = [r for r in requests if r["workload"] not in ("long_context", "tool_calling")]
+    assert all(r["checker"] == "pass" for r in others)
+
+
+def _wrong_unit_transcript(prompt: str) -> str:
+    """Every ask answered with a right-looking value attached to the WRONG unit."""
+    datums = fixtures_t2.register_datums(prompt)
+    asks = fixtures_t2.register_asks(prompt)
+    labels = [l for l, _ in asks]
+    frases = []
+    for i, (label, campo) in enumerate(asks):
+        otro = labels[(i + 1) % len(labels)]  # rotate: right shape, wrong unit
+        frases.append(
+            f"The access code of the unit tagged [R-{label}] is {datums[otro]['code']}."
+            if campo == "code"
+            else f"The unit tagged [R-{label}] is inspected every {datums[otro]['days']} days."
+        )
+    return " ".join(frases)

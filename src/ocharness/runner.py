@@ -31,6 +31,7 @@ import uuid
 
 from . import checkers, fixtures, schema
 from .client import PROTOCOL_VERSION, OllamaCloud
+from .fixtures import FIXTURE_VERSION
 
 
 class RunnerError(Exception):
@@ -94,7 +95,7 @@ class Manifest:
         self.doc = doc
 
     @classmethod
-    def load(cls, ruta: pathlib.Path) -> Manifest | None:
+    def load(cls, ruta: pathlib.Path, *, strict: bool = False) -> Manifest | None:
         if not ruta.exists():
             return None
         try:
@@ -103,6 +104,17 @@ class Manifest:
                 raise TypeError("missing the batches map")
             if not isinstance(doc.get("run_id"), str):
                 raise TypeError("missing run_id")
+            if strict:
+                # A run must never dereference shapes it did not write: a null
+                # catalog or a malformed batch entry would either crash the
+                # resume (traceback) or look "unseen" and silently re-bill a
+                # cell whose state is unknown. `status` stays tolerant and
+                # renders broken entries as corrupt instead.
+                if not isinstance(doc.get("catalog", []), list):
+                    raise TypeError("'catalog' must be a list of snapshots")
+                for entrada in doc["batches"].values():
+                    if not isinstance(entrada, dict) or not isinstance(entrada.get("status"), str):
+                        raise TypeError("a batch entry is not a status map")
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             raise RunnerError(
                 f"manifest {ruta.name} is corrupt ({e}); the run state is unreadable - "
@@ -127,6 +139,7 @@ class Manifest:
             "level": level,
             "table_version": table_version,
             "protocol_version": PROTOCOL_VERSION,
+            "fixture_version": FIXTURE_VERSION,
             "k": k,
             "started_at": round(time.time(), 3),
             "planned": planned,
@@ -151,6 +164,12 @@ class Manifest:
         self.doc["batches"][bid] = entrada
         self.save()
 
+    def append_catalog(self, catalogo: dict) -> None:
+        """Adds one /v1/models snapshot to the catalog history (provenance)."""
+        self.doc.setdefault("catalog", []).append(
+            {"captured_at": round(time.time(), 3), **catalogo}
+        )
+
     def save(self) -> None:
         self.ruta.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.ruta.with_suffix(".json.tmp")
@@ -159,12 +178,30 @@ class Manifest:
 
 
 def _counts(payload: dict | None, window: str = "session") -> dict[str, int]:
+    """The meter's per-model request counts; {} when the payload is unreadable.
+
+    Guarded like _dpp: a meter payload whose model entries lack (or mis-type)
+    `request_count` must surface as a count-check failure — an aborted batch —
+    never as a KeyError traceback out of the runner (that would strand the
+    cell in_flight with its spend attributed to nothing).
+    """
     if not isinstance(payload, dict):
         return {}
-    modelos = payload.get("limits", {}).get(window, {}).get("models", [])
+    limits = payload.get("limits")
+    ventana = limits.get(window) if isinstance(limits, dict) else None
+    modelos = ventana.get("models") if isinstance(ventana, dict) else None
     if not isinstance(modelos, list):
         return {}
-    return {m["name"]: int(m["request_count"]) for m in modelos if isinstance(m, dict)}
+    counts: dict[str, int] = {}
+    for m in modelos:
+        if (
+            isinstance(m, dict)
+            and isinstance(m.get("name"), str)
+            and isinstance(m.get("request_count"), int)
+            and not isinstance(m["request_count"], bool)
+        ):
+            counts[m["name"]] = m["request_count"]
+    return counts
 
 
 def _dpp(pre: dict | None, post: dict | None, window: str) -> float | None:
@@ -259,7 +296,7 @@ async def _run_async(cfg: dict) -> dict:
     runs_dir.mkdir(parents=True, exist_ok=True)
     batches_dir.mkdir(parents=True, exist_ok=True)
 
-    existente = Manifest.load(runs_dir / f"manifest-{level}.json")
+    existente = Manifest.load(runs_dir / f"manifest-{level}.json", strict=True)
     run_id = (
         existente.run_id
         if existente
@@ -267,15 +304,18 @@ async def _run_async(cfg: dict) -> dict:
     )
     if existente:
         _check_drift(existente, cfg)
-    specs = plan(
-        run_id=run_id,
-        level=level,
-        workloads=cfg["workloads"],
-        models=cfg["models"],
-        reps=cfg["reps"],
-        rep_filter=cfg["rep_filter"],
-        k=cfg["k"],
-    )
+    try:
+        specs = plan(
+            run_id=run_id,
+            level=level,
+            workloads=cfg["workloads"],
+            models=cfg["models"],
+            reps=cfg["reps"],
+            rep_filter=cfg["rep_filter"],
+            k=cfg["k"],
+        )
+    except ValueError as e:  # fixture drift is a clean abort, not a traceback
+        raise RunnerError(f"run aborted before any request: {e}") from None
     manifiesto = existente or Manifest.create(
         runs_dir / f"manifest-{level}.json",
         run_id=run_id,
@@ -286,13 +326,18 @@ async def _run_async(cfg: dict) -> dict:
         catalog=cfg.get("catalog"),
     )
     if existente:
-        # A wider resume grows the run's scope; planned never shrinks (max union).
+        # The plan is the max union of everything this run_id has ever covered:
+        # a wider resume grows it, and status's pending count stays truthful.
         planned_previo = manifiesto.doc.get("planned")
-        if not isinstance(planned_previo, int) or len(specs) > planned_previo:
-            manifiesto.doc["planned"] = len(specs)
+        union = max(
+            planned_previo if isinstance(planned_previo, int) else 0,
+            len(specs),
+            len(manifiesto.doc["batches"]),
+        )
+        manifiesto.doc["planned"] = union
         # The preflight of THIS attempt joins the catalog snapshot history.
         if cfg.get("catalog"):
-            manifiesto.doc.setdefault("catalog", []).append(cfg["catalog"])
+            manifiesto.append_catalog(cfg["catalog"])
         manifiesto.save()
     rutas_requests = runs_dir / f"requests-{manifiesto.run_id}.jsonl"
     ruta_batches = batches_dir / f"batches-{manifiesto.run_id}.jsonl"
@@ -417,7 +462,12 @@ async def _run_async(cfg: dict) -> dict:
                     status_p, post, error_lectura = 0, None, f"{type(e).__name__}: {e}"
                 if status_p != 200 or post is None:
                     causa = error_lectura or f"HTTP {status_p}"
+                    # A checker-invalidated batch stays invalidated: the note must
+                    # say BOTH causes, or the operator re-runs a suite whose
+                    # verdicts were never valid.
                     nota = f"aborted: meter read failed ({causa}) after the settle"
+                    if nota_checker:
+                        nota = f"{nota_checker}; {nota}"
                     _close_batch(
                         ruta_batches,
                         spec,
@@ -520,7 +570,7 @@ async def _run_async(cfg: dict) -> dict:
 
 
 def _check_drift(existente: Manifest, cfg: dict) -> None:
-    """A manifest binds its run: table, protocol, and k may not drift mid-run."""
+    """A manifest binds its run: table, protocol, fixture scheme, and k may not drift."""
     if existente.doc.get("table_version") != cfg["table_version"]:
         raise RunnerError(
             f"manifest {existente.ruta.name} belongs to table "
@@ -533,6 +583,15 @@ def _check_drift(existente: Manifest, cfg: dict) -> None:
             f"manifest {existente.ruta.name} was written under protocol "
             f"{existente.doc.get('protocol_version')!r}; this harness speaks "
             f"{PROTOCOL_VERSION!r} - keep the datasets apart"
+        )
+    if existente.doc.get("fixture_version") != FIXTURE_VERSION:
+        # The fixture_hash algorithm (or the fixture bytes it pins) changed: a
+        # resumed run_id would mix incomparable hashes under one dataset.
+        raise RunnerError(
+            f"manifest {existente.ruta.name} was written with fixture scheme "
+            f"{existente.doc.get('fixture_version')!r}; this harness produces "
+            f"{FIXTURE_VERSION!r} - the batch hashes are not comparable - keep the "
+            "datasets apart"
         )
     if existente.doc.get("k") != cfg["k"]:
         raise RunnerError(

@@ -1,4 +1,4 @@
-"""The real T1 checkers (methodology v1 §5): binary pass/fail, no LLM-judge.
+"""The real T1/T2 checkers (methodology v1 §5): binary pass/fail, no LLM-judge.
 
 Every request line carries a `checker` verdict instead of a placeholder:
 
@@ -19,6 +19,22 @@ Every request line carries a `checker` verdict instead of a placeholder:
   * throughput: the complete, untruncated structure — the ordered 1..150 list
     (digits in surrounding prose don't break it) and the final DONE word.
 
+T2 (structural suites, same rules):
+
+  * long_context / ratio_in: every datum the register's task block asks for
+    (code or inspection days) appears in the reply, anchored to the prompt's
+    own grammar — a reply quoting the wrong unit's datum fails;
+  * multi_turn: the access code the FINAL turn's question asks about appears
+    in the reply (the transcript accumulated it turns earlier);
+  * tool_calling: the emitted tool-call sequence matches the scenario's
+    declared order exactly, and every call's arguments validate against that
+    tool's JSON schema (required fields, types, enums, numeric bounds);
+  * long_generation: the complete untruncated structure — sections 1..25 in
+    order, exactly 20 items each, finished by the contracted tail line;
+  * reasoning: the derived bay access number (fixture-parseable) appears in
+    the reply, and the prescribed ANSWER marker is present;
+  * ratio_out: the complete 10-note structure plus the contracted final word.
+
 An unknown workload raises CheckersError: a level must never run with a silent
 placeholder checker (that placeholder is exactly what this replaces).
 """
@@ -28,7 +44,7 @@ from __future__ import annotations
 import re
 import statistics
 
-from . import fixtures
+from . import fixtures, fixtures_t2
 
 # The calibration reproducibility band: |reported - median| <= 2 % of the median.
 CALIBRATION_BAND = 0.02
@@ -74,12 +90,8 @@ def _negated_before(secuencia: list[str], inicio: int) -> bool:
 
 
 def _judge_qa_short(prompt: str, rec: dict, _registros: list[dict]) -> bool:
-    contenido = rec["content"]
-    try:
-        aceptadas = fixtures.QA_SHORT_ANSWERS[fixtures.question_of(prompt)]
-    except ValueError as e:
-        raise CheckersError(str(e)) from None
-    tokens = _tokens(contenido)
+    aceptadas = fixtures.QA_SHORT_ANSWERS[fixtures.question_of(prompt)]
+    tokens = _tokens(rec["content"])
     for aceptada in aceptadas:
         patron = _tokens(aceptada)
         for inicio in _match_starts(tokens, patron):
@@ -123,14 +135,170 @@ def _judge_throughput(_prompt: str, rec: dict, _registros: list[dict]) -> bool:
     return bool(tokens) and tokens[-1] == "done"
 
 
+def _match_anywhere(tokens: list[str], patron: list[str]) -> bool:
+    """Whether `patron` appears in order anywhere, un-negated at some match start."""
+    return any(not _negated_before(tokens, inicio) for inicio in _match_starts(tokens, patron))
+
+
+def _datum_presente(prompt: str, label: str, campo: str, rec: dict) -> bool:
+    """Whether the reply carries the labeled datum the task block asked for."""
+    datums = fixtures_t2.register_datums(prompt)  # ValueError -> CheckersError (judge wraps)
+    if label not in datums:
+        raise CheckersError(f"register task asks about unknown unit [R-{label}]")
+    return _match_anywhere(_tokens(rec["content"]), _tokens(datums[label][campo]))
+
+
+def _judge_register(prompt: str, rec: dict, _registros: list[dict]) -> bool:
+    """long_context / ratio_in: every asked datum present, anchored to the prompt."""
+    for label, campo in fixtures_t2.register_asks(prompt):
+        if not _datum_presente(prompt, label, campo, rec):
+            return False
+    return True
+
+
+def _judge_multi_turn(prompt: str, rec: dict, _registros: list[dict]) -> bool:
+    esperado = fixtures_t2.multi_turn_expected(prompt)  # the code the FINAL turn asks about
+    return _match_anywhere(_tokens(rec["content"]), _tokens(esperado))
+
+
+def _args_validos(valor, esquema) -> bool:
+    """JSON-Schema subset: type, enum, required, properties, items, numeric bounds.
+
+    Extra (undeclared) keys are tolerated; a required key that is missing or
+    null is a violation; a declared-but-unknown type is treated as drift.
+    """
+    if not isinstance(esquema, dict) or not esquema:
+        return True  # unconstrained
+    if "enum" in esquema:
+        return valor in esquema["enum"]
+    tipo = esquema.get("type")
+    if tipo == "object":
+        if not isinstance(valor, dict):
+            return False
+        for requerido in esquema.get("required", ()):
+            if requerido not in valor or valor[requerido] is None:
+                return False
+        for clave, sub in (esquema.get("properties") or {}).items():
+            if clave in valor and not _args_validos(valor[clave], sub):
+                return False
+        return True
+    if tipo == "array":
+        if not isinstance(valor, list):
+            return False
+        return all(_args_validos(item, esquema.get("items") or {}) for item in valor)
+    if tipo == "string":
+        return isinstance(valor, str)
+    if tipo == "boolean":
+        return isinstance(valor, bool)
+    if tipo in ("integer", "number"):
+        if isinstance(valor, bool) or not isinstance(valor, (int, float)):
+            return False
+        if tipo == "integer" and not isinstance(valor, int):
+            return False
+        if "minimum" in esquema and valor < esquema["minimum"]:
+            return False
+        return not ("maximum" in esquema and valor > esquema["maximum"])
+    return tipo is None
+
+
+def _judge_tool_calling(prompt: str, rec: dict, _registros: list[dict]) -> bool:
+    escenario = fixtures_t2.tool_scenario(prompt)  # ValueError -> CheckersError (judge)
+    esperados = list(escenario["sequence"])
+    llamadas = rec.get("tool_calls") or []
+    nombres = [str(((tc or {}).get("function") or {}).get("name")) for tc in llamadas]
+    if nombres != esperados:
+        return False  # wrong order, a missing call, an extra call, or prose instead
+    esquemas = {t["function"]["name"]: t["function"]["parameters"] for t in escenario["tools"]}
+    for tc in llamadas:
+        funcion = (tc or {}).get("function") or {}
+        if not isinstance(funcion.get("arguments"), dict):
+            return False  # Ollama parses arguments into an object; a string is malformed
+        if not _args_validos(funcion["arguments"], esquemas[funcion["name"]]):
+            return False
+    return True
+
+
+def _judge_long_generation(prompt: str, rec: dict, _registros: list[dict]) -> bool:
+    """The complete structure: sections 1..N in order, K items each, contracted tail."""
+    contenido = rec["content"].casefold()
+    seccion = 0
+    items = 0
+    for m in re.finditer(r"section (\d+):|item (\d+):", contenido):
+        if m.group(1) is not None:
+            if seccion and items != fixtures_t2.LONG_GENERATION_ITEMS:
+                return False  # the previous section was incomplete
+            if int(m.group(1)) != seccion + 1:
+                return False
+            seccion, items = int(m.group(1)), 0
+        else:
+            if seccion == 0:
+                return False  # items before the first section header
+            items += 1
+            if int(m.group(2)) != items or items > fixtures_t2.LONG_GENERATION_ITEMS:
+                return False
+    if (
+        seccion != fixtures_t2.LONG_GENERATION_SECTIONS
+        or items != fixtures_t2.LONG_GENERATION_ITEMS
+    ):
+        return False
+    tokens = _tokens(contenido)
+    return bool(tokens) and list(tokens[-3:]) == list(fixtures_t2.LONG_GENERATION_TAIL)
+
+
+def _judge_reasoning(prompt: str, rec: dict, _registros: list[dict]) -> bool:
+    esperado = fixtures_t2.reasoning_expected(prompt)  # derived from the prompt's own rules
+    tokens = _tokens(rec["content"])
+    return "answer" in tokens and _match_anywhere(tokens, [str(esperado)])
+
+
+def _judge_ratio_out(_prompt: str, rec: dict, _registros: list[dict]) -> bool:
+    contenido = rec["content"].casefold()
+    notas = [int(x) for x in re.findall(r"note (\d+)", contenido)]
+    n = fixtures_t2.RATIO_OUT_NOTES
+    if not any(notas[i : i + n] == list(range(1, n + 1)) for i in range(len(notas) - n + 1)):
+        return False
+    tokens = _tokens(contenido)
+    return bool(tokens) and tokens[-1] == fixtures_t2.RATIO_OUT_TAIL
+
+
 _JUDGES = {
     "qa_short": _judge_qa_short,
     "calibration": _judge_calibration,
     "throughput": _judge_throughput,
+    "long_context": _judge_register,
+    "long_generation": _judge_long_generation,
+    "multi_turn": _judge_multi_turn,
+    "tool_calling": _judge_tool_calling,
+    "reasoning": _judge_reasoning,
+    "ratio_in": _judge_register,
+    "ratio_out": _judge_ratio_out,
 }
 
 
 def judge(workload: str, textos: list[str], registros: list[dict]) -> list[str | None]:
+    """One verdict per request of the batch, aligned with `textos`/`registros`."""
+    juez = _JUDGES.get(workload)
+    if juez is None:
+        raise CheckersError(f"no checker implemented for workload {workload!r}")
+    if len(textos) != len(registros):
+        raise CheckersError(
+            f"checker for {workload!r}: {len(textos)} prompts vs {len(registros)} responses"
+        )
+    veredictos: list[str | None] = []
+    for texto, rec in zip(textos, registros):
+        if rec["done"] is None:
+            # No completed response: a transport/HTTP failure stays null (the request
+            # is a failed attempt, not a graded outcome); a truncated 200 fails.
+            veredictos.append(None if not rec["content"] and rec["http"] != 200 else "fail")
+            continue
+        try:
+            veredicto = juez(texto, rec, registros)
+        except ValueError as e:
+            # Fixture/prompt drift is a harness bug, never a model verdict: the
+            # runner turns this into null verdicts + an aborted batch.
+            raise CheckersError(f"checker for {workload!r}: {e}") from None
+        veredictos.append("pass" if veredicto else "fail")
+    return veredictos
     """One verdict per request of the batch, aligned with `textos`/`registros`."""
     juez = _JUDGES.get(workload)
     if juez is None:

@@ -1,39 +1,19 @@
-"""Deterministic T1 fixtures: seeded prompts, hashed (methodology v1 §5).
+"""Deterministic fixtures: seeded prompts (+ tool schemas), hashed (methodology v1 §5).
 
-The fixture is the prompt sequence itself — identical across models and
+The fixture is the request sequence itself — identical across models and
 repetitions so every cell serves the same load, and hash-stamped on every raw
-line. qa_short carries the answer key its checker grades against; the other two
-contracts (the single calibration word, the throughput list) live in the prompts
-themselves. English, synthetic, version-in-repo.
+line. T1 generators live here; the 7 structural T2 suites live in
+`fixtures_t2` behind the same `build()` seam. qa_short carries the answer key
+its checker grades against; the other contracts live in the prompts themselves.
+English, synthetic, version-in-repo.
 """
 
 from __future__ import annotations
 
+import dataclasses
+import functools
 import hashlib
-
-# 20 short Q&A prompts (qa_short fires exactly one per request, in order).
-QA_SHORT_QUESTIONS: tuple[str, ...] = (
-    "What is the capital of France?",
-    "How many days are there in a leap year?",
-    "What is 7 times 8?",
-    "Name the largest ocean on Earth.",
-    "What is the official language of Brazil?",
-    "Who wrote Romeo and Juliet?",
-    "What is the boiling point of water in Celsius?",
-    "How many continents are there?",
-    "What is the chemical symbol for gold?",
-    "Which planet is closest to the Sun?",
-    "What is the square root of 144?",
-    "Name the longest river in the world.",
-    "What color results from mixing blue and yellow paint?",
-    "How many minutes are in an hour?",
-    "What is the tallest mountain above sea level?",
-    "How many sides does a hexagon have?",
-    "What is the freezing point of water in Fahrenheit?",
-    "Which currency is used in Japan?",
-    "What is the largest desert in the world?",
-    "How many strings does a standard guitar have?",
-)
+import json
 
 CALIBRATION_PROMPT = (
     "This is a calibration request for a cost benchmark. Reply with exactly the single word: OK"
@@ -76,7 +56,8 @@ QA_SHORT_ANSWERS: dict[str, tuple[str, ...]] = {
     "How many strings does a standard guitar have?": ("6", "six"),
 }
 
-# 20 short Q&A prompts (qa_short fires exactly one per request, in order).
+# The 20 short Q&A prompts, in the answer key's order (qa_short fires exactly
+# one per request, in order): a single derivation from the key, never a copy.
 QA_SHORT_QUESTIONS: tuple[str, ...] = tuple(QA_SHORT_ANSWERS)
 
 
@@ -104,16 +85,51 @@ def _t1_prompts(workload: str, n: int) -> list[str]:
     raise ValueError(f"unknown T1 workload: {workload!r}")
 
 
+@dataclasses.dataclass(frozen=True)
+class RequestSpec:
+    """One planned request: its prompt plus the tool schemas sent alongside."""
+
+    prompt: str
+    tools: tuple[dict, ...] = ()
+
+
+@functools.cache
+def _build_cached(level: str, workload: str, n: int) -> tuple[RequestSpec, ...]:
+    """The workload's request specs, generated once per (level, workload, n)."""
+    if level == "T1":
+        return tuple(RequestSpec(texto) for texto in _t1_prompts(workload, n))
+    if level == "T2":
+        from . import fixtures_t2  # lazy: T1 runs never load the T2 generators
+
+        return tuple(
+            RequestSpec(prompt=texto, tools=tuple(herramientas))
+            for texto, herramientas in fixtures_t2.specs(workload, n)
+        )
+    raise ValueError(f"fixture generators for {level!r} arrive with a later Harness ticket")
+
+
+def build(level: str, workload: str, n: int) -> tuple[RequestSpec, ...]:
+    """The workload's `n` deterministic request specs (prompts + tool schemas).
+
+    Cached: the tuple is shared and must be treated as immutable — every cell
+    of a workload serves the exact same requests.
+    """
+    return _build_cached(level, workload, n)
+
+
 def prompts(level: str, workload: str, n: int) -> list[str]:
     """The `n` deterministic prompts of one batch (workload, single model)."""
-    if level != "T1":
-        raise ValueError(f"fixture generators for {level!r} arrive with a later Harness ticket")
-    return _t1_prompts(workload, n)
+    return [spec.prompt for spec in build(level, workload, n)]
 
 
-def fixture_hash(textos: list[str]) -> str:
-    """sha256 over the batch's exact prompt sequence (the fixture is the bytes)."""
-    return hashlib.sha256("\n".join(textos).encode("utf-8")).hexdigest()
+def fixture_hash(specs) -> str:
+    """sha256 over the batch's exact request specs (prompts + tool schemas)."""
+    material = json.dumps(
+        [{"prompt": s.prompt, "tools": list(s.tools)} for s in specs],
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 def seed(workload: str, model: str, rep: int, index: int) -> int:

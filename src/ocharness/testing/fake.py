@@ -43,6 +43,9 @@ class FakeOllama:
         # with the (26, 12) token counts, exactly as the first tests pinned them.
         self.reply_for: Callable[[str], str] | None = None
         self.counts_for: Callable[[str, int | None], tuple[int, int]] | None = None
+        # Tool-call scripting: return the call frames for a prompt, or None to
+        # fall through to the text reply. Each frame: {"function": {"name", "arguments"}}.
+        self.tool_calls_for: Callable[[str], list[dict] | None] | None = None
         # What /v1/models serves (list of ids); empty = an unscripted catalog.
         self.catalog: list[str] = []
         self.catalog_http = 200  # status the models endpoint answers with
@@ -143,8 +146,25 @@ class FakeOllama:
             return self.counts_for(prompt, semilla)
         return (26, 12)
 
+    def _prompt_of(self, body: dict) -> str:
+        return (body.get("messages") or [{}])[0].get("content") or ""
+
     def _chat_chunks(self, body: dict) -> bytes:
         modelo = body.get("model", "glm-5.3-flash")
+        llamadas = self.tool_calls_for(self._prompt_of(body)) if self.tool_calls_for else None
+        if llamadas:
+            # The scripted calls stream as one message frame, verbatim, before the done.
+            parciales = [
+                {
+                    "model": modelo,
+                    "message": {"role": "assistant", "content": "", "tool_calls": llamadas},
+                    "done": False,
+                },
+                self._done(body),
+            ]
+            if self.truncate_stream:
+                parciales = parciales[:-1]
+            return b"".join((json.dumps(c) + "\n").encode() for c in parciales)
         texto = self._reply_text(body)
         mitad = -(-len(texto) // 2)  # ceil: "world" -> "wor" + "ld", as always scripted
         parciales = [

@@ -394,14 +394,15 @@ def test_checker_failure_keeps_the_billed_evidence(tmp_path, fake_cli, monkeypat
     assert all(e["status"] == "aborted" for e in manifiesto["batches"].values())
 
 
-def test_run_t2_t3_are_not_implemented_yet(tmp_path, fake_cli):
+def test_run_t3_is_not_implemented_yet(tmp_path, fake_cli):
+    """T2 runs since Harness 04; T3 stays behind its ticket's gate."""
     prepare(tmp_path)
     assert (
         run_cli(
             tmp_path,
             "dry-run",
             "--level",
-            "T2",
+            "T3",
             "--reps",
             "1",
             "--pricing-dir",
@@ -409,5 +410,6 @@ def test_run_t2_t3_are_not_implemented_yet(tmp_path, fake_cli):
         )[0]
         == 0
     )
-    code, _, err = run_cli(tmp_path, "run", "--level", "T2", "--reps", "1", "--settle-s", "0")
-    assert code == 3 and "only implemented for T1" in err
+    code, _, err = run_cli(tmp_path, "run", "--level", "T3", "--reps", "1", "--settle-s", "0")
+    assert code == 3 and "Harness 05" in err
+    assert fake_cli.calls == []  # refusing also spends nothing

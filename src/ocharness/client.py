@@ -60,14 +60,20 @@ class OllamaCloud:
         """GET /v1/models -> (http status, payload or None): the preflight catalog."""
         return await self._get_json("/v1/models")
 
-    async def chat(self, *, model: str, prompt: str, seed: int | None = None) -> dict:
-        """One streaming chat request with chunk timestamps; errors are data, not raises."""
+    async def chat(self, *, model: str, prompt: str, seed: int | None = None, tools=None) -> dict:
+        """One streaming chat request with chunk timestamps; errors are data, not raises.
+
+        `tools` carries the request's declared tool schemas (T2 tool_calling);
+        `tool_calls` accumulates every call the stream offers, verbatim.
+        """
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "stream": True,  # streaming-first: the only mode with real cloud latency
             "options": {"seed": seed},  # the recorded seed is transmitted, not just provenance
         }
+        if tools:
+            payload["tools"] = [dict(t) for t in tools]
         rec: dict = {
             "t_start": time.time(),
             "t_first_chunk": None,
@@ -77,6 +83,7 @@ class OllamaCloud:
             "err": None,
             "done": None,
             "content": "",
+            "tool_calls": [],
         }
         try:
             async with self._client.stream("POST", "/api/chat", json=payload) as r:
@@ -95,7 +102,11 @@ class OllamaCloud:
                         if obj.get("done"):
                             rec["done"] = obj
                         else:
-                            rec["content"] += (obj.get("message") or {}).get("content") or ""
+                            mensaje = obj.get("message") or {}
+                            rec["content"] += mensaje.get("content") or ""
+                            # Tool calls stream in message frames (never in the done
+                            # summary): every partial frame's calls are accumulated.
+                            rec["tool_calls"].extend(mensaje.get("tool_calls") or [])
                     if rec["done"] is None:
                         # Billed but token-less: a 200 that ends without a done frame is
                         # not a clean success — flagged so analysis can exclude it.

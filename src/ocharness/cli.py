@@ -134,10 +134,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     except gate.GateClosed as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
-    if args.level != "T1":
+    if args.level not in ("T1", "T2"):
         print(
-            f"error: run is only implemented for T1 (ticket Harness 02); {args.level} arrives "
-            "with a later ticket",
+            f"error: run is implemented for T1 and T2 (tickets Harness 02/04); {args.level} "
+            "arrives with ticket Harness 05",
             file=sys.stderr,
         )
         return 3

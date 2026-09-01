@@ -29,6 +29,7 @@ _REQUEST_SCHEMA: dict[str, tuple] = {
     "http": (int, None),
     "err": (str, None),
     "checker": (str, None),
+    "tool_calls": (list, None),  # accumulated tool-call frames (T2 tool_calling; [] otherwise)
     "out_text_hash": (str, None),
     "fixture_hash": (str,),
     "table_version": (str,),

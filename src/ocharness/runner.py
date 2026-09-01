@@ -67,9 +67,10 @@ def plan(
     """All batches of the run, round-robin across the slate: workload -> rep -> model."""
     specs: list[BatchSpec] = []
     for w in workloads:
+        specs_requeridos = fixtures.build(level, w.name, w.requests)
+        hash_fixture = fixtures.fixture_hash(specs_requeridos)
         for rep in [rep_filter] if rep_filter else range(1, reps + 1):
             for model in models:
-                textos = fixtures.prompts(level, w.name, w.requests)
                 specs.append(
                     BatchSpec(
                         level=level,
@@ -79,7 +80,7 @@ def plan(
                         rep=rep,
                         k=k,
                         n=w.requests,
-                        fixture_hash=fixtures.fixture_hash(textos),
+                        fixture_hash=hash_fixture,
                     )
                 )
     return specs
@@ -210,7 +211,8 @@ def _request_line(
         "api": done,
         "http": rec["http"],
         "err": rec["err"],
-        "checker": checker,  # real verdict for T1; T2/T3 arrive with later tickets
+        "checker": checker,  # real verdict for T1/T2; T3 arrives with ticket Harness 05
+        "tool_calls": rec.get("tool_calls"),
         "out_text_hash": (
             hashlib.sha256(rec["content"].encode("utf-8")).hexdigest() if rec["content"] else None
         ),
@@ -225,21 +227,26 @@ def _append_jsonl(ruta: pathlib.Path, line: dict) -> None:
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
-async def _burst(
-    client: OllamaCloud, spec: BatchSpec, textos: list[str], modelo_api: str
-) -> list[dict]:
+async def _burst(client: OllamaCloud, spec: BatchSpec, specs: tuple, modelo_api: str) -> list[dict]:
     """The batch's N requests, k-concurrent; no warmup, no auto-retry.
 
-    `modelo_api` is the id actually sent (the preflight's catalog match — the
-    live catalog tags ids the price table lists untagged); the dataset records
-    the slate id, the manifest's catalog history carries the mapping.
+    `specs` are the workload's request specs (prompt + tool schemas); each
+    request re-derives its seed from the cell coordinates. `modelo_api` is the
+    id actually sent (the preflight's catalog match — the live catalog tags ids
+    the price table lists untagged); the dataset records the slate id, the
+    manifest's catalog history carries the mapping.
     """
     semaforo = asyncio.Semaphore(spec.k)
 
     async def _one(i: int) -> dict:
         seed_value = fixtures.seed(spec.workload, spec.model, spec.rep, i)
         async with semaforo:
-            return await client.chat(model=modelo_api, prompt=textos[i], seed=seed_value)
+            return await client.chat(
+                model=modelo_api,
+                prompt=specs[i].prompt,
+                seed=seed_value,
+                tools=list(specs[i].tools) or None,
+            )
 
     return list(await asyncio.gather(*(_one(i) for i in range(spec.n))))
 
@@ -333,10 +340,12 @@ async def _run_async(cfg: dict) -> dict:
             modelo_api = cfg.get("model_map", {}).get(spec.model, spec.model)
             nota_checker = ""
             try:
-                textos = fixtures.prompts(level, spec.workload, spec.n)
-                registros = await _burst(client, spec, textos, modelo_api)
+                specs_requeridos = fixtures.build(level, spec.workload, spec.n)
+                registros = await _burst(client, spec, specs_requeridos, modelo_api)
                 try:
-                    veredictos = checkers.judge(spec.workload, textos, registros)
+                    veredictos = checkers.judge(
+                        spec.workload, [s.prompt for s in specs_requeridos], registros
+                    )
                 except checkers.CheckersError as e:
                     # Checker drift is a harness bug, not a model outcome: the billed
                     # requests are still logged (null verdicts) and the batch aborts.

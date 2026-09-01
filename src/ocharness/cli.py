@@ -10,7 +10,7 @@ import os
 import pathlib
 import sys
 
-from . import calibration, concurrency, cost, gate, preflight, workloads
+from . import analyze, calibration, concurrency, cost, gate, preflight, workloads
 from .pricing import PriceTable, TableError
 from .runner import Manifest, RunnerError, run_level
 
@@ -587,11 +587,67 @@ def cmd_calibrate_cache(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_analyze(args: argparse.Namespace) -> int:
+    """The re-run without re-measuring: the whole bundle from raw alone.
+
+    The API key is never needed here and never read: analyze works offline on
+    the immutable datasets, so a price change (or a new anchor or S1 guess)
+    re-derives every derived number with zero quota spent.
+    """
+    if math.isnan(args.s) or not (0.0 <= args.s <= 1.0):
+        print(f"error: --s must be in [0, 1] (S1 cache hit-rate); got {args.s!r}", file=sys.stderr)
+        return 2
+    if not math.isfinite(args.ancla) or args.ancla <= 0:
+        print(f"error: --ancla must be a finite number > 0; got {args.ancla!r}", file=sys.stderr)
+        return 2
+    try:
+        tabla = PriceTable.load(_pricing_dir(args), args.table_version)
+    except TableError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    try:
+        doc = analyze.build(
+            _base(args),
+            tabla=tabla,
+            ancla=args.ancla,
+            s=args.s,
+            level=args.level,
+            model=args.model,
+        )
+    except analyze.AnalyzeError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    carpeta = analyze.write_bundle(
+        _base(args), doc, emit=lambda m: print(m, file=sys.stderr, flush=True)
+    )
+    if args.json:
+        print(json.dumps(doc, ensure_ascii=False, indent=2))
+        return 0
+    bp = doc["base_params"]
+    print(
+        f"analysis: table={bp['table_version']} ancla={bp['ancla']:g} "
+        f"({bp['usd_per_pp']:.6f} USD/pp) s={bp['s']} | raw: "
+        f"{doc['raw']['request_lines']} requests, {doc['raw']['batch_lines']} batches"
+    )
+    conteo = {"legacy": 0, "new": 0, "tie": 0, "no data": 0}
+    for c in doc["cells"]:
+        conteo[c["verdict"]["s0"]] += 1
+    print(
+        f"  cells: {len(doc['cells'])} | s0 verdicts: {conteo['legacy']} legacy, "
+        f"{conteo['new']} new, {conteo['tie']} tie, {conteo['no data']} no data"
+    )
+    if doc["paper_discounts"]:
+        print("  unmaterialized paper discounts: " + ", ".join(doc["paper_discounts"]))
+    print(f"  bundle: {carpeta} (analysis.json, dashboard.html, pngs/)")
+    return 0
+
+
 DESPACHO = {
     "dry-run": cmd_dry_run,
     "run": cmd_run,
     "probe-concurrency": cmd_probe_concurrency,
     "calibrate-cache": cmd_calibrate_cache,
+    "analyze": cmd_analyze,
     "status": cmd_status,
 }
 
@@ -647,6 +703,14 @@ def build_parser() -> argparse.ArgumentParser:
                     "(default 5 30 90; the ladder sits above the bracket's settle)"
                 ),
             )
+        elif nombre == "analyze":
+            # analyze's own knobs: --ancla (the anchor its legacy dollars
+            # divide by) and --s (the S1 assumption it extrapolates with).
+            # No --reps/--rep/--k: those tune SPENDING, and a silent no-op
+            # here would read as a re-measured density instead of a re-priced
+            # bundle.
+            parser.add_argument("--ancla", type=float, default=100.0, help="P_LEGADO USD/month")
+            parser.add_argument("--s", type=float, default=0.5, help="S1 cache hit-rate (0..1)")
         else:
             parser.add_argument("--s", type=float, default=0.5, help="S1 cache hit-rate (0..1)")
             parser.add_argument("--reps", type=int, default=5)

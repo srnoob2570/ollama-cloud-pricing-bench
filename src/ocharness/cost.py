@@ -9,6 +9,22 @@ from __future__ import annotations
 import dataclasses
 
 from . import workloads
+from .pricing import Rate
+
+
+def new_task_cost(t_in: float, t_out: float, tarifa: Rate, *, s: float, per: int) -> float:
+    """The new-plan cost of one task under hit-rate `s` (S0 == s=0).
+
+    The cost model's single pricing formula, shared by the gate's budget and
+    by analyze's per-cell extrapolation: the table's declared `per` unit is
+    honored (1M is not assumed), and a model without a cache discount
+    (cached_input == input) is identical under every hit rate.
+    """
+    if tarifa.has_cache_discount:
+        return (
+            t_in * (1 - s) * tarifa.input + t_in * s * tarifa.cached_input + t_out * tarifa.output
+        ) / per
+    return (t_in * tarifa.input + t_out * tarifa.output) / per
 
 
 @dataclasses.dataclass
@@ -47,16 +63,10 @@ def budget(level: str, tabla, *, reps: int = 5, s: float = 0.5) -> list[BudgetLi
             t_out = w.t_out * w.requests * reps
             t_in_total += t_in
             t_out_total += t_out
-            s0 = (t_in * tarifa.input + t_out * tarifa.output) / tabla.per
+            s0 = new_task_cost(t_in, t_out, tarifa, s=0.0, per=tabla.per)
             s0_total += s0
-            if tarifa.has_cache_discount:
-                s1_total += (
-                    t_in * (1 - s) * tarifa.input
-                    + t_in * s * tarifa.cached_input
-                    + t_out * tarifa.output
-                ) / tabla.per
-            else:
-                s1_total += s0  # no cache discount: S1 equals S0 for this model
+            # no cache discount: new_task_cost already makes S1 equal S0
+            s1_total += new_task_cost(t_in, t_out, tarifa, s=s, per=tabla.per)
         filas.append(
             BudgetLine(
                 workload=w.name,

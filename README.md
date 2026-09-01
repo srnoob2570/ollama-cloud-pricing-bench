@@ -14,17 +14,23 @@ The goal is not comparing nominal prices, but answering with data:
 > **Status: methodology v1 consolidated (2026-09-01)** - the wayfinder map closed with all 14
 > decisions recorded; the benchmarks have not run yet (a later phase, spending gate in
 > [`docs/methodology-v1.md`](./docs/methodology-v1.md) §11). The harness (tickets #17-26) is
-> being implemented; Harness 01-07 are done (scaffold, T1 runner with bracketed
+> being implemented; Harness 01-08 are done (scaffold, T1 runner with bracketed
 > batches, catalog preflight + real T1 checkers + `status`, the T2 structural suites
 > with their real checkers, the T3 synthetic mini-repos with the deterministic
 > agent loop and the sandboxed pytest checkers, the concurrency workstream:
 > `bench probe-concurrency` sweeps k in short volleys to measure the real per-key
 > cut-off, then runs the k∈{1,4,8} cells on the T1 anchor with the same total
 > tokens per cell — a cell whose planned k exceeds the measured cut-off is
-> re-anchored to it, documented in the dataset — and the cache calibration:
+> re-anchored to it, documented in the dataset — the cache calibration:
 > `bench calibrate-cache` replays one fixed ~20K prefix per T2-slate model
 > (cold reference, r=4 intra-batch, spaced replays) and its measured hit rate
-> replaces the S1 assumption when conclusive, with S0 as the floor).
+> replaces the S1 assumption when conclusive, with S0 as the floor — and
+> `bench analyze`: the whole break-even bundle (derivatives with median/IQR/p95
+> per model×workload, per-task S0/S1 costs with the anchor, critical-threshold
+> bars pp/1M vs measured, dp-tokens curves, who-wins-by-profile, PNGs and a
+> static self-contained HTML dashboard) recomputed from raw alone — a price
+> change re-runs the verdict with zero quota spent, plus the 4 fixed sensitivity
+> sweeps (rates ±20 %, cache {0,25,50,90} %, P_LEGADO ±30 %, the k axis)).
 > [Leer en español →](./README.es.md)
 
 > **Transparency:** this project is generated and maintained with AI assistance

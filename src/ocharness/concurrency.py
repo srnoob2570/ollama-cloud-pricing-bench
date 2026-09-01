@@ -327,7 +327,15 @@ def _build_summary(
         aceptadas = sum(1 for r in lineas if r.get("http") == 200)
         completadas = sum(1 for r in lineas if r.get("checker") == "pass")
         dpp_weekly = b.get("dpp_weekly")
-        coste_intento = dpp_weekly * usd / b["n"] if isinstance(dpp_weekly, (int, float)) else None
+        # The bracket's Δpp bills only the requests the endpoint ACCEPTED (a
+        # 429 never lands on the meter), so the attempted-task cost divides by
+        # the accepted count, not the planned n — the same denominator
+        # analyze's k-axis sweep reads from the same raw lines.
+        coste_intento = (
+            dpp_weekly * usd / aceptadas
+            if isinstance(dpp_weekly, (int, float)) and aceptadas
+            else None
+        )
         coste_completada = (
             dpp_weekly * usd / completadas
             if isinstance(dpp_weekly, (int, float)) and completadas

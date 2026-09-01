@@ -1,0 +1,21 @@
+# Formato (ruff-format) + chequeos de sintaxis (ruff-check, check-toml) e
+# higiene básica. Ruff-format lee su config de pyproject.toml (line-length 100);
+# ruff-check se fija en E9+F821 (sintaxis y nombres no definidos), sin depender
+# del set default de cada versión de ruff.
+# Instalar una vez: pre-commit install
+# Reformateo único: pre-commit run --all-files
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-toml
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.5
+    hooks:
+      - id: ruff-check
+        args: ["--select=E9,F821"]
+      - id: ruff-format
+        types_or: [python, pyi, jupyter]

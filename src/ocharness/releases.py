@@ -356,7 +356,7 @@ def package(base, *, run_id: str, pricing_dir) -> Package:
         "table_version": manifiesto.get("table_version"),
         "table_sha256": _sha256(por_archivo[f"pricing/{manifiesto['table_version']}.json"]),
         "code": git_code(base),
-        "created_at": round(time.time(), 3),
+        "created_at": time.time(),
         "counts": {
             "request_lines": _count_lines(por_archivo[f"runs/requests-{run_id}.jsonl"]),
             "batch_lines": _count_lines(por_archivo[f"batches/batches-{run_id}.jsonl"]),

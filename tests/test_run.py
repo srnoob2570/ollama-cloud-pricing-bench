@@ -92,7 +92,17 @@ def test_request_count_check_aborts_when_the_fake_drops_a_request(tmp_path, fake
     assert len(batches) == 1
     assert "request_count" in batches[0]["notes"]
     # The bracket was still closed: the aborted batch's real spend is attributed to it.
-    assert batches[0]["dpp_session"] == 2.0  # 20 accepted requests x 1 tick x 0.1 pp
+    # 20 accepted requests x 1 tick x 0.1 pp: the raw payloads' exact float,
+    # with the tick count still pinned as an independent magnitude anchor
+    assert (
+        batches[0]["dpp_session"]
+        == (
+            batches[0]["medidor_post"]["limits"]["session"]["usage"]
+            - batches[0]["medidor_pre"]["limits"]["session"]["usage"]
+        )
+        * 100
+    )
+    assert 1.9 <= batches[0]["dpp_session"] <= 2.1
     validate_batch_line(batches[0])
     manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
     estados = [b["status"] for b in manifiesto["batches"].values()]

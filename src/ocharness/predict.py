@@ -62,7 +62,7 @@ import time
 from . import analyze as analyze_mod
 from . import workloads as workloads_mod
 from .analyze import _es_numero  # the cost model's number test, shared with analyze
-from .calibration import TICK_PP
+from .calibration import TICK_BAND, TICK_PP
 from .client import PROTOCOL_VERSION
 from .cost import new_task_cost
 from .pricing import TableError
@@ -75,6 +75,10 @@ PREDICT_DIR = "predictability"
 PHASE_FILE = {BLIND: "estimates-phase1.jsonl", INFORMED: "estimates-phase2.jsonl"}
 BOOTSTRAP_B = 2000  # resamples per percentile CI
 BOOTSTRAP_SEED = 20260901  # fixed: the same estimates always yield the same CI
+# Float-noise floor for the verdict's sign test (comparison only, never applied
+# to the persisted CI bounds): a delta CI whose bounds sit within it of zero is
+# the meter's residue, not a resolvable difference.
+SIGN_BAND = 1e-12
 MEASURED = "measured"
 SUB_RESOLUTION = "sub_resolution"
 UNMEASURED = "unmeasured"
@@ -333,7 +337,7 @@ def record_estimate(
         "estimated_pp": float(estimated_pp),
         "estimated_usd": float(estimated_usd),
         "notes": notes,
-        "timestamp": round(time.time() if now is None else now, 3),
+        "timestamp": time.time() if now is None else now,
         "table_version": tabla.table_version,
         "evidence": {"request_lines": peticiones, "batch_lines": lotes},
     }
@@ -413,8 +417,7 @@ def _bootstrap_ci(valores: list[float]) -> tuple[float, float] | None:
     if not valores:
         return None
     if len(valores) == 1:
-        v = round(valores[0], 4)
-        return v, v
+        return valores[0], valores[0]
     rng = random.Random(BOOTSTRAP_SEED)
     n = len(valores)
     medias = []
@@ -424,7 +427,7 @@ def _bootstrap_ci(valores: list[float]) -> tuple[float, float] | None:
     medias.sort()
     lo = medias[int(0.025 * BOOTSTRAP_B)]
     hi = medias[int(0.975 * BOOTSTRAP_B)]
-    return round(lo, 4), round(hi, 4)
+    return lo, hi
 
 
 def _bootstrap_delta_ci(legado: list[float], nuevo: list[float]) -> tuple[float, float] | None:
@@ -433,7 +436,7 @@ def _bootstrap_delta_ci(legado: list[float], nuevo: list[float]) -> tuple[float,
     if not legado or len(legado) != len(nuevo):
         return None
     if len(legado) == 1:
-        d = round(legado[0] - nuevo[0], 4)
+        d = legado[0] - nuevo[0]
         return d, d
     rng = random.Random(BOOTSTRAP_SEED)
     n = len(legado)
@@ -446,7 +449,7 @@ def _bootstrap_delta_ci(legado: list[float], nuevo: list[float]) -> tuple[float,
     deltas.sort()
     lo = deltas[int(0.025 * BOOTSTRAP_B)]
     hi = deltas[int(0.975 * BOOTSTRAP_B)]
-    return round(lo, 4), round(hi, 4)
+    return lo, hi
 
 
 def _verdict(ci_delta: tuple[float, float] | None) -> tuple[str, str]:
@@ -457,9 +460,11 @@ def _verdict(ci_delta: tuple[float, float] | None) -> tuple[str, str]:
     if ci_delta is None:
         return "no comparison", "not resolvable without paired measurable cells"
     lo, hi = ci_delta
-    if lo > 0:
+    # The sign test reads the unrounded CI through the float-noise band: a CI
+    # of ±1e-16 around zero is residue, never a verdict either way.
+    if lo > SIGN_BAND:
         return "legacy less predictable", "supported"
-    if hi < 0:
+    if hi < -SIGN_BAND:
         return "new less predictable", "contradicted"
     return "unresolved at this sample size", "not resolved"
 
@@ -481,7 +486,7 @@ def _cell_real(celda_doc: dict, tabla) -> dict:
     """
     reps = celda_doc["reps"]
     dpps = [r["dpp_weekly"] for r in reps if _es_numero(r.get("dpp_weekly"))]
-    real_pp = round(statistics.median(dpps), 4) if dpps else None
+    real_pp = statistics.median(dpps) if dpps else None
 
     try:
         tarifa = tabla.rate(celda_doc["model"])
@@ -498,12 +503,16 @@ def _cell_real(celda_doc: dict, tabla) -> dict:
                 continue
             s0s.append(new_task_cost(tin, tout, tarifa, s=0.0, per=tabla.per))
             s1s.append(new_task_cost(tin, tout, tarifa, s=s_valor, per=tabla.per))
-    real_s0 = round(statistics.median(s0s), 9) if s0s else None
-    real_s1 = round(statistics.median(s1s), 9) if s1s else None
+    real_s0 = statistics.median(s0s) if s0s else None
+    real_s1 = statistics.median(s1s) if s1s else None
 
     if real_pp is None:
         estado = UNMEASURED
-    elif real_pp < TICK_PP:
+    elif real_pp < TICK_PP * (1 - TICK_BAND):
+        # "Under a tick" through the residue band: the meter's deltas are
+        # tick-quantized, so a real of exactly one tick (which unrounded
+        # arithmetic lands a few 1e-14 below or above 0.1) is measured,
+        # while anything genuinely under the tick stays excluded.
         estado = SUB_RESOLUTION
     else:
         estado = MEASURED
@@ -519,7 +528,7 @@ def _ape(estimado: float | None, real: float | None) -> float | None:
     """|estimate − real| / real; None whenever either side is missing (never a 0/0)."""
     if real is None or not _es_numero(real) or real <= 0 or not _es_numero(estimado):
         return None
-    return round(abs(estimado - real) / real, 6)
+    return abs(estimado - real) / real
 
 
 def build_report(base, *, tabla, s: float) -> dict:
@@ -609,7 +618,7 @@ def build_report(base, *, tabla, s: float) -> dict:
             return None
         ci = _bootstrap_ci(apes)
         return {
-            "mape": round(sum(apes) / len(apes), 4),
+            "mape": sum(apes) / len(apes),
             "cells": len(apes),
             "ci": list(ci) if ci else None,
         }
@@ -639,7 +648,7 @@ def build_report(base, *, tabla, s: float) -> dict:
             "mape_new": nuevo,
             "mape_new_s1": s1,
             "paired_cells": len(parejask),
-            "delta_mape": round(statistics.mean(parejask) - statistics.mean(parejasn), 4)
+            "delta_mape": statistics.mean(parejask) - statistics.mean(parejasn)
             if parejask
             else None,
             "ci_delta": list(ci_delta) if ci_delta else None,
@@ -667,8 +676,8 @@ def build_report(base, *, tabla, s: float) -> dict:
                 if c[fase] is not None and c[fase]["ape_new"] is not None
             ]
             entrada[fase] = {
-                "mape_legacy": round(statistics.mean(legado), 4) if legado else None,
-                "mape_new": round(statistics.mean(nuevo), 4) if nuevo else None,
+                "mape_legacy": statistics.mean(legado) if legado else None,
+                "mape_new": statistics.mean(nuevo) if nuevo else None,
             }
         desglose.append(entrada)
 
@@ -691,7 +700,7 @@ def build_report(base, *, tabla, s: float) -> dict:
     }
     return {
         "kind": "predictability-report",
-        "generated_at": round(time.time(), 3),
+        "generated_at": time.time(),
         "protocol_version": PROTOCOL_VERSION,
         "table_version": tabla.table_version,
         "params": {

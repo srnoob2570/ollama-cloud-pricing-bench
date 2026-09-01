@@ -25,7 +25,7 @@ def mark_dry_run(base, level: str, estimado: dict) -> pathlib.Path:
     ruta = _mark_path(base, level)
     ruta.parent.mkdir(parents=True, exist_ok=True)
     marca = {
-        "dry_run_at": round(time.time(), 3),
+        "dry_run_at": time.time(),
         "level": level,
         "table_version": str(estimado.get("table_version")),
         "estimado": estimado,

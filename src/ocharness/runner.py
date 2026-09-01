@@ -157,12 +157,12 @@ class Manifest:
             "protocol_version": PROTOCOL_VERSION,
             "fixture_version": FIXTURE_VERSION,
             "k": k,
-            "started_at": round(time.time(), 3),
+            "started_at": time.time(),
             "planned": planned,
             "batches": {},
         }
         if catalog is not None:  # /v1/models snapshots, one per attempt (provenance)
-            doc["catalog"] = [{"captured_at": round(time.time(), 3), **catalog}]
+            doc["catalog"] = [{"captured_at": time.time(), **catalog}]
         m = cls(ruta, doc)
         m.save()
         return m
@@ -176,15 +176,13 @@ class Manifest:
         return entrada["status"] if entrada else None
 
     def set(self, bid: str, status: str, **extra) -> None:
-        entrada = {"status": status, "at": round(time.time(), 3), **extra}
+        entrada = {"status": status, "at": time.time(), **extra}
         self.doc["batches"][bid] = entrada
         self.save()
 
     def append_catalog(self, catalogo: dict) -> None:
         """Adds one /v1/models snapshot to the catalog history (provenance)."""
-        self.doc.setdefault("catalog", []).append(
-            {"captured_at": round(time.time(), 3), **catalogo}
-        )
+        self.doc.setdefault("catalog", []).append({"captured_at": time.time(), **catalogo})
 
     def save(self) -> None:
         self.ruta.parent.mkdir(parents=True, exist_ok=True)
@@ -259,7 +257,14 @@ def _counts(payload: dict | None, window: str = "session") -> dict[str, int]:
 
 
 def _dpp(pre: dict | None, post: dict | None, window: str) -> float | None:
-    """Quota delta in percentage points (a 0.001 usage step = 0.1 pp); None if unreadable."""
+    """Quota delta in percentage points (a 0.001 usage step = 0.1 pp); None if unreadable.
+
+    The delta keeps its exact float (precision policy, methodology v1.1 §4): the
+    tick belongs to comparison logic only — the verdicts' tie band, the
+    conclusive-override rule, the sub-resolution exclusion and the k-sweep all
+    read it through `TICK_BAND`'s residue band — never a rounding applied to
+    the persisted measurement.
+    """
     try:
         antes = pre["limits"][window]["usage"]
         despues = post["limits"][window]["usage"]
@@ -267,7 +272,7 @@ def _dpp(pre: dict | None, post: dict | None, window: str) -> float | None:
         return None
     if not isinstance(antes, (int, float)) or not isinstance(despues, (int, float)):
         return None
-    return round((despues - antes) * 100, 1)
+    return (despues - antes) * 100
 
 
 def _wall_clock_s(registros: list[dict]) -> float | None:
@@ -284,7 +289,7 @@ def _wall_clock_s(registros: list[dict]) -> float | None:
     ]
     if not tiempos:
         return None
-    return round(max(fin for _ini, fin in tiempos) - min(ini for ini, _fin in tiempos), 6)
+    return max(fin for _ini, fin in tiempos) - min(ini for ini, _fin in tiempos)
 
 
 def _sum_steps(pasos: list[dict], campo: str) -> int | None:
@@ -327,9 +332,9 @@ def _request_line(
         "seed": seed_value,
         "rep": spec.rep,
         "k": spec.k,
-        "t_start": round(rec["t_start"], 6),
-        "t_first_chunk": None if rec["t_first_chunk"] is None else round(rec["t_first_chunk"], 6),
-        "t_total": round(rec["t_total"], 6),
+        "t_start": rec["t_start"],
+        "t_first_chunk": rec["t_first_chunk"],
+        "t_total": rec["t_total"],
         "chunks": rec["chunks"],
         "tok_in": tok_in,
         "tok_out": tok_out,
@@ -507,7 +512,7 @@ async def _execute_batch(
         status_c, leido = await client.usage()
     except Exception as e:  # noqa: BLE001 - the bracket still closes below
         status_c, leido, error_lectura = 0, None, f"{type(e).__name__}: {e}"
-    count_check_s = round(time.time() - t_burst_end, 3)
+    count_check_s = time.time() - t_burst_end
     counts_pre = _counts(pre)
     counts_check = _counts(leido)
     contados = counts_check.get(modelo_api, 0) - counts_pre.get(modelo_api, 0)

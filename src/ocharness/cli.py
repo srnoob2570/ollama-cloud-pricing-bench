@@ -236,9 +236,14 @@ def _status_doc(nivel: str, manifiesto: Manifest) -> dict:
         dpp_w = _numero(entrada.get("dpp_weekly"))
         if estado in ("done", "aborted"):
             cerrados += 1
-        if dpp_s is not None and dpp_w is not None:
+        # Each window accumulates on its own readable delta, so the quota totals
+        # always agree with the report's own per-batch rows; `batches_with_bracket`
+        # keeps counting only the brackets both windows resolved.
+        if dpp_s is not None:
             dpp_session += dpp_s
+        if dpp_w is not None:
             dpp_weekly += dpp_w
+        if dpp_s is not None and dpp_w is not None:
             con_bracket += 1
         ok = _numero(entrada.get("requests_ok"))
         if ok is not None:
@@ -272,9 +277,10 @@ def _status_doc(nivel: str, manifiesto: Manifest) -> dict:
         "counts": counts,
         "requests_ok": requests_ok,
         "quota": {
-            # the meter quantizes at 0.1 pp: the sum carries no more precision
-            "dpp_session": round(dpp_session, 4),
-            "dpp_weekly": round(dpp_weekly, 4),
+            # the deltas keep their exact float (methodology v1.1 §4); the
+            # human table formats them, the JSON never re-rounds them
+            "dpp_session": dpp_session,
+            "dpp_weekly": dpp_weekly,
             "batches_with_bracket": con_bracket,
             "closed_batches": cerrados,
         },

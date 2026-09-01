@@ -189,12 +189,20 @@ def craft_dataset(base: pathlib.Path) -> None:
     # cell D: gamma / qa_short, billed requests but a failed bracket (no dpp)
     requests.append(req("qa_short", "gamma", "bD"))
     batches.append(batch("qa_short", "gamma", "bD", dpp_weekly=None))
-    # the concurrency workstream's k-cells (alpha): same tokens, k varies
-    for k, dpp in ((1, 1.6), (4, 2.4)):
+    # the concurrency workstream's k-cells: same tokens, k varies. Alpha's
+    # growth (2 then 4 ticks of per-task cost) sits clearly beyond the one-tick
+    # tie band -> overhead; beta's pair grows by EXACTLY one tick — the squeeze
+    # rule's boundary call, pinned deterministically through the residue band.
+    for k, dpp in ((1, 1.6), (4, 3.2), (8, 4.8)):
         bid = f"bk{k}"
         for i in range(8):
             requests.append(req("concurrency", "alpha", bid, k=k, index=i))
         batches.append(batch("concurrency", "alpha", bid, k=k, n=8, dpp_weekly=dpp))
+    for k, dpp in ((1, 1.6), (4, 2.4)):
+        bid = f"bb{k}"
+        for i in range(8):
+            requests.append(req("concurrency", "beta", bid, k=k, index=i))
+        batches.append(batch("concurrency", "beta", bid, k=k, n=8, dpp_weekly=dpp))
     write_raw(base, requests, batches)
 
 
@@ -279,9 +287,9 @@ def test_threshold_and_costs_match_manual_math(tmp_path):
     a = cell(doc, "alpha", "qa_short")
     # legacy: dpp 0.2 pp x U / 2 tasks
     assert near(a["legacy_cost_task_usd"]["median"], 0.2 * U / 2, 9)
-    # measured pp/1M: 0.2 pp per 3000 tokens = 66.6667
-    assert a["pp_per_1m"]["median"] == 66.6667
-    assert a["pp_per_1m"]["p25"] == 66.6667 and a["pp_per_1m"]["p95"] == 66.6667
+    # measured pp/1M: 0.2 pp per 3000 tokens = 66.66666666666667, full precision
+    assert a["pp_per_1m"]["median"] == 0.2 * 1e6 / 3000
+    assert a["pp_per_1m"]["p25"] == 0.2 * 1e6 / 3000 and a["pp_per_1m"]["p95"] == 0.2 * 1e6 / 3000
     # new-plan per task from the MEASURED median tokens (1000 in / 500 out)
     assert near(a["new_cost_task_s0_usd"], (1000 * 0.6 + 500 * 1.2) / 1e6, 9)
     assert near(a["new_cost_task_s1_usd"], (500 * 0.6 + 500 * 0.3 + 500 * 1.2) / 1e6, 9)
@@ -292,13 +300,13 @@ def test_threshold_and_costs_match_manual_math(tmp_path):
 
     b = cell(doc, "beta", "throughput")
     assert near(b["legacy_cost_task_usd"]["median"], 0.2 * U, 9)
-    assert b["pp_per_1m"]["median"] == 0.1
+    assert b["pp_per_1m"]["median"] == 0.2 * 1e6 / 2_000_000
     assert near(b["new_cost_task_s0_usd"], 2.0, 9)
     assert near(b["threshold_pp_per_1m"]["s0"], 2.0 / 2.0 / U, 4)
     assert b["verdict"]["s0"] == "legacy" and b["verdict"]["s1"] == "legacy"
 
     c = cell(doc, "beta", "qa_short")
-    assert c["pp_per_1m"]["median"] == 7.68
+    assert c["pp_per_1m"]["median"] == 9.6 * 1e6 / 1_250_000
     assert near(c["legacy_cost_task_usd"]["median"], 9.6 * U, 9)
     assert near(c["new_cost_task_s0_usd"], 2.0, 9)
     # threshold from the measured mix: $2.0 per 1.25M tokens = 1.6 $/1M
@@ -441,7 +449,7 @@ def test_sweep_anchor_scales_legacy_side_and_flips(tmp_path):
     vueltas = {(f["model"], f["workload"]) for f in barrido["flips"]["0.7"]}
     assert vueltas == {("beta", "qa_short")}
     # the measured pp/1M never moves with the anchor (it is meter-native)
-    assert sweep_cell(barrido, "1.3", "beta", "qa_short")["pp_per_1m"] == 7.68
+    assert sweep_cell(barrido, "1.3", "beta", "qa_short")["pp_per_1m"] == 9.6 * 1e6 / 1_250_000
 
 
 def test_sweep_k_axis_reads_the_concurrency_cells(tmp_path):
@@ -449,13 +457,18 @@ def test_sweep_k_axis_reads_the_concurrency_cells(tmp_path):
     craft_dataset(tmp_path)
     doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
     barrido = doc["sensitivity"]["k_axis"]
-    fila = next(f for f in barrido["models"] if f["model"] == "alpha")
-    por_k = {c["k"]: c for c in fila["cells"]}
+    filas = {f["model"]: f for f in barrido["models"]}
+    por_k = {c["k"]: c for c in filas["alpha"]["cells"]}
     # cost per attempted task = dpp x U / 8 tasks
     assert near(por_k[1]["cost_task_attempted_usd"], 1.6 * U / 8, 9)
-    assert near(por_k[4]["cost_task_attempted_usd"], 2.4 * U / 8, 9)
-    # dpp grows 8 ticks from k=1 to k=4 with the same tokens -> overhead
-    assert fila["verdict"] == "overhead"
+    assert near(por_k[4]["cost_task_attempted_usd"], 3.2 * U / 8, 9)
+    # alpha's per-task cost grows 2 then 4 ticks with the same tokens, a real
+    # margin beyond the one-tick tie band -> overhead
+    assert filas["alpha"]["verdict"] == "overhead"
+    # beta grows by EXACTLY one tick: within the meter's resolution — read
+    # through the residue band, so the boundary is squeeze deterministically,
+    # never a coin flip on the payloads' last bits
+    assert filas["beta"]["verdict"] == "squeeze"
     # the k cells never leak into the per-workload derivatives
     assert not any(c["workload"] == "concurrency" for c in doc["cells"])
 

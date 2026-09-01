@@ -150,8 +150,8 @@ def _probe_line(
         "accepted": accepted,
         "rejected": rejected,
         "errored": k - accepted - rejected,
-        "t_start": round(t_start, 6),
-        "t_total": round(t_total, 6),
+        "t_start": t_start,
+        "t_total": t_total,
         "outcomes": outcomes,
         "seeds": seeds,
         "fixture_hash": fixture_hash,
@@ -353,12 +353,8 @@ def _build_summary(
                 "dpp_session": b.get("dpp_session"),
                 "dpp_weekly": dpp_weekly,
                 "wall_clock_s": b.get("wall_clock_s"),
-                "cost_per_attempted_task_usd": (
-                    None if coste_intento is None else round(coste_intento, 9)
-                ),
-                "cost_per_completed_task_usd": (
-                    None if coste_completada is None else round(coste_completada, 9)
-                ),
+                "cost_per_attempted_task_usd": coste_intento,
+                "cost_per_completed_task_usd": coste_completada,
                 "notes": b.get("notes") or "",
             }
         )
@@ -427,7 +423,7 @@ async def _run_async(cfg: dict) -> dict:
                 )
         else:
             probe_ran_ahora = True
-            probe_doc = {"status": "in_flight", "k_max": cfg["k_max"], "at": round(time.time(), 3)}
+            probe_doc = {"status": "in_flight", "k_max": cfg["k_max"], "at": time.time()}
             manifiesto.doc["probe"] = probe_doc
             manifiesto.save()
             try:
@@ -450,7 +446,7 @@ async def _run_async(cfg: dict) -> dict:
                     "cut_off_note": cut_off_note,
                     "k_from": PROBE_K_FROM,
                     "volleys": volleys,
-                    "at": round(time.time(), 3),
+                    "at": time.time(),
                 }
             )
             manifiesto.doc["probe"] = probe_doc

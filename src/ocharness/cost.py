@@ -76,8 +76,8 @@ def budget(level: str, tabla, *, reps: int = 5, s: float = 0.5) -> list[BudgetLi
                 requests=len(modelos) * reps * w.requests,
                 tokens_in=t_in_total,
                 tokens_out=t_out_total,
-                cost_s0=round(s0_total, 4),
-                cost_s1=round(s1_total, 4),
+                cost_s0=s0_total,
+                cost_s1=s1_total,
                 pp_expected=None,
             )
         )

@@ -129,7 +129,7 @@ def run_pytest(task_dir: pathlib.Path) -> dict:
         # The handshake prints only after pytest imported: its absence means the
         # sandbox never graded anything (a harness misconfiguration, exit 90).
         "sandbox_ok": SANDBOX_READY in texto,
-        "duration_s": round(time.monotonic() - t0, 3),
+        "duration_s": time.monotonic() - t0,
         "output_sha256": hashlib.sha256(texto.encode("utf-8")).hexdigest(),
         "tail": texto[-OUTPUT_TAIL:],
     }

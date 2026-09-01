@@ -353,7 +353,13 @@ def test_conclusive_cache_measurement_end_to_end(tmp_path, fake_cli):
     assert lectura["cache_exists"] == "yes" and lectura["conclusive"] is True
     assert abs(lectura["hit_rate"] - 20 / 26) < 1e-3  # 6 of 26 tokens re-evaluated
     assert lectura["hit_rate_basis"] == "reported cache-hit tokens"
-    assert lectura["rule"]["dp_signal_ticks"] == 8.0  # (1.0 - 0.8/4) / 0.1
+    # (1.0 - 0.8/4) / 0.1, recomputed from the persisted raw brackets: the
+    # signal carries the meter deltas' exact float, last-bit noise included
+    assert (
+        lectura["rule"]["dp_signal_ticks"]
+        == (por_carga_b["cache_cold"]["dpp_weekly"] - por_carga_b["cache_intra"]["dpp_weekly"] / 4)
+        / 0.1
+    )
     assert lectura["rule"]["iqr"][0] > 0  # the estimates agree above zero
     assert lectura["persistence"].startswith(">= ")  # every spaced replay hit
     assert float(lectura["persistence"][len(">= ") : -len(" s")]) < 1.0
@@ -377,7 +383,19 @@ def test_no_cache_measurement_lands_at_the_s0_floor(tmp_path, fake_cli):
     assert lectura["cache_exists"] == "no" and lectura["conclusive"] is True
     assert lectura["hit_rate"] == 0.0
     assert lectura["persistence"] == "none observed"
-    assert lectura["rule"]["dp_signal_ticks"] == 0.0  # every request bills the same
+    # every request bills the same: the signal is the raw deltas' exact float,
+    # its residue (the fake's last-bit chain) far under the 2-tick floor
+    batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")
+    por_ventana_b = {b["workload"]: b for b in batches}
+    assert (
+        lectura["rule"]["dp_signal_ticks"]
+        == (
+            por_ventana_b["cache_cold"]["dpp_weekly"]
+            - por_ventana_b["cache_intra"]["dpp_weekly"] / 4
+        )
+        / 0.1
+    )
+    assert lectura["rule"]["dp_signal_ticks"] <= 2.0
     assert doc["unmaterialized_paper_discounts"] == [MODEL]
     resueltos = resolve_s(doc, doc["models"], default_s=0.5)
     assert resueltos[MODEL].s == 0.0 and resueltos[MODEL].source == "measured"

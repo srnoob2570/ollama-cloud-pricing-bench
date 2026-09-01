@@ -67,6 +67,12 @@ CACHE_REPEATS = 4  # the intra-batch replay count (methodology v1 §7's r=4)
 SPACED_TARGETS = (5.0, 30.0, 90.0)  # the spaced replays' cumulative offsets (s)
 TICK_PP = 0.1  # one 0.001 meter tick, in percentage points
 CONCLUSIVE_TICKS = 2.0  # the override rule's resolution floor (>2 ticks)
+# Relative float-residue band around a tick boundary, for COMPARISON logic
+# only (the deltas themselves stay exact — methodology v1.1 §4): a meter delta
+# is a difference of tick-quantized readings, so a true exact-boundary value
+# lands within ~1e-13 relative of the threshold; anything genuinely past it is
+# orders of magnitude beyond this band.
+TICK_BAND = 1e-9
 _WORKLOADS = (COLD_WORKLOAD, INTRA_WORKLOAD, SPACED_WORKLOAD)
 
 
@@ -118,9 +124,11 @@ def _dp_ventana(batch: dict | None) -> float | None:
 
 
 def _ttft_s(rec: dict) -> float | None:
+    """The replay's TTFT in seconds: the request lines' exact span (the
+    precision policy keeps every persisted float unrounded)."""
     inicio, primero = rec.get("t_start"), rec.get("t_first_chunk")
     if isinstance(inicio, (int, float)) and isinstance(primero, (int, float)):
-        return round(primero - inicio, 6)
+        return primero - inicio
     return None
 
 
@@ -145,7 +153,7 @@ def _iqr_de(estimaciones: list[float]) -> tuple[float, float] | None:
     if len(estimaciones) < 2:
         return None
     q = statistics.quantiles(estimaciones, n=4)
-    return round(q[0], 4), round(q[2], 4)
+    return q[0], q[2]
 
 
 def resolve_s(calibracion, modelos, *, default_s: float = 0.5) -> dict[str, EffectiveS]:
@@ -269,9 +277,8 @@ def _analyze_model(
     # average (its primer plus warm replays), in ticks of the meter's resolution.
     senal_pp = senal_ticks = None
     if dp_frio is not None and dp_frio > 0 and dp_intra is not None and lineas_intra:
-        sin_redondear = dp_frio - dp_intra / len(lineas_intra)
-        senal_pp = round(sin_redondear, 4)
-        senal_ticks = round(sin_redondear / TICK_PP, 2)
+        senal_pp = dp_frio - dp_intra / len(lineas_intra)
+        senal_ticks = senal_pp / TICK_PP
 
     proxy: dict | None = None
     if not muestras and dp_frio is not None and dp_frio > 0:
@@ -282,8 +289,8 @@ def _analyze_model(
         if len(estimadores) >= 2:
             q = statistics.quantiles(estimadores, n=4)
             proxy = {
-                "estimates": [round(e, 4) for e in estimadores],
-                "iqr": [round(q[0], 4), round(q[2], 4)],
+                "estimates": list(estimadores),
+                "iqr": [q[0], q[2]],
             }
 
     estimaciones = muestras if muestras else (proxy["estimates"] if proxy else [])
@@ -296,13 +303,20 @@ def _analyze_model(
     explicitos_cero = len(explicitas) >= 2 and all(m == 0.0 for m in explicitas)
 
     conclusiva: str | None = None
-    if senal_ticks is not None and senal_ticks > CONCLUSIVE_TICKS and sobre_cero:
+    # The tick comparisons read the unrounded signal through the residue band:
+    # a gap of exactly 2 ticks must resolve as "no" (the meter's quantum), not
+    # as "yes" on a 2.0000000000000084.
+    if senal_ticks is not None and senal_ticks > CONCLUSIVE_TICKS * (1 + TICK_BAND) and sobre_cero:
         conclusiva = "yes"
-    elif senal_ticks is not None and explicitos_cero and senal_ticks <= CONCLUSIVE_TICKS:
+    elif (
+        senal_ticks is not None
+        and explicitos_cero
+        and senal_ticks <= CONCLUSIVE_TICKS * (1 + TICK_BAND)
+    ):
         conclusiva = "no"
 
     if conclusiva == "yes":
-        tasa: float | None = round(statistics.median(estimaciones), 4)
+        tasa: float | None = statistics.median(estimaciones)
     elif conclusiva == "no":
         tasa = 0.0
     else:
@@ -335,7 +349,7 @@ def _analyze_model(
         golpes = [_hit_de(r, tin_frio) for r in lineas_espaciada]
         referencia = lineas_intra[-1].get("t_total")
         edades = [
-            round(r["t_start"] - referencia, 3)
+            r["t_start"] - referencia
             if isinstance(referencia, (int, float)) and isinstance(r.get("t_start"), (int, float))
             else None
             for r in lineas_espaciada
@@ -391,9 +405,7 @@ def _analyze_model(
             "dp_signal_pp": senal_pp,
             "dp_signal_ticks": senal_ticks,
             "conclusive_ticks_required": CONCLUSIVE_TICKS,
-            "estimates": [round(m, 4) for m in muestras]
-            if muestras
-            else (proxy or {}).get("estimates"),
+            "estimates": list(muestras) if muestras else (proxy or {}).get("estimates"),
             "iqr": list(iqr) if iqr else (proxy or {}).get("iqr"),
             "estimate_basis": base_estimacion,
         },
@@ -437,7 +449,7 @@ def _build_summary(
             for r in peticiones[w]
             if isinstance(r.get("t_total"), (int, float))
         ]
-        analisis["calibrated_at"] = round(max(sellos), 3) if sellos else None
+        analisis["calibrated_at"] = max(sellos) if sellos else None
         lecturas[modelo] = analisis
     sin_materializar = sorted(
         m

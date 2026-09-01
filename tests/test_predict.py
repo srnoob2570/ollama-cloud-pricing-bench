@@ -442,9 +442,10 @@ def test_report_mape_matches_the_manual_math(tmp_path, fake_cli):
     assert doc["estimates"] == {"blind": 12, "informed": 4}
 
     # the blind phase: legacy over cells 1/2/4 (reasoning is sub-resolution),
-    # new over the four cells whose extrapolation exists
+    # new over the four cells whose extrapolation exists. The MAPEs are the
+    # unrounded means of the per-cell APEs (full float precision).
     ciego = doc["aggregate"]["blind"]
-    assert ciego["mape_legacy"] == {"mape": 1.6667, "cells": 3, "ci": [1.0, 3.0]}
+    assert ciego["mape_legacy"] == {"mape": 1.6666666666666667, "cells": 3, "ci": [1.0, 3.0]}
     assert ciego["mape_new"]["cells"] == 4 and ciego["mape_new"]["mape"] == 0.325
     assert (
         0.0
@@ -454,7 +455,7 @@ def test_report_mape_matches_the_manual_math(tmp_path, fake_cli):
         <= 1.0
     )
     assert ciego["paired_cells"] == 3
-    assert ciego["delta_mape"] == 1.5667  # mean(1,3,1) - mean(0.2,0,0.1)
+    assert ciego["delta_mape"] == 1.5666666666666667  # mean(1,3,1) - mean(0.2,0,0.1)
     assert ciego["ci_delta"][0] > 0  # every paired resample keeps legacy worse
     assert ciego["verdict"] == "legacy less predictable"
     assert ciego["ollama_claim"] == "supported"
@@ -488,13 +489,16 @@ def test_report_mape_matches_the_manual_math(tmp_path, fake_cli):
         c for c in doc["cells"] if c["workload"] == "multi_file" and c["model"] == "kimi-k2.7-code"
     )
     assert archivo["real_pp"] == 4.0 and archivo["real_new_s0_usd_per_run"] == 0.2625
-    assert archivo["blind"]["ape_new"] == 0.1
+    assert archivo["blind"]["ape_new"] == 0.09999999999999998  # (0.28875-0.2625)/0.2625, exact
 
     # the per-workload breakdown carries the same numbers, grouped
     desglose = {w["workload"]: w for w in doc["workloads"]}
     assert desglose["qa_short"]["blind"] == {"mape_legacy": 1.0, "mape_new": 0.2}
     assert desglose["multi_turn"]["blind"] == {"mape_legacy": 3.0, "mape_new": 0.0}
-    assert desglose["multi_file"]["blind"] == {"mape_legacy": 1.0, "mape_new": 0.1}
+    assert desglose["multi_file"]["blind"] == {
+        "mape_legacy": 1.0,
+        "mape_new": 0.09999999999999998,
+    }
 
     ruta = pathlib.Path(tmp_path, predict.PREDICT_DIR, "report.json")
     assert (

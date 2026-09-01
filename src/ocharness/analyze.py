@@ -47,7 +47,7 @@ import time
 
 from . import calibration as calibration_mod
 from . import workloads as workloads_mod
-from .calibration import TICK_PP  # the meter's resolution, in percentage points
+from .calibration import TICK_BAND, TICK_PP  # the meter's resolution, in percentage points
 from .client import PROTOCOL_VERSION
 from .concurrency import ANCHOR_WORKLOAD as K_WORKLOAD  # the k-cells' workload
 from .concurrency import _read_jsonl, usd_per_pp
@@ -77,21 +77,22 @@ def _es_numero(valor) -> bool:
     return isinstance(valor, (int, float)) and not isinstance(valor, bool)
 
 
-def _cuantiles(values: list, places: int) -> dict | None:
-    """median / p25 / p75 / p95; None with nothing to measure. A single
-    observation collapses to the value itself (quantiles need 2+ points)."""
+def _cuantiles(values: list) -> dict | None:
+    """median / p25 / p75 / p95, at full float precision (methodology v1.1 §4:
+    zero rounding in anything persisted); None with nothing to measure. A
+    single observation collapses to the value itself (quantiles need 2+ points)."""
     limpios = [float(v) for v in values if _es_numero(v)]
     if not limpios:
         return None
     if len(limpios) == 1:
-        v = round(limpios[0], places)
+        v = limpios[0]
         return {"median": v, "p25": v, "p75": v, "p95": v}
     cuartiles = statistics.quantiles(limpios, n=4)
     return {
-        "median": round(statistics.median(limpios), places),
-        "p25": round(cuartiles[0], places),
-        "p75": round(cuartiles[2], places),
-        "p95": round(statistics.quantiles(limpios, n=20)[18], places),
+        "median": statistics.median(limpios),
+        "p25": cuartiles[0],
+        "p75": cuartiles[2],
+        "p95": statistics.quantiles(limpios, n=20)[18],
     }
 
 
@@ -174,11 +175,9 @@ def _rep_row(batch: dict, lineas: list[dict], usd: float) -> dict:
         "tokens_out": tout,
         "tokens_total": tokens,
         "dpp_weekly": dpp if _es_numero(dpp) else None,
-        "pp_per_1m": round(pp, 4) if pp is not None else None,
-        "cost_task_attempted_usd": round(dpp * usd / intentadas, 9) if medible else None,
-        "cost_task_completed_usd": (
-            round(dpp * usd / completadas, 9) if medible and completadas else None
-        ),
+        "pp_per_1m": pp if pp is not None else None,
+        "cost_task_attempted_usd": dpp * usd / intentadas if medible else None,
+        "cost_task_completed_usd": (dpp * usd / completadas if medible and completadas else None),
     }
 
 
@@ -217,8 +216,8 @@ def _cell_doc(
 
     tins = [r["tok_in"] for r in lineas if _es_numero(r.get("tok_in"))]
     touts = [r["tok_out"] for r in lineas if _es_numero(r.get("tok_out"))]
-    tin_med = round(statistics.median(tins), 3) if tins else None
-    tout_med = round(statistics.median(touts), 3) if touts else None
+    tin_med = statistics.median(tins) if tins else None
+    tout_med = statistics.median(touts) if touts else None
 
     s0 = s1 = None
     try:
@@ -231,8 +230,8 @@ def _cell_doc(
         and tout_med is not None
         and tin_med + tout_med > 0
     ):
-        s0 = round(new_task_cost(tin_med, tout_med, tarifa, s=0.0, per=tabla.per), 9)
-        s1 = round(new_task_cost(tin_med, tout_med, tarifa, s=s_efectivo.s, per=tabla.per), 9)
+        s0 = new_task_cost(tin_med, tout_med, tarifa, s=0.0, per=tabla.per)
+        s1 = new_task_cost(tin_med, tout_med, tarifa, s=s_efectivo.s, per=tabla.per)
 
     # The threshold prices the cell's OWN measured mix on the new table and
     # bridges it to the meter's unit: an unmeasured cell gets none, and none
@@ -240,7 +239,7 @@ def _cell_doc(
     tokens_medios = tin_med + tout_med if tin_med is not None and tout_med is not None else None
 
     legacy_cuantiles = _cuantiles(
-        [r["cost_task_attempted_usd"] for r in reps if r["cost_task_attempted_usd"] is not None], 9
+        [r["cost_task_attempted_usd"] for r in reps if r["cost_task_attempted_usd"] is not None]
     )
     legacy_med = legacy_cuantiles["median"] if legacy_cuantiles else None
     # The threshold exists only for a MEASURED cell: without a readable bracket
@@ -248,8 +247,8 @@ def _cell_doc(
     umbral = None
     if s0 is not None and tokens_medios and legacy_med is not None:
         umbral = {
-            "s0": round(s0 / (tokens_medios / 1e6) / usd, 4),
-            "s1": round(s1 / (tokens_medios / 1e6) / usd, 4) if s1 is not None else None,
+            "s0": s0 / (tokens_medios / 1e6) / usd,
+            "s1": s1 / (tokens_medios / 1e6) / usd if s1 is not None else None,
         }
     return {
         "model": model,
@@ -258,22 +257,17 @@ def _cell_doc(
         "reps": reps,
         "attempted": intentadas,
         "completed": completadas,
-        "pass_rate": round(completadas / intentadas, 4) if intentadas else None,
+        "pass_rate": completadas / intentadas if intentadas else None,
         "tok_in_median": tin_med,
         "tok_out_median": tout_med,
-        "pp_per_1m": _cuantiles([r["pp_per_1m"] for r in reps if r["pp_per_1m"] is not None], 4),
+        "pp_per_1m": _cuantiles([r["pp_per_1m"] for r in reps if r["pp_per_1m"] is not None]),
         "legacy_cost_task_usd": legacy_cuantiles,
         "legacy_cost_completed_usd": _cuantiles(
-            [
-                r["cost_task_completed_usd"]
-                for r in reps
-                if r["cost_task_completed_usd"] is not None
-            ],
-            9,
+            [r["cost_task_completed_usd"] for r in reps if r["cost_task_completed_usd"] is not None]
         ),
         "new_cost_task_s0_usd": s0,
         "new_cost_task_s1_usd": s1,
-        "s_effective": {"s": round(s_efectivo.s, 4), "source": s_efectivo.source},
+        "s_effective": {"s": s_efectivo.s, "source": s_efectivo.source},
         "threshold_pp_per_1m": umbral,
         "verdict": {
             "s0": verdict_of(legacy_med, s0, tick_usd),
@@ -350,9 +344,9 @@ def _sweep_rates(celdas: list[dict], tick_usd: float) -> dict:
                 {
                     "model": c["model"],
                     "workload": c["workload"],
-                    "new_cost_task_usd": round(nuevo, 9),
+                    "new_cost_task_usd": nuevo,
                     "threshold_pp_per_1m": (
-                        round(c["threshold_pp_per_1m"]["s0"] * factor, 4)
+                        c["threshold_pp_per_1m"]["s0"] * factor
                         if c["threshold_pp_per_1m"]
                         else None
                     ),
@@ -397,7 +391,7 @@ def _sweep_cache(celdas: list[dict], tabla, tick_usd: float) -> dict:
                 {
                     "model": c["model"],
                     "workload": c["workload"],
-                    "new_cost_task_usd": round(nuevo, 9),
+                    "new_cost_task_usd": nuevo,
                     "verdict": veredicto,
                 }
             )
@@ -431,7 +425,7 @@ def _sweep_ancla(celdas: list[dict], tick_usd: float) -> dict:
                 {
                     "model": c["model"],
                     "workload": c["workload"],
-                    "legacy_cost_task_usd": round(legacy, 9),
+                    "legacy_cost_task_usd": legacy,
                     "pp_per_1m": c["pp_per_1m"]["median"] if c["pp_per_1m"] else None,
                     "verdict": veredicto,
                 }
@@ -493,7 +487,11 @@ def _sweep_k(batches: list[dict], requests: list[dict], usd: float) -> dict:
         veredicto = None
         if len(celdas) >= 2:
             costes = [c["cost_task_attempted_usd"] for c in celdas]
-            if max(costes) - min(costes) <= usd * TICK_PP:  # one tick of resolution
+            # One tick of resolution, read through the residue band: a spread of
+            # exactly one tick (which unrounded arithmetic lands a few 1e-18
+            # either side of the band) is the meter's quantum, deterministically
+            # squeeze — never a coin flip on the payloads' last bits.
+            if max(costes) - min(costes) <= usd * TICK_PP * (1 + TICK_BAND):
                 veredicto = "squeeze"
             elif costes == sorted(costes) and costes[0] < costes[-1]:
                 veredicto = "overhead"
@@ -600,7 +598,7 @@ def build(
     )
     return {
         "kind": "analysis",
-        "generated_at": round(time.time(), 3),
+        "generated_at": time.time(),
         "protocol_version": PROTOCOL_VERSION,
         "base_params": {
             "table_version": tabla.table_version,
@@ -608,7 +606,7 @@ def build(
             "usd_per_pp": usd,
             "s": s,
             "tick_pp": TICK_PP,
-            "tick_usd": round(tick_usd, 9),
+            "tick_usd": tick_usd,
         },
         "raw": {
             "run_ids": run_ids,

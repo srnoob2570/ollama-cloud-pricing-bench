@@ -84,7 +84,13 @@ def test_status_json_carries_the_full_batch_map(tmp_path, fake_cli):
     assert nivel["planned"] == 3
     assert nivel["counts"] == {"done": 3, "aborted": 0, "in_flight": 0, "pending": 0}
     assert nivel["requests_ok"] == 24
-    assert nivel["quota"]["dpp_session"] == 2.4 and nivel["quota"]["dpp_weekly"] == 2.4
+    # 24 ticks x 0.1 pp: the exact float of the brackets' delta chain, unrounded
+    assert nivel["quota"]["dpp_session"] == sum(
+        b["dpp_session"] for b in nivel["batches"] if b["dpp_session"] is not None
+    )
+    assert nivel["quota"]["dpp_weekly"] == sum(
+        b["dpp_weekly"] for b in nivel["batches"] if b["dpp_weekly"] is not None
+    )
     assert [b["status"] for b in nivel["batches"]] == ["done", "done", "done"]
     assert {b["workload"] for b in nivel["batches"]} == {"qa_short", "calibration", "throughput"}
     assert all(b["batch_id"] and b["model"] == "glm-5.3-flash" for b in nivel["batches"])
@@ -152,3 +158,25 @@ def test_status_planned_grows_with_a_wider_resume(tmp_path, fake_cli):
     code, out, _err = run_cli(tmp_path, "status", "--level", "T1")
     assert code == 0
     assert "57 planned | 57 done" in out and "0 pending" in out
+
+
+def test_status_quota_accumulates_each_window_independently(tmp_path, fake_cli):
+    """A batch with only one readable window contributes that window's delta:
+    the quota totals always agree with the report's own per-batch rows."""
+    prepare(tmp_path)
+    assert run_t1(tmp_path, "--settle-s", "0")[0] == 0
+    ruta = tmp_path / "runs" / "manifest-T1.json"
+    manifiesto = json.loads(ruta.read_text(encoding="utf-8"))
+    victima = next(iter(manifiesto["batches"]))
+    manifiesto["batches"][victima]["dpp_weekly"] = None  # a session-only bracket
+    ruta.write_text(json.dumps(manifiesto), encoding="utf-8")
+
+    doc = json_doc(tmp_path, "status", "--level", "T1")
+    nivel = doc["levels"][0]
+    sesiones = [b["dpp_session"] for b in nivel["batches"] if b["dpp_session"] is not None]
+    assert nivel["quota"]["dpp_session"] == sum(sesiones)
+    assert nivel["quota"]["dpp_weekly"] == sum(
+        b["dpp_weekly"] for b in nivel["batches"] if b["dpp_weekly"] is not None
+    )
+    # the bracket census still counts only the brackets both windows resolved
+    assert nivel["quota"]["batches_with_bracket"] == len(sesiones) - 1

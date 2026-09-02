@@ -9,7 +9,6 @@ that does not fails — however confidently it claims the tests pass.
 
 from __future__ import annotations
 
-import itertools
 import json
 import re
 import time
@@ -26,6 +25,14 @@ T3_NAMES = tuple(fixtures_t3.WORKLOADS)
 _RE_STEP = re.compile(r"This is action (\d+) of (\d+)")
 
 
+def cuerpo(prompt: str) -> str:
+    """The fixture body the reply scripts parse: the wire prompt carries the
+    lane's nonce as one line above the fixture."""
+    if prompt.startswith("Sandbox task ("):
+        return prompt
+    return prompt.split("\n\n", 1)[1]
+
+
 def prepare(tmp_path) -> str:
     pricing = with_pricing(tmp_path)
     assert (
@@ -36,7 +43,9 @@ def prepare(tmp_path) -> str:
 
 
 def run_t3(tmp_path, *extra) -> tuple[int, str, str]:
-    return run_cli(tmp_path, "run", "--level", "T3", "--settle-s", "0", *extra)
+    return run_cli(
+        tmp_path, "run", "--level", "T3", "--settle-s", "2", "--settle-poll-s", "0.01", *extra
+    )
 
 
 def read_jsonl(tmp_path, dirname, pattern) -> list[dict]:
@@ -75,6 +84,9 @@ def scripted_actions(workload: str) -> list[dict]:
 
 def correct_reply(prompt: str) -> str:
     """The scripted agent that actually fixes the task, then verifies and finishes."""
+    prompt = cuerpo(prompt)
+    if not prompt.startswith("Sandbox task ("):
+        return "world"  # the canary's T2-size body: never graded, only accepted
     workload = fixtures_t3.workload_of(prompt)
     acciones = scripted_actions(workload)
     paso = int(_RE_STEP.search(prompt).group(1))
@@ -86,7 +98,9 @@ def correct_reply(prompt: str) -> str:
 def confident_reply(prompt: str) -> str:
     """The agent that claims success without fixing anything: a no-op patch,
     then `finish` claiming the tests pass — the checker must land it as a fail."""
-    paso = int(_RE_STEP.search(prompt).group(1))
+    if not cuerpo(prompt).startswith("Sandbox task ("):
+        return "world"  # the canary's T2-size body: never graded, only accepted
+    paso = int(_RE_STEP.search(cuerpo(prompt)).group(1))
     if paso == 1:
         return json.dumps(
             {
@@ -106,6 +120,9 @@ def looping_reply(_prompt: str) -> str:
 
 def sloppy_reply(prompt: str) -> str:
     """A turn of prose before the fix: the invalid step is spent, the loop recovers."""
+    prompt = cuerpo(prompt)
+    if not prompt.startswith("Sandbox task ("):
+        return "world"  # the canary's T2-size body: never graded, only accepted
     workload = fixtures_t3.workload_of(prompt)
     acciones = scripted_actions(workload)
     paso = int(_RE_STEP.search(prompt).group(1))
@@ -128,8 +145,9 @@ def test_full_t3_slate_scripted_fixes_pass_the_real_pytest_checker(tmp_path, fak
     batches = read_batches(tmp_path)
     assert len(batches) == 3 * 3 and len(requests) == 3 * 3
     chats = [c for c in fake_cli.calls if c["path"] == "/api/chat"]
-    # One billed chat per loop step across the slate; no warmup, no retry.
-    assert len(chats) == sum(len(r["steps"]) for r in requests)
+    # One billed chat per loop step across the slate (plus the canary's 10 that
+    # open the run); no warmup, no retry.
+    assert len(chats) == sum(len(r["steps"]) for r in requests) + 10
     for r in requests:
         validate_request_line(r)
         # The scripted fix makes the REAL pytest run in the sandbox pass.
@@ -159,7 +177,11 @@ def test_the_loop_records_tokens_per_step_inside_the_bracketed_batch(tmp_path, f
     assert len(requests) == 3
     for r in requests:
         tok_ins = [p["tok_in"] for p in r["steps"]]
-        assert all(a < b for a, b in itertools.pairwise(tok_ins))  # each step re-sends the log
+        # Each step re-sends the log: the loop's transcript grows, and the
+        # lane's per-turn nonce rides every step (its own word stream, so the
+        # per-step length jitters a little around the constant word count).
+        assert tok_ins[-1] > tok_ins[0]
+        assert len({p["nonce_sha256"] for p in r["steps"]}) == len(r["steps"])
         # The bracket reconciles the meter against the accepted step chats.
         batches = read_batches(tmp_path)
         batch = next(b for b in batches if b["batch_id"] == r["batch_id"])
@@ -286,7 +308,18 @@ def test_grading_is_hermetic_to_config_above_the_base(tmp_path, fake_cli):
         run_cli(base, "dry-run", "--level", "T3", "--reps", "1", "--pricing-dir", pricing)[0] == 0
     )
     code, out, err = run_cli(
-        base, "run", "--level", "T3", "--settle-s", "0", "--reps", "1", "--pricing-dir", pricing
+        base,
+        "run",
+        "--level",
+        "T3",
+        "--settle-s",
+        "2",
+        "--settle-poll-s",
+        "0.01",
+        "--reps",
+        "1",
+        "--pricing-dir",
+        pricing,
     )
     assert code == 0, out or err
     requests = read_jsonl(base, "runs", "requests-*.jsonl")
@@ -362,6 +395,9 @@ def gaming_reply(prompt: str) -> str:
             "content": "def test_planted_pass():\n    assert True\n",
         },
     ]
+    prompt = cuerpo(prompt)
+    if not prompt.startswith("Sandbox task ("):
+        return "world"  # the canary's T2-size body: never graded, only accepted
     workload = fixtures_t3.workload_of(prompt)
     paso = int(_RE_STEP.search(prompt).group(1))
     if workload == "debugging":
@@ -378,6 +414,9 @@ def trap_reply(contenido: str):
     the trap's code really executes inside the sandbox.)"""
 
     def _reply(prompt: str) -> str:
+        prompt = cuerpo(prompt)
+        if not prompt.startswith("Sandbox task ("):
+            return "world"  # the canary's T2-size body: never graded, only accepted
         workload = fixtures_t3.workload_of(prompt)
         paso = int(_RE_STEP.search(prompt).group(1))
         if workload == "debugging":
@@ -425,8 +464,10 @@ def test_hostile_write_ends_the_task_without_losing_the_batch(tmp_path, fake_cli
     at its recorded error step: the billed evidence stays, the batch completes."""
 
     def hostile(prompt: str) -> str:
-        workload = fixtures_t3.workload_of(prompt)
-        paso = int(_RE_STEP.search(prompt).group(1))
+        if not cuerpo(prompt).startswith("Sandbox task ("):
+            return "world"  # the canary's T2-size body: never graded, only accepted
+        workload = fixtures_t3.workload_of(cuerpo(prompt))
+        paso = int(_RE_STEP.search(cuerpo(prompt)).group(1))
         if workload == "debugging" and paso == 1:
             return json.dumps(
                 {"action": "write_file", "path": "trap.py", "content": "bad \ud800 char"}

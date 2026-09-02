@@ -28,7 +28,19 @@ def prepare(tmp_path) -> str:
 
 def run_one_model(tmp_path, *extra) -> tuple[int, str, str]:
     return run_cli(
-        tmp_path, "run", "--level", "T1", "--model", "glm-5.3-flash", "--reps", "1", *extra
+        tmp_path,
+        "run",
+        "--level",
+        "T1",
+        "--model",
+        "glm-5.3-flash",
+        "--reps",
+        "1",
+        "--settle-s",
+        "2",
+        "--settle-poll-s",
+        "0.01",
+        *extra,
     )
 
 
@@ -38,25 +50,38 @@ def read_requests(tmp_path) -> list[dict]:
     return [json.loads(l) for l in files[0].read_text(encoding="utf-8").splitlines() if l.strip()]
 
 
+def cuerpo(prompt: str) -> str:
+    """The fixture body the reply scripts match: under the cache-free lane the
+    sent prompt carries the run's nonce as one line above the fixture."""
+    if prompt.startswith((PRIMERA_PREGUNTA, CALIBRATION_PROMPT, THROUGHPUT_PROMPT)):
+        return prompt
+    return prompt.split("\n\n", 1)[1]  # the nonce's single line + the blank separator
+
+
 def qa_reply(prompt: str) -> str:
-    """A one-sentence reply that contains the question's expected answer."""
+    """A one-sentence reply that contains the question's expected answer.
+    Receives the fixture BODY (callers strip the lane's nonce)."""
     respuesta = next(ans[0] for q, ans in QA_SHORT_ANSWERS.items() if prompt.startswith(q))
     return f"The answer is {respuesta}."
 
 
 def correct_transcript(prompt: str) -> str:
     """Every workload answers exactly as its fixture asks."""
+    prompt = cuerpo(prompt)
     if prompt == CALIBRATION_PROMPT:
         return "OK"
     if prompt == THROUGHPUT_PROMPT:
         return ", ".join(str(i) for i in range(1, 151)) + "\nDONE"
-    return qa_reply(prompt)
+    try:
+        return qa_reply(prompt)
+    except StopIteration:
+        return "world"  # the canary's T2-size body: never graded, only accepted
 
 
 def test_scripted_correct_transcripts_pass_all_three_checkers(tmp_path, fake_cli):
     fake_cli.reply_for = correct_transcript
     prepare(tmp_path)
-    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    code, out, err = run_one_model(tmp_path)
     assert code == 0, out or err
     requests = read_requests(tmp_path)
     assert len(requests) == 24  # 20 qa_short + 3 calibration + 1 throughput
@@ -69,11 +94,11 @@ def test_scripted_correct_transcripts_pass_all_three_checkers(tmp_path, fake_cli
 def test_qa_short_fails_on_a_wrong_answer_and_passes_the_rest(tmp_path, fake_cli):
     fake_cli.reply_for = lambda prompt: (
         "The capital of France is Berlin."
-        if prompt.startswith(PRIMERA_PREGUNTA)
+        if cuerpo(prompt).startswith(PRIMERA_PREGUNTA)
         else correct_transcript(prompt)
     )
     prepare(tmp_path)
-    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    code, out, err = run_one_model(tmp_path)
     assert code == 0, out or err
     requests = read_requests(tmp_path)
     fallidos = [r for r in requests if r["checker"] == "fail"]
@@ -84,11 +109,11 @@ def test_qa_short_fails_on_a_wrong_answer_and_passes_the_rest(tmp_path, fake_cli
 
 def test_calibration_fails_when_reported_tokens_drift_beyond_2pct(tmp_path, fake_cli):
     """The 3 identical calibration requests must report reproducible tokens (2 % band)."""
-    fake_cli.reply_for = lambda prompt: "OK" if prompt == CALIBRATION_PROMPT else "world"
+    fake_cli.reply_for = lambda prompt: "OK" if cuerpo(prompt) == CALIBRATION_PROMPT else "world"
     drift = seed("calibration", "glm-5.3-flash", 1, 1)
     fake_cli.counts_for = lambda _prompt, s: (26, 13) if s == drift else (26, 12)
     prepare(tmp_path)
-    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    code, out, err = run_one_model(tmp_path)
     assert code == 0, out or err
     calibraciones = [r for r in read_requests(tmp_path) if r["workload"] == "calibration"]
     assert len(calibraciones) == 3
@@ -100,8 +125,9 @@ def test_truncated_stream_fails_the_checker_even_with_looking_correct_content(tm
     """Billed-but-truncated: no done frame means the outcome is never verifiable."""
     fake_cli.reply_for = correct_transcript
     fake_cli.truncate_stream = True
+    fake_cli.truncate_from = 10 + 1  # the canary's chats stay healthy
     prepare(tmp_path)
-    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    code, out, err = run_one_model(tmp_path)
     assert code == 0, out or err  # billed: recorded, not retried
     requests = read_requests(tmp_path)
     assert requests and all(r["checker"] == "fail" for r in requests)
@@ -111,11 +137,11 @@ def test_truncated_stream_fails_the_checker_even_with_looking_correct_content(tm
 def test_throughput_fails_when_the_number_sequence_is_incomplete(tmp_path, fake_cli):
     fake_cli.reply_for = lambda prompt: (
         "1, 2, 3 and so on up to 150, DONE"
-        if prompt == THROUGHPUT_PROMPT
+        if cuerpo(prompt) == THROUGHPUT_PROMPT
         else correct_transcript(prompt)
     )
     prepare(tmp_path)
-    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    code, out, err = run_one_model(tmp_path)
     assert code == 0, out or err
     requests = read_requests(tmp_path)
     throughput = [r for r in requests if r["workload"] == "throughput"]
@@ -125,9 +151,10 @@ def test_throughput_fails_when_the_number_sequence_is_incomplete(tmp_path, fake_
 
 def test_errored_request_carries_no_verdict(tmp_path, fake_cli):
     """A request that never produced a response has no outcome to check: null, not fail."""
-    fake_cli.fails_on = 3  # request 3 of the first batch gets a scripted 500
+    # The canary's 10 chats open the run: the first batch's request 3 is chat #13.
+    fake_cli.fails_on = 13  # request 3 of the first batch gets a scripted 500
     prepare(tmp_path)
-    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    code, out, err = run_one_model(tmp_path)
     assert code == 0, out or err
     requests = read_requests(tmp_path)
     fallidas = [r for r in requests if r["http"] != 200]
@@ -142,11 +169,11 @@ def test_throughput_passes_with_prose_around_the_complete_list(tmp_path, fake_cl
         "Sure! Here are the numbers from 1 to 150:\n"
         + ", ".join(str(i) for i in range(1, 151))
         + "\nDONE"
-        if prompt == THROUGHPUT_PROMPT
+        if cuerpo(prompt) == THROUGHPUT_PROMPT
         else correct_transcript(prompt)
     )
     prepare(tmp_path)
-    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    code, out, err = run_one_model(tmp_path)
     assert code == 0, out or err
     throughput = next(r for r in read_requests(tmp_path) if r["workload"] == "throughput")
     assert throughput["checker"] == "pass"
@@ -157,11 +184,11 @@ def test_qa_short_accepts_natural_phrasing_between_answer_tokens(tmp_path, fake_
     pregunta = "How many days are there in a leap year?"
     fake_cli.reply_for = lambda prompt: (
         "There are three hundred and sixty-six days in a leap year."
-        if prompt.startswith(pregunta)
+        if cuerpo(prompt).startswith(pregunta)
         else correct_transcript(prompt)
     )
     prepare(tmp_path)
-    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    code, out, err = run_one_model(tmp_path)
     assert code == 0, out or err
     requests = read_requests(tmp_path)
     assert all(r["checker"] == "pass" for r in requests), [
@@ -173,11 +200,11 @@ def test_qa_short_accepts_a_unicode_reply(tmp_path, fake_cli):
     pregunta = "What is the official language of Brazil?"
     fake_cli.reply_for = lambda prompt: (
         "A língua oficial do Brasil é o Português."
-        if prompt.startswith(pregunta)
+        if cuerpo(prompt).startswith(pregunta)
         else correct_transcript(prompt)
     )
     prepare(tmp_path)
-    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    code, out, err = run_one_model(tmp_path)
     assert code == 0, out or err
     requests = read_requests(tmp_path)
     assert all(r["checker"] == "pass" for r in requests)
@@ -187,13 +214,13 @@ def test_qa_short_rejects_negated_answers(tmp_path, fake_cli):
     """'is not Paris' is a wrong answer, however much it contains the right token."""
     fake_cli.reply_for = lambda prompt: (
         "The capital of France is not Paris, it is a myth."
-        if prompt.startswith("What is the capital of France?")
+        if cuerpo(prompt).startswith("What is the capital of France?")
         else "It is definitely not 56."
-        if prompt.startswith("What is 7 times 8?")
+        if cuerpo(prompt).startswith("What is 7 times 8?")
         else correct_transcript(prompt)
     )
     prepare(tmp_path)
-    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    code, out, err = run_one_model(tmp_path)
     assert code == 0, out or err
     requests = read_requests(tmp_path)
     fallidos = {r["req_id"][-4:]: r["checker"] for r in requests if r["checker"] == "fail"}
@@ -202,10 +229,12 @@ def test_qa_short_rejects_negated_answers(tmp_path, fake_cli):
 
 def test_calibration_rejects_zero_token_reports(tmp_path, fake_cli):
     """A zero-token report is not a measurement: it can never be the median reference."""
-    fake_cli.reply_for = lambda prompt: "OK" if prompt == CALIBRATION_PROMPT else "world"
-    fake_cli.counts_for = lambda _prompt, _seed: (0, 0)
+    fake_cli.reply_for = lambda prompt: "OK" if cuerpo(prompt) == CALIBRATION_PROMPT else "world"
+    # Zero-token reports for the calibration cells only: the canary's T2-size
+    # chats keep real counts, or its replays could never register a hit.
+    fake_cli.counts_for = lambda prompt, _seed: (0, 0) if len(prompt) < 10_000 else (26, 12)
     prepare(tmp_path)
-    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    code, out, err = run_one_model(tmp_path)
     assert code == 0, out or err
     calibraciones = [r for r in read_requests(tmp_path) if r["workload"] == "calibration"]
     assert len(calibraciones) == 3
@@ -216,11 +245,11 @@ def test_qa_short_fails_when_a_negation_follows_the_answer(tmp_path, fake_cli):
     """A negation AFTER the answer flips it too ("Paris is not the capital")."""
     fake_cli.reply_for = lambda prompt: (
         "Paris is not the capital of France."
-        if prompt.startswith(PRIMERA_PREGUNTA)
+        if cuerpo(prompt).startswith(PRIMERA_PREGUNTA)
         else correct_transcript(prompt)
     )
     prepare(tmp_path)
-    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    code, out, err = run_one_model(tmp_path)
     assert code == 0, out or err
     requests = read_requests(tmp_path)
     fallidos = [r for r in requests if r["checker"] == "fail"]
@@ -231,11 +260,11 @@ def test_qa_short_fails_when_a_negation_follows_the_answer(tmp_path, fake_cli):
 def test_calibration_fails_without_full_sibling_evidence(tmp_path, fake_cli):
     """2 of 3 identical requests truncated: the survivor has no reproducibility
     evidence (its median would be itself) and must not grade pass."""
-    fake_cli.reply_for = lambda prompt: "OK" if prompt == CALIBRATION_PROMPT else "world"
+    fake_cli.reply_for = lambda prompt: "OK" if cuerpo(prompt) == CALIBRATION_PROMPT else "world"
     # requests 21-23 are the calibration burst; #22 (its second request) gets a 500
-    fake_cli.fails_on = 22
+    fake_cli.fails_on = 10 + 22  # the canary's 10 chats shift the ordinal
     prepare(tmp_path)
-    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    code, out, err = run_one_model(tmp_path)
     assert code == 0, out or err
     calibraciones = [r for r in read_requests(tmp_path) if r["workload"] == "calibration"]
     assert len(calibraciones) == 3
@@ -248,11 +277,11 @@ def test_throughput_blob_of_digits_is_graded_never_a_harness_error(tmp_path, fak
     """A degenerate digit run must not crash int-parsing: it grades, never aborts."""
     fake_cli.reply_for = lambda prompt: (
         ", ".join(str(i) for i in range(1, 151)) + "\n" + "9" * 5000 + "\nDONE"
-        if prompt == THROUGHPUT_PROMPT
+        if cuerpo(prompt) == THROUGHPUT_PROMPT
         else correct_transcript(prompt)
     )
     prepare(tmp_path)
-    code, out, err = run_one_model(tmp_path, "--settle-s", "0")
+    code, out, err = run_one_model(tmp_path)
     assert code == 0, out or err  # a model outcome, graded - not a CheckersError abort
     throughput = [r for r in read_requests(tmp_path) if r["workload"] == "throughput"]
     # The complete list + final DONE is the contract; the degenerate blob is

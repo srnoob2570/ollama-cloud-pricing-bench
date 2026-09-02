@@ -23,7 +23,7 @@ import json
 import pathlib
 import time
 
-from . import fixtures, sandbox
+from . import fixtures, lane, sandbox
 from .client import OllamaCloud
 from .fixtures_t3 import MAX_STEPS
 
@@ -167,12 +167,17 @@ async def run_task(
     task_dir: pathlib.Path,
     seed_value: int,
     repo: tuple[tuple[str, str], ...],
+    salt=None,
+    task_index: int = 0,
 ) -> dict:
     """One agent task over its own working copy; returns the task record.
 
     The record mirrors a plain request's fields (last step's timing and done
     object) plus `steps`: the loop's raw evidence — action, outcome, reply, and
-    the tokens each step billed.
+    the tokens each step billed. `salt` (task index, turn -> nonce text) is the
+    cache-free lane's per-turn salter: every step's prompt carries its own nonce
+    as the first tokens (the raw cost of re-sending the context), and each step
+    persists both hashes.
     """
     task_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -185,9 +190,12 @@ async def run_task(
     pasos: list[dict] = []
     transcripcion: list[str] = []
     for numero in range(1, MAX_STEPS + 1):
+        nonce = salt(task_index, numero) if salt else None
+        prompt_paso = _step_prompt(task_prompt, transcripcion, numero)
+        prompt = lane.salted_prompt(prompt_paso, nonce) if nonce else prompt_paso
         rec = await client.chat(
             model=model,
-            prompt=_step_prompt(task_prompt, transcripcion, numero),
+            prompt=prompt,
             seed=seed_value,
         )
         try:
@@ -221,6 +229,9 @@ async def run_task(
             "tok_out": done.get("eval_count") if done else None,
             "tok_cached": done.get("prompt_eval_cache_hit_count") if done else None,
             "api": done,
+            # The lane's per-turn evidence: what this step billed (nonce + prompt).
+            "prompt_sha256": lane.prompt_sha256(prompt) if nonce else None,
+            "nonce_sha256": lane.nonce_sha256(nonce) if nonce else None,
         }
         pasos.append(paso)
         transcripcion.append(
@@ -242,6 +253,9 @@ async def run_task(
         "steps": pasos,
         "tool_calls": [],  # the loop declares no API tools: actions travel in text
         "repo_dir": str(task_dir),
+        # The task-level lane evidence: its first turn's nonce + prompt.
+        "prompt_sha256": pasos[0]["prompt_sha256"],
+        "nonce_sha256": pasos[0]["nonce_sha256"],
     }
 
 
@@ -252,13 +266,14 @@ async def run_tasks(
     modelo_api: str,
     *,
     sandbox_root: pathlib.Path,
+    salt=None,
 ) -> list[dict]:
     """The batch's tasks (one working copy each), k-concurrent; records in order.
 
     One task crashing never discards its siblings: every task yields a record
     (a degenerate one when it produced no step), so the batch's billed evidence
-    stays attributable and the runner's count check stays truthful.
-    """
+    stays attributable and the runner's count check stays truthful. `salt`
+    (task index, turn -> nonce text) is the cache-free lane's per-turn salter."""
     raiz = pathlib.Path(sandbox_root) / spec.batch_id
     semaforo = asyncio.Semaphore(spec.k)
 
@@ -274,6 +289,8 @@ async def run_tasks(
                     task_dir=task_dir,
                     seed_value=seed_value,
                     repo=specs_requeridos[i].repo,
+                    salt=salt,
+                    task_index=i,
                 )
             except Exception as e:  # noqa: BLE001 - the record is the evidence
                 return _registro_crash(task_dir, f"{type(e).__name__}: {e}")

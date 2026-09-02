@@ -1,22 +1,37 @@
-"""The bracketed-batch runner (methodology v1 §4).
+"""The bracketed-batch runner (methodology v1 §4, protocol v3).
 
 Per batch = one (workload, model, rep, k) cell:
 
 1. raw meter read (full payload kept);
 2. the batch's N requests — streaming, k-concurrent via semaphore, **no warmup,
-   no in-batch auto-retry** (every request the meter sees is an intended one);
+   no in-batch auto-retry** (every request the meter sees is an intended one).
+   Under the cache-free lane every request is salted with its run-scoped seeded
+   nonce (`lane.py`), so the measured pp is the workload's raw work;
 3. per-model `request_count` check issued immediately after the burst (the
-   counter is instant and exact — a dropped request aborts the run; the bracket
-   is still closed so the aborted batch's real spend is attributed to it);
-4. settle >= `settle_s` (90 s by default: the quota % lags ~60–90 s and
-   quantizes at 0.001 = 0.1 pp);
-5. second raw read -> Δpp per window, attributed to this batch alone.
+   counter is instant and exact, ~0.2 s — a dropped request aborts the run; the
+   bracket is still closed so the aborted batch's real spend is attributed to it).
+   This read is the registration loop's first sample;
+4. the **registration settle** (protocol v3; the fixed >= 90 s wait is dead):
+   poll `/api/usage` every `poll_s` (5 s) until two consecutive reads report
+   equal pp in BOTH windows — the batch's usage has registered in the meter —
+   closing at `settle_s`'s cap (60 s) with ``settle_exit: "capped"`` when the
+   meter never stabilizes;
+5. the last read is the bracket's post payload -> Δpp per window, attributed to
+   this batch alone.
+
+Before the first bracket, once per run, the **billing canary** checks the lane
+holds: 5 salted requests + 5 identical-prefix replays (T2-size body); the replay
+must bill at the cache discount (~11–14 % of the salted quota, measured 1/7 on
+kimi-k3) — a ratio above 0.5 aborts the run at the gate. A passive detector
+cross-checks every closed bracket's Δpp against the #28 token budget (its
+threshold is deferred until v3 data exists).
 
 `batch_id` is deterministic from (run, level, workload, model, rep, k); the
-per-level manifest records in_flight/done/aborted. A re-run resumes done batches
-and **skips** aborted/in_flight ones with a loud report — an aborted batch is
-never silently retried (its requests are already billed; `bench status` shows
-the state and recovery stays an explicit operator decision).
+per-level manifest records in_flight/done/aborted, the lane spec and the canary
+result. A re-run resumes done batches and **skips** aborted/in_flight ones with
+a loud report — an aborted batch is never silently retried (its requests are
+already billed; `bench status` shows the state and recovery stays an explicit
+operator decision).
 """
 
 from __future__ import annotations
@@ -29,9 +44,26 @@ import pathlib
 import time
 import uuid
 
-from . import agent, checkers, fixtures, schema
+from . import agent, checkers, fixtures, lane, schema
 from .client import PROTOCOL_VERSION, OllamaCloud
 from .fixtures import FIXTURE_VERSION
+
+# The passive detector's expected Δpp rates (weekly pp per 1M tokens), from the
+# measurability-budget derivation (issue #28, docs/research/presupuesto-
+# medibilidad-2026-09-01.md §3): prefill-dominated brackets (in-share >= 0.9)
+# move the weekly window at ~2.6 pp/1M, generation-carrying ones at ~5.4. The
+# across-model spread is >=12x, so the detector only flags a COLLAPSE — a
+# bracket whose token budget predicts a readable Δpp (>= 3.5 ticks, the note's
+# planning floor) but measures none; its threshold is refined once v3 data
+# exists (the v2 dataset inherits the cache discount and cannot re-derive it).
+DETECTOR_RATES = {"prefill": 2.6, "generation": 5.4}
+DETECTOR_PREFILL_SHARE = 0.9
+DETECTOR_TICKS_FLOOR = 3.5
+TICK_PP = 0.1
+# Relative float-residue band around a tick boundary, for COMPARISON logic only
+# (the deltas stay exact — precision policy): a reading of exactly one tick must
+# not read as a collapse on 0.09999999999999998.
+TICK_BAND = 1e-9
 
 
 class RunnerError(Exception):
@@ -225,8 +257,130 @@ def open_workstream_manifest(
     if existente:
         if cfg.get("catalog"):
             manifiesto.append_catalog(cfg["catalog"])
+    # The cache-free lane binds its run: the spec is derived from the run_id, so
+    # a resume always re-derives the same nonce stream; a recorded spec that
+    # disagrees is a hand-edited manifest, refused like any other drift.
+    if cfg.get("lane"):
+        previa = manifiesto.doc.get("lane")
+        esperado = lane.lane_spec(run_id)
+        if previa is None:
+            manifiesto.doc["lane"] = esperado
+            manifiesto.save()
+        elif previa != esperado:
+            raise RunnerError(
+                f"manifest {ruta.name} records lane spec {previa!r} but this run would "
+                f"use {esperado!r} - the lane spec may not drift inside one run_id "
+                "- keep the datasets apart"
+            )
+        cfg["lane"] = manifiesto.doc["lane"]
+    if existente:
         manifiesto.save()
     return manifiesto
+
+
+def _usage_ventana(payload: dict | None, window: str) -> float | None:
+    """The window's raw usage fraction (0.382 = 38.2 %), or None when unreadable."""
+    try:
+        valor = payload["limits"][window]["usage"]
+    except (KeyError, TypeError):
+        return None
+    return valor if isinstance(valor, (int, float)) else None
+
+
+async def _registration_settle(
+    client: OllamaCloud, *, primera: dict | None, cap_s: float, poll_s: float
+) -> dict:
+    """The protocol v3 settle: the registration loop.
+
+    Polls `/api/usage` every `poll_s` until two consecutive reads report equal
+    pp in BOTH windows — the bracket's usage has registered, so its Δpp belongs
+    to this batch alone — burning `cap_s` with ``exit: "capped"`` when the meter
+    never stabilizes. `primera` (the count-check read, taken ~0.2 s after the
+    burst) is the loop's first sample: a meter that already registered the batch
+    closes after a single confirming poll.
+
+    Returns the loop's record: reads (polls issued), exit
+    ("stable" | "capped" | "error"), the last good payload as `post`, each
+    window's registration time in seconds after the loop's first sample
+    (0.0 = already at its final value), and `error` on a failed poll (the caller
+    decides what a failed registration read costs the batch).
+    """
+    t0 = time.monotonic()
+    lecturas: list[tuple[float, float, float]] = []  # (session, weekly, monotonic)
+    if primera is not None:
+        s, w = _usage_ventana(primera, "session"), _usage_ventana(primera, "weekly")
+        if s is not None and w is not None:
+            lecturas.append((s, w, t0))
+    lecturas_payload: list[dict | None] = [primera] if primera is not None else []
+    leidas = 0
+    exito, error = "", ""
+    while True:
+        if len(lecturas) >= 2 and lecturas[-2][:2] == lecturas[-1][:2]:
+            exito = "stable"
+            break
+        if time.monotonic() - t0 >= cap_s:
+            exito = "capped"
+            break
+        await asyncio.sleep(poll_s)
+        try:
+            status, payload = await client.usage()
+        except Exception as e:  # noqa: BLE001 - a failed read is the caller's decision
+            error = f"{type(e).__name__}: {e}"
+            break
+        leidas += 1
+        if status != 200 or payload is None:
+            error = f"HTTP {status}"
+            break
+        s, w = _usage_ventana(payload, "session"), _usage_ventana(payload, "weekly")
+        if s is None or w is None:
+            error = "unreadable meter payload"
+            break
+        lecturas.append((s, w, time.monotonic()))
+        lecturas_payload.append(payload)
+
+    def _registrada(window: int) -> float | None:
+        """Seconds after the loop's first sample when the window last took a new
+        value; 0.0 when it was already at its final value there."""
+        if not lecturas:
+            return None
+        ultima = lecturas[0][window]
+        momento = lecturas[0][2]
+        for lectura in lecturas[1:]:
+            if lectura[window] != ultima:
+                ultima, momento = lectura[window], lectura[2]
+        return momento - t0
+
+    post = lecturas_payload[-1] if lecturas_payload else None
+    return {
+        "reads": leidas,
+        "exit": exito or None,
+        "error": error,
+        "post": post,
+        "registered_session_s": _registrada(0),
+        "registered_weekly_s": _registrada(1),
+    }
+
+
+def _salter(cfg: dict, spec: BatchSpec):
+    """The cell's per-request nonce callable (index -> nonce text), or None when
+    the workstream is exempt from the cache-free lane."""
+    lane_cfg = cfg.get("lane")
+    if not lane_cfg:
+        return None
+    seed_ = lane_cfg["nonce_seed"]
+    palabras = lane.nonce_words(lane.expected_tin(spec.level, spec.workload))
+
+    def _nonce(indice, turno=None):
+        # The nonce's coordinates include k: two cells of the same (workload,
+        # model, rep) at different k must never share a prefix — the glossary's
+        # comparability clause reads on fixture tokens, and a shared salt would
+        # let one cell's burst warm the next cell's cache.
+        coords = [spec.level, spec.workload, spec.model, spec.rep, spec.k, indice]
+        if turno is not None:
+            coords.append(turno)
+        return lane.nonce_text(seed_, lane.nonce_index(*coords), palabras)
+
+    return _nonce
 
 
 def _counts(payload: dict | None, window: str = "session") -> dict[str, int]:
@@ -339,6 +493,10 @@ def _request_line(
         "tok_in": tok_in,
         "tok_out": tok_out,
         "tok_cached": tok_cached,
+        # The cache-free lane's evidence: what was actually billed (nonce +
+        # fixture), and the nonce itself. Null on exempt traffic.
+        "prompt_sha256": rec.get("prompt_sha256"),
+        "nonce_sha256": rec.get("nonce_sha256"),
         "api": done,
         "http": rec["http"],
         "err": rec["err"],
@@ -360,14 +518,335 @@ def _append_jsonl(ruta: pathlib.Path, line: dict) -> None:
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
-async def _burst(client: OllamaCloud, spec: BatchSpec, specs: tuple, modelo_api: str) -> list[dict]:
+# ---------------------------------------------------------------------------
+# the billing canary (protocol v3): the once-per-run lane check
+# ---------------------------------------------------------------------------
+
+CANARY_WORKLOAD = "billing-canary"
+CANARY_SALTED = 5
+CANARY_REPLAYS = 5
+CANARY_ALARM_RATIO = 0.5  # the replay billing near 1 means the salting broke
+
+
+def _canary_nonces(run_id: str, palabras: int) -> tuple[list[str], str]:
+    """The canary volley's nonces: CANARY_SALTED fresh ones + the replay nonce,
+    which re-uses the FIRST salted nonce verbatim — the identical prefix the
+    replays must share (per-request re-salting the replays would defeat them,
+    and the ratio would read ~1: the alarm)."""
+    seed_ = lane.nonce_seed(run_id)
+    salados = [
+        lane.nonce_text(seed_, lane.nonce_index("canary", "salted", k), palabras)
+        for k in range(CANARY_SALTED)
+    ]
+    return salados, salados[0]
+
+
+async def _canary_volley(
+    client: OllamaCloud,
+    *,
+    run_id: str,
+    modelo_api: str,
+    model: str,
+    prompts: list[str],
+    cfg: dict,
+    fase: str,
+) -> dict:
+    """One canary volley, bracketed by the registration loop: pre read -> the
+    volley's requests (serial, k=1, no warmup, no retry) -> a fresh read as the
+    registration loop's first sample. Returns the volley's raw evidence."""
+    semillas = [fixtures.seed(CANARY_WORKLOAD, model, 1, k) for k in range(len(prompts))]
+    try:
+        estado, pre = await client.usage()
+    except Exception as e:  # noqa: BLE001 - a meter failure aborts cleanly, loudly
+        raise RunnerError(
+            f"canary: meter read failed ({type(e).__name__}: {e}) before the {fase} volley"
+        ) from None
+    if estado != 200 or pre is None:
+        raise RunnerError(f"canary: meter read failed (HTTP {estado}) before the {fase} volley")
+    outcomes = []
+    for prompt, semilla in zip(prompts, semillas, strict=True):
+        rec = await client.chat(model=modelo_api, prompt=prompt, seed=semilla)
+        outcomes.append({"http": rec["http"], "err": rec["err"], "done": rec["done"] is not None})
+    try:
+        estado_c, primera = await client.usage()
+    except Exception as e:  # noqa: BLE001 - a meter failure aborts cleanly, loudly
+        raise RunnerError(
+            f"canary: meter read failed ({type(e).__name__}: {e}) after the {fase} volley"
+        ) from None
+    if estado_c != 200 or primera is None:
+        raise RunnerError(f"canary: meter read failed (HTTP {estado_c}) after the {fase} volley")
+    registro = await _registration_settle(
+        client, primera=primera, cap_s=cfg["settle_s"], poll_s=cfg["settle_poll_s"]
+    )
+    if registro["exit"] is None:
+        raise RunnerError(
+            f"canary: meter read failed ({registro['error']}) registering the {fase} volley"
+        )
+    return {
+        "seeds": semillas,
+        "outcomes": outcomes,
+        "meter": {"pre": pre, "post": registro["post"]},
+        "reads": registro["reads"],
+        "settle_exit": registro["exit"],
+    }
+
+
+def _exigir_volley_aceptado(volley: dict, fase: str) -> None:
+    """The lane can only be proven from fully accepted volleys: a rejected or
+    errored chat deflates its volley's dpp (a false alarm) or empties the
+    numerator (a false all-clear) — the ratio reads nothing from failed chats."""
+    outcomes = volley["outcomes"]
+    aceptados = sum(1 for o in outcomes if o["http"] == 200 and not o["err"])
+    if aceptados != len(outcomes):
+        raise RunnerError(
+            f"canary: the {fase} volley was not fully accepted ({aceptados} of "
+            f"{len(outcomes)} requests) - the ratio cannot be measured from failed "
+            "requests; the run aborts at the gate"
+        )
+
+
+async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str, model: str) -> dict:
+    """The billing canary, once per run, before the first bracket.
+
+    5 salted requests (fresh nonces — full price, cache misses by construction)
+    + 5 identical-prefix replays (salted[0]'s nonce verbatim, the prefix a
+    salted request just established). A caching endpoint bills the replay
+    volley at the cache discount (~11–14 % of the salted quota on kimi-k3, the
+    paired probe's measured band); a ratio above CANARY_ALARM_RATIO means the
+    replays billed ~full price — per-request salting leaked into them, or the
+    endpoint stopped caching — and the run aborts at the gate: no bracket runs
+    under an unproven lane. The volleys must be fully accepted (a 429 or an
+    errored chat would reshape the ratio in either direction) and both settles
+    must close stable: capped evidence is recorded as inconclusive, never as a
+    verdict. The result lives in the manifest (a resume reuses it; an alarmed
+    or failed canary keeps refusing until the operator deletes the manifest —
+    an explicit decision, never a silent retry)."""
+    manifiesto = ctx.manifiesto
+    emit = cfg["emit"]
+    previo = manifiesto.doc.get("canary")
+    if isinstance(previo, dict) and previo.get("status") in ("ok", "inconclusive"):
+        if emit:
+            emit(
+                f"canary: already ran for this run on {previo.get('model')!r} (ratio "
+                f"{_fmt_ratio(previo.get('ratio'))}, status {previo['status']}) - reused"
+            )
+        return previo
+    if isinstance(previo, dict) and previo.get("status") in ("alarm", "failed"):
+        causa = (
+            "already alarmed"
+            if previo.get("status") == "alarm"
+            else "never completed (a mid-canary failure left it unfinished)"
+        )
+        raise RunnerError(
+            f"canary: this run's billing canary {causa} (ratio "
+            f"{_fmt_ratio(previo.get('ratio'))}) - the lane was never proven for this "
+            f"run_id; delete {manifiesto.ruta.name} to start a clean run"
+        )
+
+    modelo_api = cfg.get("model_map", {}).get(model, model)
+    specs_cuerpo = fixtures.build("T2", "long_context", 1)
+    cuerpo = specs_cuerpo[0].prompt
+    palabras = lane.nonce_words(lane.expected_tin("T2", "long_context"))
+    salados, nonce_replay = _canary_nonces(manifiesto.run_id, palabras)
+    prompts_salados = [lane.salted_prompt(cuerpo, n) for n in salados]
+    prompt_replay = lane.salted_prompt(cuerpo, nonce_replay)
+
+    if emit:
+        emit(
+            f"canary: {CANARY_SALTED} salted + {CANARY_REPLAYS} identical-prefix replays "
+            f"({model}, T2-size body) - proving the cache-free lane holds"
+        )
+    # Crash attribution: the volleys bill real quota. A failure between or
+    # inside them persists the partial evidence (the billed chats land in the
+    # canary line, the manifest marks the canary failed) before re-raising —
+    # a resume refuses, it never re-bills the canary from scratch.
+    fallo_canary = ""
+    salado = None
+    repeticion = None
+    try:
+        salado = await _canary_volley(
+            client,
+            run_id=manifiesto.run_id,
+            modelo_api=modelo_api,
+            model=model,
+            prompts=prompts_salados,
+            cfg=cfg,
+            fase="salted",
+        )
+        _exigir_volley_aceptado(salado, "salted")
+        if emit:
+            emit(
+                f"canary: salted volley registered ({salado['reads']} reads, {salado['settle_exit']})"
+            )
+        repeticion = await _canary_volley(
+            client,
+            run_id=manifiesto.run_id,
+            modelo_api=modelo_api,
+            model=model,
+            prompts=[prompt_replay] * CANARY_REPLAYS,
+            cfg=cfg,
+            fase="replay",
+        )
+        _exigir_volley_aceptado(repeticion, "replay")
+        if emit:
+            emit(
+                f"canary: replay volley registered ({repeticion['reads']} reads, "
+                f"{repeticion['settle_exit']})"
+            )
+    except RunnerError as e:
+        fallo_canary = str(e)
+
+    vacio = {
+        "seeds": [],
+        "outcomes": [],
+        "meter": {"pre": None, "post": None},
+        "reads": 0,
+        "settle_exit": None,
+    }
+    salado = salado or vacio
+    repeticion = repeticion or vacio
+    dpp = {
+        "salted_session": _dpp(salado["meter"]["pre"], salado["meter"]["post"], "session"),
+        "salted_weekly": _dpp(salado["meter"]["pre"], salado["meter"]["post"], "weekly"),
+        "replay_session": _dpp(repeticion["meter"]["pre"], repeticion["meter"]["post"], "session"),
+        "replay_weekly": _dpp(repeticion["meter"]["pre"], repeticion["meter"]["post"], "weekly"),
+    }
+    # The ratio mounts on the session window (the probe's practically finer
+    # readout), the weekly as the fallback; both sub-resolution -> inconclusive.
+    ratio = None
+    base = None
+    for ventana in ("session", "weekly"):
+        salado_pp, replay_pp = dpp[f"salted_{ventana}"], dpp[f"replay_{ventana}"]
+        if (
+            isinstance(salado_pp, (int, float))
+            and salado_pp > 0
+            and isinstance(replay_pp, (int, float))
+        ):
+            ratio = replay_pp / salado_pp
+            base = ventana
+            break
+    estable = salado["settle_exit"] == "stable" and repeticion["settle_exit"] == "stable"
+    alarma = ratio is not None and estable and ratio > CANARY_ALARM_RATIO
+    estado_canary = (
+        "failed"
+        if fallo_canary
+        else "alarm"
+        if alarma
+        else "ok"
+        if ratio is not None and estable
+        else "inconclusive"
+    )
+    causa_inconclusa = ""
+    if estado_canary == "inconclusive":
+        causa_inconclusa = (
+            " - the ratio was unmeasurable (sub-tick volleys)"
+            if ratio is None
+            else " - a volley's registration settle never stabilized (capped); the "
+            "ratio is not trustworthy evidence"
+        )
+    linea = {
+        "canary_id": f"{manifiesto.run_id}-canary",
+        "run_id": manifiesto.run_id,
+        "level": level,
+        "model": model,
+        "workload": CANARY_WORKLOAD,
+        "body_fixture_hash": fixtures.fixture_hash(specs_cuerpo),
+        "body_sha256": lane.prompt_sha256(cuerpo),
+        "salted": {
+            "nonce_sha256": [lane.nonce_sha256(n) for n in salados],
+            "seeds": salado["seeds"],
+            "outcomes": salado["outcomes"],
+        },
+        "replay": {
+            "nonce_sha256": lane.nonce_sha256(nonce_replay),
+            "seeds": repeticion["seeds"],
+            "outcomes": repeticion["outcomes"],
+        },
+        "meter": {
+            "salted_pre": salado["meter"]["pre"],
+            "salted_post": salado["meter"]["post"],
+            "replay_pre": repeticion["meter"]["pre"],
+            "replay_post": repeticion["meter"]["post"],
+        },
+        "dpp": dpp,
+        "ratio": ratio,
+        "ratio_basis": base,
+        "alarm": alarma,
+        "reads": {"salted": salado["reads"], "replay": repeticion["reads"]},
+        "settle_exits": {"salted": salado["settle_exit"], "replay": repeticion["settle_exit"]},
+        "table_version": cfg["table_version"],
+        "protocol_version": PROTOCOL_VERSION,
+        "notes": (
+            "5 salted requests (fresh nonces, full price) + 5 identical-prefix replays "
+            "(salted[0]'s nonce, the cache discount); the ratio mounts on the session "
+            "window with the weekly as corroboration; alarm above "
+            f"{CANARY_ALARM_RATIO} aborts the run at the gate"
+            + causa_inconclusa
+            + (f" - incomplete: {fallo_canary}" if fallo_canary else "")
+        ),
+        "at": time.time(),
+    }
+    schema.validate_canary_line(linea)
+    _append_jsonl(ctx.ruta_canary, linea)
+    manifiesto.doc["canary"] = {
+        "status": estado_canary,
+        "ratio": ratio,
+        "ratio_basis": base,
+        "alarm": alarma,
+        "model": model,
+        "at": linea["at"],
+        "dpp": dpp,  # the canary's own quota spend (its volleys are bracketed too)
+        "settle_exits": {"salted": salado["settle_exit"], "replay": repeticion["settle_exit"]},
+    }
+    manifiesto.save()
+    if fallo_canary:
+        if emit:
+            emit(f"canary: FAILED - {fallo_canary}")
+        raise RunnerError(fallo_canary)
+    if emit:
+        emit(
+            f"canary: ratio {_fmt_ratio(ratio)} ({base or 'unmeasurable'}) - "
+            + (
+                "ALARM: the replay billed near full price - the run aborts at the gate"
+                if alarma
+                else "the lane holds"
+                if estado_canary == "ok"
+                else f"inconclusive{causa_inconclusa} - proceeding, the passive detector watches the brackets"
+            )
+        )
+    if alarma:
+        raise RunnerError(
+            f"billing canary: replay ratio {_fmt_ratio(ratio)} > {CANARY_ALARM_RATIO} - "
+            "the cache-free lane's salting is broken (the replays billed near full "
+            "price); the run aborts at the gate with no bracket measured. If this "
+            "model's price table declares no cached-input discount, a full-price "
+            "replay may be the endpoint's honest behavior - verify before deleting "
+            "the manifest"
+        )
+    return manifiesto.doc["canary"]
+
+
+def _fmt_ratio(ratio) -> str:
+    return "n/a" if ratio is None else f"{ratio:.3f}"
+
+
+async def _burst(
+    client: OllamaCloud,
+    spec: BatchSpec,
+    specs: tuple,
+    modelo_api: str,
+    *,
+    salt=None,
+) -> list[dict]:
     """The batch's N requests, k-concurrent; no warmup, no auto-retry.
 
     `specs` are the workload's request specs (prompt + tool schemas); each
     request re-derives its seed from the cell coordinates. `modelo_api` is the
     id actually sent (the preflight's catalog match — the live catalog tags ids
     the price table lists untagged); the dataset records the slate id, the
-    manifest's catalog history carries the mapping.
+    manifest's catalog history carries the mapping. `salt` (index -> nonce text)
+    is the cache-free lane's salter: when given, every request's prompt carries
+    its nonce as the first tokens and the record persists both hashes.
     """
     semaforo = asyncio.Semaphore(spec.k)
 
@@ -376,12 +855,20 @@ async def _burst(client: OllamaCloud, spec: BatchSpec, specs: tuple, modelo_api:
         async with semaforo:
             if i < len(spec.gap_s) and spec.gap_s[i]:
                 await asyncio.sleep(spec.gap_s[i])
-            return await client.chat(
+            nonce = salt(i) if salt else None
+            prompt = lane.salted_prompt(specs[i].prompt, nonce) if nonce else specs[i].prompt
+            rec = await client.chat(
                 model=modelo_api,
-                prompt=specs[i].prompt,
+                prompt=prompt,
                 seed=seed_value,
                 tools=list(specs[i].tools) or None,
             )
+            # The line always pins the exact prompt billed; the nonce hash is
+            # null only on exempt (unsalted) traffic.
+            rec["prompt_sha256"] = lane.prompt_sha256(prompt)
+            if nonce:
+                rec["nonce_sha256"] = lane.nonce_sha256(nonce)
+            return rec
 
     return list(await asyncio.gather(*(_one(i) for i in range(spec.n))))
 
@@ -395,11 +882,58 @@ class BatchContext:
     cfg: dict
     rutas_requests: pathlib.Path
     ruta_batches: pathlib.Path
+    ruta_canary: pathlib.Path | None = None  # the billing canary's line (measured runs)
 
 
 def _notes(*partes: str) -> str:
     """The batch line's notes: the non-empty parts, abort causes first."""
     return "; ".join(p for p in partes if p)
+
+
+def _passive_detector(registros: list[dict], dpp_weekly: float | None) -> dict:
+    """The canary's passive companion: the closed bracket's Δpp against the #28
+    token budget.
+
+    The budget prices the bracket's REPORTED tokens at the #28 family rates
+    (weekly pp/1M, split by in/out share); a bracket whose budget predicts a
+    readable Δpp (>= 3.5 ticks, the note's planning floor) but measures none is
+    a collapse — the signature of broken salting under the lane. The across-model
+    spread is wide, so anything above zero is recorded without a flag; the
+    collapse flag rides the manifest entry and, when it fires, the batch line's
+    notes. The threshold is deferred until v3 data exists.
+    """
+    tokens_in = tokens_out = 0
+    for rec in registros:
+        pasos = rec.get("steps") or []
+        if pasos:
+            tin, tout = _sum_steps(pasos, "tok_in"), _sum_steps(pasos, "tok_out")
+        else:
+            done = rec.get("done")
+            tin = done.get("prompt_eval_count") if done else None
+            tout = done.get("eval_count") if done else None
+        if isinstance(tin, int):
+            tokens_in += tin
+        if isinstance(tout, int):
+            tokens_out += tout
+    tokens = tokens_in + tokens_out
+    if tokens <= 0:
+        return {"expected_pp": None, "measured_pp": dpp_weekly, "collapsed": False}
+    familia = "prefill" if tokens_in / tokens >= DETECTOR_PREFILL_SHARE else "generation"
+    esperado = tokens / 1_000_000 * DETECTOR_RATES[familia]
+    # A collapse is a bracket whose budget predicts a readable Δpp but measures
+    # LESS THAN ONE TICK (below the meter's quantum, the tick read through the
+    # comparison band — an exact-zero test would miss a 1-tick residue left by
+    # a partial collapse or an unrelated consumer of the key).
+    colapsado = bool(
+        dpp_weekly is not None
+        and dpp_weekly < TICK_PP * (1 - TICK_BAND)
+        and esperado >= DETECTOR_TICKS_FLOOR * TICK_PP
+    )
+    return {
+        "expected_pp": esperado,
+        "measured_pp": dpp_weekly,
+        "collapsed": colapsado,
+    }
 
 
 async def _execute_batch(
@@ -408,8 +942,10 @@ async def _execute_batch(
     """One bracketed batch, from in_flight to its closed bracket; raises RunnerError on abort.
 
     The single protocol both spending paths share (`run`'s cells and the
-    concurrency workstream's k-cells alike): meter pre-read -> burst -> per-model
-    count check -> settle >= settle_s -> post read -> schema-validated raw lines.
+    concurrency workstream's k-cells alike): meter pre-read -> burst (salted
+    under the cache-free lane) -> per-model count check (~0.2 s, the
+    registration loop's first sample) -> the registration settle -> the last
+    read as the bracket's post -> schema-validated raw lines.
     `spec.plan_note` is informational provenance carried on the batch line; only
     a checker failure or a bracket failure aborts the batch.
     """
@@ -437,23 +973,25 @@ async def _execute_batch(
 
     modelo_api = cfg.get("model_map", {}).get(spec.model, spec.model)
     nota_checker = ""
+    sal = _salter(cfg, spec)
     try:
         specs_requeridos = fixtures.build(level, spec.workload, spec.n)
         if level == "T3":
             # T3's burst IS the agent loop: each task consults the model
             # step by step over its own working copy, and every step is
-            # one billed chat request.
+            # one billed chat request — salted per turn under the lane.
             registros = await agent.run_tasks(
                 client,
                 spec,
                 specs_requeridos,
                 modelo_api,
                 sandbox_root=ctx.base / "sandbox" / manifiesto.run_id,
+                salt=sal,
             )
             ok = sum(1 for r in registros for p in r["steps"] if p["http"] == 200)
             intentados = sum(len(r["steps"]) for r in registros)
         else:
-            registros = await _burst(client, spec, specs_requeridos, modelo_api)
+            registros = await _burst(client, spec, specs_requeridos, modelo_api, salt=sal)
             ok = sum(1 for r in registros if r["http"] == 200)
             intentados = spec.n
         try:
@@ -520,17 +1058,22 @@ async def _execute_batch(
     post: dict | None = None
     abort_headline = ""
     if status_c == 200 and contados == ok:
-        await asyncio.sleep(cfg["settle_s"])  # >= 90 s: the % lags ~60-90 s
-        try:
-            status_p, post = await client.usage()
-        except Exception as e:  # noqa: BLE001 - the bracket still closes below
-            status_p, post, error_lectura = 0, None, f"{type(e).__name__}: {e}"
-        if status_p != 200 or post is None:
-            causa = error_lectura or f"HTTP {status_p}"
+        # The registration settle: the count-check read is the loop's first
+        # sample; the loop polls until two consecutive reads agree in both
+        # windows, or the cap burns (the bracket still closes, marked capped).
+        registro = await _registration_settle(
+            client,
+            primera=leido,
+            cap_s=cfg["settle_s"],
+            poll_s=cfg["settle_poll_s"],
+        )
+        post = registro["post"]
+        if registro["exit"] is None:
+            causa = registro["error"] or "unknown meter failure"
             # A checker-invalidated batch stays invalidated: the note must
             # say BOTH causes, or the operator re-runs a suite whose
             # verdicts were never valid.
-            nota = _notes(f"aborted: meter read failed ({causa}) after the settle", nota_checker)
+            nota = _notes(f"aborted: meter read failed ({causa}) during registration", nota_checker)
             _close_batch(
                 ctx.ruta_batches,
                 spec,
@@ -543,6 +1086,7 @@ async def _execute_batch(
                 _wall_clock_s(registros),
                 ok,
                 _notes(nota, spec.plan_note),
+                settle=registro,
             )
             manifiesto.set(
                 spec.batch_id,
@@ -558,7 +1102,9 @@ async def _execute_batch(
             raise RunnerError(f"batch {spec.batch_id} ({spec.workload}/{spec.model}): {nota}")
     else:
         # Close the bracket even on abort: the burst's real consumption belongs
-        # to THIS batch, not to the next run's pre-read.
+        # to THIS batch, not to the next run's pre-read. The registration loop
+        # still runs (first sample null when the count-check read itself died),
+        # so the aborted bracket's post payload carries the spend it can see.
         abort_headline = (
             f"aborted: meter read failed ({error_lectura}) at the count check"
             if error_lectura
@@ -567,17 +1113,31 @@ async def _execute_batch(
                 f"requests, meter counted {contados} (delta {contados - ok})"
             )
         )
-        await asyncio.sleep(cfg["settle_s"])
-        try:
-            status_p, post = await client.usage()
-        except Exception:  # noqa: BLE001 - an aborted batch may lack a post
-            status_p, post = 0, None
-        if status_p != 200:
+        registro = await _registration_settle(
+            client,
+            primera=leido if status_c == 200 else None,
+            cap_s=cfg["settle_s"],
+            poll_s=cfg["settle_poll_s"],
+        )
+        post = registro["post"]
+        if registro["exit"] is None:
             post = None  # an aborted batch may carry a null post payload
 
     notas = _notes(abort_headline, nota_checker, spec.plan_note)
     dpp_sesion = _dpp(pre, post, "session")
     wall_clock = _wall_clock_s(registros)
+    # The passive detector: the closed bracket's Δpp against the #28 token
+    # budget (a collapse below a readable prediction is broken salting's
+    # signature; the threshold is refined once v3 data exists).
+    detectoro = _passive_detector(registros, _dpp(pre, post, "weekly"))
+    if detectoro.get("collapsed"):
+        notas = _notes(
+            notas,
+            "passive detector: the bracket's weekly dpp measures "
+            f"{detectoro['measured_pp']:g} pp against a token budget of "
+            f"{detectoro['expected_pp']:.2f} pp (broken salting signature? threshold "
+            "deferred, #28)",
+        )
     linea = _batch_line(
         spec,
         manifiesto=manifiesto,
@@ -590,6 +1150,7 @@ async def _execute_batch(
         wall_clock_s=wall_clock,
         ok=ok,
         settle_s=cfg["settle_s"],
+        settle=registro,
         table_version=cfg["table_version"],
         notes=notas,
     )
@@ -606,6 +1167,8 @@ async def _execute_batch(
         dpp_session=dpp_sesion,
         dpp_weekly=_dpp(pre, post, "weekly"),
         requests_ok=ok,
+        settle_exit=registro["exit"],  # a capped bracket's read is analysis-visible
+        detector=detectoro,
     )
     if estado_final == "aborted":
         raise RunnerError(f"batch {spec.batch_id} ({spec.workload}/{spec.model}): {notas}")
@@ -652,6 +1215,7 @@ async def _run_async(cfg: dict) -> dict:
         manifiesto.save()
     rutas_requests = runs_dir / f"requests-{run_id}.jsonl"
     ruta_batches = batches_dir / f"batches-{manifiesto.run_id}.jsonl"
+    ruta_canary = runs_dir / f"canary-{run_id}.jsonl"
 
     client = OllamaCloud(transport=cfg["transport"])
     contexto = BatchContext(
@@ -660,9 +1224,14 @@ async def _run_async(cfg: dict) -> dict:
         cfg=cfg,
         rutas_requests=rutas_requests,
         ruta_batches=ruta_batches,
+        ruta_canary=ruta_canary,
     )
     hechos = omitidos = en_vuelo = abortados_previos = escritas = 0
     try:
+        if cfg.get("lane") and specs:
+            # The billing canary opens the run: the lane must be proven before
+            # the first bracket bills anything under it.
+            await _ensure_canary(client, ctx=contexto, cfg=cfg, level=level, model=cfg["models"][0])
         for spec in specs:
             estado = manifiesto.status(spec.batch_id)
             if estado in ("done", "in_flight", "aborted"):
@@ -751,6 +1320,7 @@ def _close_batch(
     wall_clock_s: float | None,
     ok: int,
     notes: str,
+    settle: dict,
 ) -> None:
     linea = _batch_line(
         spec,
@@ -764,6 +1334,7 @@ def _close_batch(
         wall_clock_s=wall_clock_s,
         ok=ok,
         settle_s=cfg["settle_s"],
+        settle=settle,
         table_version=cfg["table_version"],
         notes=notes,
     )
@@ -784,6 +1355,7 @@ def _batch_line(
     wall_clock_s: float | None,
     ok: int,
     settle_s: float,
+    settle: dict,
     table_version: str,
     notes: str = "",
 ) -> dict:
@@ -797,6 +1369,14 @@ def _batch_line(
         "k": spec.k,
         "n": spec.n,
         "settle_s": settle_s,
+        # Protocol v3's registration settle: the loop's mode, poll count, exit
+        # reason and per-window registration times (seconds after the loop's
+        # first sample; 0.0 = already at its final value there).
+        "settle_mode": "registration",
+        "settle_reads": settle["reads"],
+        "registered_session_s": settle["registered_session_s"],
+        "registered_weekly_s": settle["registered_weekly_s"],
+        "settle_exit": settle["exit"],
         "count_check_s": count_check_s,
         "wall_clock_s": wall_clock_s,
         "medidor_pre": pre,
@@ -820,13 +1400,18 @@ def run_level(
     rep_filter: int | None,
     k: int,
     settle_s: float,
+    settle_poll_s: float = 5.0,
     table_version: str,
     catalog: dict | None = None,
     model_map: dict[str, str] | None = None,
     transport=None,
     emit=print,
 ) -> dict:
-    """Executes the level's batches under the bracketed protocol; raises RunnerError."""
+    """Executes the level's batches under the bracketed protocol; raises RunnerError.
+
+    The measured workstream always runs under the cache-free lane (protocol v3):
+    `lane=True` makes the manifest record the nonce spec and the billing canary
+    open the run."""
     cfg = {
         "base": pathlib.Path(base),
         "level": level,
@@ -836,6 +1421,8 @@ def run_level(
         "rep_filter": rep_filter,
         "k": k,
         "settle_s": settle_s,
+        "settle_poll_s": settle_poll_s,
+        "lane": True,
         "table_version": table_version,
         "catalog": catalog,
         "model_map": model_map or {},

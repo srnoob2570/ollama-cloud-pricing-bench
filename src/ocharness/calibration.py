@@ -10,9 +10,9 @@ opening span, shared provenance) per T2-slate model in three bracketed batches:
    intra-batch hit evidence.
 3. **Spaced replays** (`cache_spaced`, 3): the same prefix again at increasing
    offsets (targets 5/30/90 s, `--spaced-gaps`) inside one bracket — how far the
-   cache persists. The bracket's settle already puts its first replay ~settle
-   seconds after the last refresh; the ladder keeps its shape above that floor,
-   and every replay's actual age is derived from the raw stamps, never assumed.
+   cache persists. The offsets are cumulative from the prefix's last refresh
+   (the ladder keeps its shape above the bracket's own registration time), and
+   every replay's actual age is derived from the raw stamps, never assumed.
 
 The three signals (reported tokens, Δpp, TTFT) land in the standard raw
 datasets — nothing new to trust. The calibration doc
@@ -605,6 +605,7 @@ def run_calibration(
     models: list[str],
     spaced_ages: tuple[float, ...] = SPACED_TARGETS,
     settle_s: float,
+    settle_poll_s: float = 5.0,
     table_version: str,
     tabla,
     catalog: dict | None = None,
@@ -612,12 +613,17 @@ def run_calibration(
     transport=None,
     emit=print,
 ) -> dict:
-    """Executes the calibration replays per model; raises RunnerError on abort."""
+    """Executes the calibration replays per model; raises RunnerError on abort.
+
+    The calibration is EXEMPT from the cache-free lane (no `lane` in its cfg):
+    its replays re-send one identical prefix on purpose — prefix replay is the
+    only legitimate cached traffic a measured run never sees."""
     cfg = {
         "base": pathlib.Path(base),
         "models": models,
         "spaced_ages": tuple(float(a) for a in spaced_ages),
         "settle_s": settle_s,
+        "settle_poll_s": settle_poll_s,
         "table_version": table_version,
         "tabla": tabla,
         "catalog": catalog,
@@ -625,5 +631,6 @@ def run_calibration(
         "transport": transport,
         "emit": emit,
         "k": 1,  # _check_drift pins the brackets' k
+        "lane": None,  # exempt: the replays re-send one prefix deliberately
     }
     return asyncio.run(_run_async(cfg))

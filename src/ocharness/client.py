@@ -13,7 +13,12 @@ import time
 
 import httpx
 
-PROTOCOL_VERSION = "2"  # v2: batch lines carry wall_clock_s; probe lines exist
+# v3: the settle is the registration loop (poll until two consecutive reads agree
+# in both windows, capped); the cache-free lane salts every measured request with
+# a run-scoped seeded nonce (manifest lane spec, per-request prompt/nonce hashes);
+# the billing canary opens every measured run. v2 datasets are frozen as the
+# opacity case study and never mix with v3 (the runner's drift guard refuses).
+PROTOCOL_VERSION = "3"
 
 
 def default_transport() -> httpx.BaseTransport | None:

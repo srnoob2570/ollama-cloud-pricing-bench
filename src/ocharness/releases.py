@@ -230,6 +230,13 @@ def collect_run(
     ruta_probe = runs_dir / f"probe-{run_id}.jsonl"
     if ruta_probe.exists() and _count_lines(ruta_probe) > 0:
         archivos.append((f"runs/{ruta_probe.name}", ruta_probe))
+    # The billing canary's raw line rides along when it exists (protocol v3):
+    # its ratio and alarm claim must regenerate from shipped raw evidence —
+    # nonce hashes, seeds, per-chat outcomes and the four meter payloads —
+    # never be taken on faith from the manifest's summary.
+    ruta_canary = runs_dir / f"canary-{run_id}.jsonl"
+    if ruta_canary.exists() and _count_lines(ruta_canary) > 0:
+        archivos.append((f"runs/{ruta_canary.name}", ruta_canary))
     for ruta_cal in sorted(runs_dir.glob("calibration-*.json")):
         try:
             doc = json.loads(ruta_cal.read_text(encoding="utf-8"))
@@ -327,13 +334,25 @@ def _notes_text(meta: dict) -> str:
     code = meta.get("code") or {}
     commit = code.get("git_commit") or "unknown commit (not a git checkout)"
     sucio = " (the working tree had uncommitted changes)" if code.get("dirty") else ""
+    # The v2 freeze (methodology v1.2): every request whose suffix repeats a
+    # prefix (bracket reps, k-cells, multi-turn turns) billed at the implicit
+    # cache discount, so the v2 dataset undercounts raw work — it is the opacity
+    # case study, frozen: never extended, never mixed with protocol v3.
+    congelado = (
+        "\n- **protocol v2 dataset, frozen**: written before the cache-free lane "
+        "(protocol v3) — its suffix-repeating requests bill at the implicit cache "
+        "discount, so its legacy pp undercounts raw work. Kept as the opacity case "
+        "study; never extended, never mixed with v3 data.\n"
+        if meta.get("protocol_version") == "2"
+        else ""
+    )
     return (
         f"# bench dataset {meta['run_id']}\n\n"
         f"- level: {meta.get('level')} - table_version: {meta['table_version']} - "
         f"protocol_version: {meta['protocol_version']}\n"
         f"- produced by ocharness at {commit}{sucio}\n"
         f"- {meta['counts']['request_lines']} request lines, "
-        f"{meta['counts']['batch_lines']} batch lines\n\n"
+        f"{meta['counts']['batch_lines']} batch lines{congelado}\n\n"
         "Consume offline (raw JSONL is immutable; derivatives regenerate from it):\n\n"
         f"    bench analyze --release {TAG_PREFIX}{meta['run_id']} --repo <owner/name>\n"
     )

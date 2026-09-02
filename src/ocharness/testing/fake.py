@@ -28,8 +28,11 @@ class FakeOllama:
         self.concurrency_limit: int | None = None
         self.fails_on: int | None = None  # 1-based: ONLY that request fails
         self.ticks_per_request = 1  # quota ticks billed per accepted chat request
-        self.undercount_by = 0  # requests dropped from the LAST-BILLED model's reported count
+        self.undercount_at: int | None = None  # 1-based chat ordinal the meter never counts
+        self.drift_ticks_per_read = 0  # a meter that never stabilizes (the settle's capped exit)
         self.truncate_stream = False  # 200 streams that end without a done frame
+        self.truncate_from = 1  # 1-based chat ordinal from which streams truncate
+        self.reject_from = 1  # 1-based chat ordinal from which everything 429s
         self._session_usage = round(session_usage, 3)
         self._weekly_usage = round(weekly_usage, 3)
         self._n_chat = 0
@@ -53,6 +56,7 @@ class FakeOllama:
         self.catalog_raise: Exception | None = None  # transport failure on /v1/models
         self.reject_all = False  # every chat request rejected (429), nothing billed
         self.chat_raise: Exception | None = None  # transport failure on /api/chat
+        self.chat_raise_from = 1  # 1-based chat ordinal from which it starts failing
         self.usage_raise: Exception | None = None  # transport failure on /api/usage
         self.usage_raise_from = 10**9  # meter read ordinal from which it starts failing
         # Cache scripting (the calibrate-cache seam): with `cache_horizon_s` set, the
@@ -123,9 +127,9 @@ class FakeOllama:
         if request.url.path == "/api/chat":
             if "authorization" not in request.headers:
                 return httpx.Response(401, json={"error": "invalid credentials"})
-            if self.chat_raise is not None:
+            if self.chat_raise is not None and self._n_chat + 1 >= self.chat_raise_from:
                 raise self.chat_raise
-            if self.reject_all:
+            if self.reject_all and self._n_chat + 1 >= self.reject_from:
                 return httpx.Response(429, json={"error": "scripted: everything rejected"})
             self._n_chat += 1
             if self.fails_on is not None and self._n_chat == self.fails_on:
@@ -150,8 +154,14 @@ class FakeOllama:
 
     def _bill(self, body: dict, cacheada: int = 0) -> None:
         modelo = body.get("model", "?")
-        self._counts[modelo] = self._counts.get(modelo, 0) + 1
         self._last_billed = modelo
+        if self.undercount_at is not None and self._n_chat == self.undercount_at:
+            # A dropped bill: the request was accepted and billed (its ticks land)
+            # but the meter's cumulative counter never saw it — the signature the
+            # runner's post-burst count check exists to catch.
+            pass
+        else:
+            self._counts[modelo] = self._counts.get(modelo, 0) + 1
         ticks = self.cached_ticks if cacheada else self.ticks_per_request
         if ticks:
             self.program_consumption(ticks=ticks)
@@ -221,7 +231,7 @@ class FakeOllama:
             },
             self._done(body, cacheada),
         ]
-        if self.truncate_stream:
+        if self.truncate_stream and self._n_chat >= self.truncate_from:
             parciales = parciales[:-1]  # billed, but the stream ends without a done frame
         return b"".join((json.dumps(c) + "\n").encode() for c in parciales)
 
@@ -254,14 +264,13 @@ class FakeOllama:
             self._session_usage = round(self._session_usage + delta, 3)
             self._weekly_usage = round(self._weekly_usage + delta, 3)
             self._pending_ticks = 0
+        if self.drift_ticks_per_read:
+            # Scripted drift: every read moves both windows, so no two consecutive
+            # reads ever agree — the registration loop can only burn its cap.
+            delta = round(self.drift_ticks_per_read * 0.001, 3)
+            self._session_usage = round(self._session_usage + delta, 3)
+            self._weekly_usage = round(self._weekly_usage + delta, 3)
         modelos = [{"name": m, "request_count": c} for m, c in sorted(self._counts.items())]
-        if self.undercount_by:
-            # A dropped request stays dropped: the counter of the LAST-BILLED model
-            # (the one under test) is reported short by `undercount_by` on every read,
-            # like the real counters which never decay.
-            for entrada in modelos:
-                if entrada["name"] == self._last_billed:
-                    entrada["request_count"] = max(0, entrada["request_count"] - 1)
         return {
             "activity": {"cost": "0.00000", "period": {"type": "last_4_weeks"}, "models": []},
             "limits": {

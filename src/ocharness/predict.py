@@ -60,6 +60,7 @@ import statistics
 import time
 
 from . import analyze as analyze_mod
+from . import lane as lane_mod
 from . import workloads as workloads_mod
 from .analyze import _es_numero  # the cost model's number test, shared with analyze
 from .calibration import TICK_BAND, TICK_PP
@@ -155,11 +156,14 @@ def find_cell(workload: str | None, model: str | None) -> PredictCell:
 
 def fixture_brief(celda: PredictCell, tabla) -> dict:
     """What the estimator receives: the fixture's public description and the rate
-    table — and nothing measured, ever."""
+    table — and nothing measured, ever. The cache-free lane's per-request salt
+    (protocol v3) is public protocol, not measurement: its overhead is part of
+    the brief, so the estimate can account for what will actually be sent."""
     carga = next(
         w for w in workloads_mod.WORKLOADS_BY_LEVEL[celda.level] if w.name == celda.workload
     )
     tarifa = tabla.rate(celda.model)
+    nonce_palabras = lane_mod.nonce_words(carga.t_in)
     return {
         "cell": {"workload": celda.workload, "model": celda.model},
         "level": celda.level,
@@ -167,6 +171,15 @@ def fixture_brief(celda: PredictCell, tabla) -> dict:
         "requests_per_run": carga.requests,
         "tokens_in_per_request": carga.t_in,
         "tokens_out_per_request": carga.t_out,
+        # The cache-free lane's overhead (protocol v3): a run-scoped seeded nonce
+        # rides every measured request as its first tokens.
+        "nonce_words_per_request": nonce_palabras,
+        "nonce_tokens_per_request": lane_mod.nonce_tokens_estimate(carga.t_in),
+        "lane": (
+            "cache-free: every measured request carries a seeded nonce "
+            f"(~{nonce_palabras} words here) as its first tokens, forcing a cache "
+            "miss - the measured cost is the workload's raw work"
+        ),
         "rates": {
             "input": tarifa.input,
             "cached_input": tarifa.cached_input,

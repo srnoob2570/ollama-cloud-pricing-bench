@@ -25,6 +25,10 @@ _REQUEST_SCHEMA: dict[str, tuple] = {
     "tok_in": (int, None),
     "tok_out": (int, None),
     "tok_cached": (int, None),
+    # The cache-free lane's billing evidence (protocol v3): the exact prompt sent
+    # (nonce + fixture) and the nonce itself; both null on exempt traffic.
+    "prompt_sha256": (str, None),
+    "nonce_sha256": (str, None),
     "api": (dict, None),
     "http": (int, None),
     "err": (str, None),
@@ -48,7 +52,14 @@ _BATCH_SCHEMA: dict[str, tuple] = {
     "fixture_hash": (str,),
     "k": (int,),
     "n": (int,),
-    "settle_s": (float, int),
+    "settle_s": (float, int),  # the registration cap the bracket was granted (v3)
+    "settle_mode": (str,),  # v3: the settle is the registration loop
+    "settle_reads": (int,),  # meter polls issued by the registration loop
+    # Seconds after the count-check read when each window's pp took its final
+    # value (0.0 = already at it; null when no registration sample exists).
+    "registered_session_s": (float, int, None),
+    "registered_weekly_s": (float, int, None),
+    "settle_exit": (str, None),  # "stable" | "capped"; null when the loop never ran
     "count_check_s": (float, int, None),  # null on an aborted batch closed without a check
     "wall_clock_s": (float, int, None),  # the cell's makespan (null when nothing completed)
     "medidor_pre": (dict,),
@@ -83,6 +94,35 @@ _PROBE_SCHEMA: dict[str, tuple] = {
     "fixture_hash": (str,),
     "table_version": (str,),
     "protocol_version": (str,),
+}
+
+
+# The billing canary's line (runs/canary-<run_id>.jsonl, protocol v3): the
+# once-per-run paired check that the cache-free lane holds — 5 salted requests +
+# 5 identical-prefix replays of one T2-size body. The replay must bill at the
+# cache discount (~11–14 % of the salted quota, measured 1/7 on kimi-k3); the
+# line carries both volleys' raw meter brackets so the ratio is re-derivable.
+_CANARY_SCHEMA: dict[str, tuple] = {
+    "canary_id": (str,),
+    "run_id": (str,),
+    "level": (str,),
+    "model": (str,),
+    "workload": (str,),  # "billing-canary": the exempt traffic's own identity
+    "body_fixture_hash": (str,),
+    "body_sha256": (str,),  # the unsalted body's hash (the shared provenance)
+    "salted": (dict,),  # {nonce_sha256: [5], seeds: [5], outcomes: [{http, err, done}]}
+    "replay": (dict,),  # {nonce_sha256, seeds: [5], outcomes: [...]} — salted[0]'s prefix
+    "meter": (dict,),  # the four raw payloads: salted/replay x pre/post
+    "dpp": (dict,),  # {salted_session, salted_weekly, replay_session, replay_weekly}
+    "ratio": (float, int, None),  # replay / salted, on the basis window; null = unmeasurable
+    "ratio_basis": (str, None),  # "session" | "weekly" (the probe's finer window first)
+    "alarm": (bool,),
+    "reads": (dict,),  # {salted: n, replay: n} — the registration loops' poll counts
+    "settle_exits": (dict,),  # {salted: "stable"|"capped"|None, replay: ...}
+    "table_version": (str,),
+    "protocol_version": (str,),
+    "notes": (str,),
+    "at": (float, int),
 }
 
 
@@ -143,6 +183,10 @@ def validate_batch_line(line: dict) -> None:
 
 def validate_probe_line(line: dict) -> None:
     _validate(line, _PROBE_SCHEMA, "probe")
+
+
+def validate_canary_line(line: dict) -> None:
+    _validate(line, _CANARY_SCHEMA, "canary")
 
 
 def validate_estimate_line(line: dict) -> None:

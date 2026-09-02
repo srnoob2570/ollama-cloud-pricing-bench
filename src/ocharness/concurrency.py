@@ -13,10 +13,12 @@ Two phases against the live endpoint, one `bench probe-concurrency` invocation:
    of the same fixture — every cell carries the same total tokens, only k
    differs. A cell whose planned k exceeds the measured cut-off **re-anchors**
    to the cut-off (documented on the batch line and in the summary); the
-   sub-floor case leaves only the k=1 cell. Before the first cell bracket, one
-   settle + meter read flushes the probe's unbracketed spend so no cell's Δpp
+   sub-floor case leaves only the k=1 cell. Before the first cell bracket, the
+   registration loop flushes the probe's unbracketed spend so no cell's Δpp
    absorbs it (skipped when the probe was reused and some cell already closed:
-   that close proves the flush already ran for this run).
+   that close proves the flush already ran for this run). The cells are
+   measured brackets — salted under the cache-free lane; the probe's volleys
+   are exempt.
 
 The verdict metric — **effective cost per task under k** — is computed from the
 raw `batches/*.jsonl` + `runs/*.jsonl` lines with the anchor (`--ancla` USD/month
@@ -42,7 +44,9 @@ from .runner import (
     RunnerError,
     _append_jsonl,
     _burst,
+    _ensure_canary,
     _execute_batch,
+    _registration_settle,
     batch_id,
     open_workstream_manifest,
 )
@@ -409,6 +413,21 @@ async def _run_async(cfg: dict) -> dict:
 
     client = OllamaCloud(transport=cfg["transport"])
     try:
+        # ---- phase 0: the billing canary (once per run) ----
+        # The k-cells are measured brackets under the cache-free lane: the lane
+        # is proven before anything bills under it, exactly like `bench run`.
+        # The canary's own spend is unbracketed; the flush below baselines it
+        # together with the probe's before the first cell's pre-read.
+        contexto_canary = BatchContext(
+            base=base,
+            manifiesto=manifiesto,
+            cfg=cfg,
+            rutas_requests=runs_dir / f"requests-{run_id}.jsonl",
+            ruta_batches=batches_dir / f"batches-{run_id}.jsonl",
+            ruta_canary=runs_dir / f"canary-{run_id}.jsonl",
+        )
+        await _ensure_canary(client, ctx=contexto_canary, cfg=cfg, level=ANCHOR_LEVEL, model=model)
+
         # ---- phase 1: the probe (once per run: the cut-off is a per-key property) ----
         probe_doc = manifiesto.doc.get("probe") or {}
         probe_ran_ahora = False
@@ -476,22 +495,25 @@ async def _run_async(cfg: dict) -> dict:
             if isinstance(e, dict) and e.get("status") in ("done", "aborted")
         ]
         if pendientes and (probe_ran_ahora or not cerradas):
-            # The probe's own spend is unbracketed: settle + one meter read so its
-            # usage lands before the first cell's pre-read and no cell's Δpp
-            # absorbs it. Skipped when the probe was reused AND some cell already
-            # closed (that close proves the flush already ran for this run).
-            await asyncio.sleep(cfg["settle_s"])
-            try:
-                estado, _payload = await client.usage()
-            except Exception as e:  # noqa: BLE001 - a meter failure aborts cleanly, loudly
+            # The probe's own spend is unbracketed: the registration loop (poll
+            # until the meter is stable, capped) so its usage lands before the
+            # first cell's pre-read and no cell's Δpp absorbs it. Skipped when
+            # the probe was reused AND some cell already closed (that close
+            # proves the flush already ran for this run). A flush that never
+            # read the meter is no flush at all: the baselining failed.
+            flush = await _registration_settle(
+                client, primera=None, cap_s=cfg["settle_s"], poll_s=cfg["settle_poll_s"]
+            )
+            if flush["exit"] is None or flush["post"] is None:
                 raise RunnerError(
-                    f"probe flush read failed ({type(e).__name__}: {e}) - the probe's spend "
-                    "cannot be baselined before the cells"
-                ) from None
-            if estado != 200:
-                raise RunnerError(f"probe flush read failed (HTTP {estado}) before the cells")
+                    f"probe flush read failed ({flush['error'] or 'no meter read landed'}) - "
+                    "the probe's spend cannot be baselined before the cells"
+                )
             if emit:
-                emit("probe: flush read ok - the probe's spend predates the cells' brackets")
+                emit(
+                    "probe: flush read ok - the probe's spend predates the cells' brackets "
+                    f"({flush['reads']} reads, {flush['exit']})"
+                )
 
         previa = manifiesto.doc.get("planned")
         manifiesto.doc["planned"] = max(
@@ -560,6 +582,7 @@ def run_probe(
     model: str,
     k_max: int,
     settle_s: float,
+    settle_poll_s: float = 5.0,
     ancla: float,
     table_version: str,
     catalog: dict | None = None,
@@ -567,12 +590,18 @@ def run_probe(
     transport=None,
     emit=print,
 ) -> dict:
-    """Executes the probe + the re-anchored k-cells; raises RunnerError on abort."""
+    """Executes the probe + the re-anchored k-cells; raises RunnerError on abort.
+
+    The k-cells are measured brackets: they run under the cache-free lane
+    (`lane=True` records the nonce spec on the workstream's manifest). The probe
+    itself is exempt — a locator, not a measured cell — and its volleys fire
+    unsalted through `_burst`'s explicit no-salt path."""
     cfg = {
         "base": pathlib.Path(base),
         "model": model,
         "k_max": k_max,
         "settle_s": settle_s,
+        "settle_poll_s": settle_poll_s,
         "ancla": ancla,
         "table_version": table_version,
         "catalog": catalog,
@@ -580,5 +609,6 @@ def run_probe(
         "transport": transport,
         "emit": emit,
         "k": None,  # _check_drift: the cells carry their own k
+        "lane": True,  # the cells are measured; the probe's volleys stay exempt
     }
     return asyncio.run(_run_async(cfg))

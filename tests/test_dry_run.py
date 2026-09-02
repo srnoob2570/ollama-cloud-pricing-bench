@@ -157,3 +157,25 @@ def test_malformed_table_gives_clean_error(tmp_path, fake, capsys):
     assert codigo == 2
     assert "invalid rates" in errores
     assert "Traceback" not in errores
+
+
+def test_dry_run_estimates_carry_the_lane_nonce_and_the_canary(tmp_path, fake):
+    """Protocol v3: the estimate prices what will actually be sent — the
+    cache-free lane's per-request nonce rides tokens_in, broken out as its own
+    field — and the billing canary's once-per-run spend is stated, not hidden."""
+    pricing = with_pricing(tmp_path)
+    doc = json_doc(tmp_path, "dry-run", "--level", "T2", "--pricing-dir", pricing)
+    assert fake.calls == []
+    for fila in doc["rows"]:
+        assert fila["nonce_tokens"] > 0
+        # The nonce is bounded: [4, 400] words x the tokenization allowance.
+        assert fila["nonce_tokens"] <= 400 * 1.3 * fila["requests"] + 1
+    # The long_context row's overhead is ~1.5 % of its body (clamped to 400 words).
+    larga = next(f for f in doc["rows"] if f["workload"] == "long_context")
+    por_request = larga["nonce_tokens"] // larga["requests"]
+    assert por_request == int(400 * 1.3)  # the clamp's ceiling, priced
+    canario = doc["canary"]
+    assert canario["requests"] == 10 and canario["tokens_estimate"] > 0
+    assert "ratio above 0.5" in canario["note"]
+    _code, out, _err = run_cli(tmp_path, "dry-run", "--level", "T2", "--pricing-dir", pricing)
+    assert "billing canary (once per run)" in out and "nonce" in out

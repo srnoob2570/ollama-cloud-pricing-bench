@@ -43,7 +43,9 @@ def prepare(tmp_path, *dry_extra) -> str:
 def probe_cli(tmp_path, *extra) -> tuple[int, str, str]:
     from test_dry_run import run_cli
 
-    return run_cli(tmp_path, "probe-concurrency", "--settle-s", "0", *extra)
+    return run_cli(
+        tmp_path, "probe-concurrency", "--settle-s", "2", "--settle-poll-s", "0.01", *extra
+    )
 
 
 def with_cutoff(fake, limit: int | None) -> None:
@@ -130,6 +132,7 @@ def test_errored_volley_is_never_a_cut_off_conclusion(tmp_path, fake_cli):
 
     prepare(tmp_path)
     fake_cli.chat_raise = httpx.ConnectError("network blip")
+    fake_cli.chat_raise_from = 10 + 1  # the canary's 10 chats open the run
     code, _out, err = probe_cli(tmp_path, "--model", MODEL)
     assert code == 1
     assert "errored" in err and "Traceback" not in err
@@ -189,7 +192,8 @@ def test_probe_discovers_the_configured_cut_off_and_cells_re_anchor(tmp_path, fa
     # The probe's rejections are the ticket's 429 evidence, verbatim per request:
     rechazadas = [o for v in volleys for o in v["outcomes"] if o["http"] == 429]
     assert len(rechazadas) == 1 and "429" in rechazadas[0]["err"]
-    assert len(chats(fake_cli)) == 4 + 5 + 6 + 7 + 3 * 8  # probe volleys + three cells
+    # probe volleys + three cells + the canary's 10 (which open the run)
+    assert len(chats(fake_cli)) == 4 + 5 + 6 + 7 + 3 * 8 + 10
 
 
 def test_unlimited_key_reaches_the_probe_ceiling_with_cells_1_4_8(tmp_path, fake_cli):
@@ -341,7 +345,9 @@ def test_abort_inside_a_cell_keeps_the_billed_evidence(tmp_path, fake_cli):
     prepare(tmp_path)
     # reads: flush, k=1 pre/count/post, k=4 pre, then the k=4 count check dies
     fake_cli.usage_raise = httpx.ConnectError("meter dropped")
-    fake_cli.usage_raise_from = 6
+    # canary (7 reads) + flush (3) + the k=1 cell's 4 + the k=4 pre-read:
+    # the k=4 cell's COUNT check is the read that dies
+    fake_cli.usage_raise_from = 16
     code, _out, err = probe_cli(tmp_path, "--model", MODEL)
     assert code == 1
     assert "meter read failed" in err and "Traceback" not in err
@@ -418,7 +424,8 @@ def test_failed_sibling_does_not_void_the_cell_verdicts(tmp_path, fake_cli):
     the responses that landed still complete (the concurrency judge's own rule)."""
     fake_cli.reply_for = lambda prompt: "OK"
     prepare(tmp_path)
-    fake_cli.fails_on = 204 + 1  # the k=1 cell's first request (after 17 volleys = 204 chats)
+    # the k=1 cell's first request: the canary's 10 chats + 17 volleys = 214
+    fake_cli.fails_on = 204 + 1 + 10
     code, _out, err = probe_cli(tmp_path, "--model", MODEL)
     assert code == 0, err
     requests = read_jsonl(tmp_path, "runs", "requests-*.jsonl")
@@ -457,9 +464,10 @@ def test_second_model_reuses_the_probe_without_a_flush(tmp_path, fake_cli):
         )[0]
         == 0
     )
-    code, out, err = probe_cli(tmp_path, "--model", "kimi-k3", "--settle-s", "0")
+    code, out, err = probe_cli(tmp_path, "--model", "kimi-k3")
     assert code == 0, out or err
-    assert len(reads(fake_cli)) == antes + 9  # 3 cells x 3 bracket reads, NO flush read
+    # 3 cells x 4 bracket reads (pre + count + 2 polls), NO flush read
+    assert len(reads(fake_cli)) == antes + 12
     assert "reusing cut-off" in (out + err)  # the probe was reused, loudly
     doc = summary(tmp_path)
     assert doc["models"] == sorted([MODEL, "kimi-k3"])  # the run's doc, not one model's
@@ -511,7 +519,7 @@ def test_human_report_survives_an_aborted_cell_in_the_summary(tmp_path, fake_cli
 
     prepare(tmp_path)
     fake_cli.usage_raise = httpx.ConnectError("meter dropped")
-    fake_cli.usage_raise_from = 6  # the k=4 cell's count check dies mid-run
+    fake_cli.usage_raise_from = 6 + 10  # the canary's chats shift the ordinal
     assert probe_cli(tmp_path, "--model", MODEL)[0] == 1
     fake_cli.usage_raise = None  # the meter recovered for the resume
     assert (
@@ -530,3 +538,31 @@ def test_human_report_survives_an_aborted_cell_in_the_summary(tmp_path, fake_cli
     code, out, err = probe_cli(tmp_path, "--model", MODEL)  # resume: k=8 runs, k=4 skipped
     assert code == 0, err
     assert "n/a" in out  # the aborted cell's unmeasurable metrics render, no TypeError
+
+
+def test_the_k_cells_run_under_a_proven_lane(tmp_path, fake_cli):
+    """The k-cells are measured brackets: the workstream runs the billing canary
+    (once per run, before the probe) and every cell request carries its nonce —
+    the same gate `bench run` enforces."""
+    prepare(tmp_path)
+    assert probe_cli(tmp_path, "--model", MODEL)[0] == 0
+    canarios = [
+        json.loads(l)
+        for l in (pathlib.Path(tmp_path, "runs").glob("canary-*.jsonl"))
+        .__iter__()
+        .__next__()
+        .read_text()
+        .splitlines()
+        if l.strip()
+    ]
+    assert len(canarios) == 1 and canarios[0]["alarm"] is False
+    assert canarios[0]["model"] == MODEL
+    # The cells' requests are salted; the probe's volleys are exempt.
+    lineas = read_jsonl(tmp_path, "runs", "requests-*.jsonl")
+    assert all(r["nonce_sha256"] for r in lineas)  # measured cells: salted
+    assert all(r["prompt_sha256"] for r in lineas)
+    manifiesto = json.loads(
+        pathlib.Path(tmp_path, "runs", "manifest-T1-concurrency.json").read_text(encoding="utf-8")
+    )
+    assert manifiesto["lane"]["mode"] == "cache-free"
+    assert manifiesto["canary"]["status"] == "ok"

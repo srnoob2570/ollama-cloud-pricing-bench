@@ -46,14 +46,37 @@ def _validate_scenario(args: argparse.Namespace) -> str | None:
     return None
 
 
+def _validate_settle(args: argparse.Namespace) -> str | None:
+    """Validates the registration settle's cap and poll; error message or None.
+
+    Both must be strictly positive: a zero cap closes every bracket before the
+    meter can register it (every dpp would read 0.0, the lane unproven), and a
+    zero poll would hammer the meter. The poll must also sit below the cap —
+    the cap is what bounds the wait, and a poll at or above it could never fit
+    the two consecutive reads the loop's stability test needs.
+    """
+    if not math.isfinite(args.settle_s) or args.settle_s <= 0:
+        return f"--settle-s must be a finite number > 0; got {args.settle_s!r}"
+    if not math.isfinite(args.settle_poll_s) or args.settle_poll_s <= 0:
+        return f"--settle-poll-s must be a finite number > 0; got {args.settle_poll_s!r}"
+    if args.settle_poll_s >= args.settle_s:
+        return (
+            f"--settle-poll-s ({args.settle_poll_s!r}) must be smaller than --settle-s "
+            f"({args.settle_s!r}): the cap bounds the registration loop, and a poll at "
+            "or above it could never land the two consecutive reads stability needs"
+        )
+    return None
+
+
 def _validate_run(args: argparse.Namespace, tabla: PriceTable) -> str | None:
     """Validates the run's parameters against the level's slate; error message or None."""
     if args.k < 1:
         return f"--k must be >= 1; got {args.k!r}"
     if args.reps < 1:
         return f"--reps must be >= 1; got {args.reps!r}"
-    if args.settle_s < 0 or not math.isfinite(args.settle_s):
-        return f"--settle-s must be a finite number >= 0; got {args.settle_s!r}"
+    error = _validate_settle(args)
+    if error:
+        return error
     if args.rep is not None and not (1 <= args.rep <= args.reps):
         return f"--rep must be in [1, --reps={args.reps}]; got {args.rep!r}"
     modelos = workloads.slate(args.level, tabla)
@@ -82,6 +105,7 @@ def cmd_dry_run(args: argparse.Namespace) -> int:
         "reps": args.reps,
         "s": args.s,
         "rows": [dataclasses.asdict(f) for f in filas],
+        "canary": cost.canary_estimate(),
     }
     if args.json:
         print(json.dumps(estimado, ensure_ascii=False, indent=2))
@@ -89,18 +113,26 @@ def cmd_dry_run(args: argparse.Namespace) -> int:
         print(f"table_version={tabla.table_version} level={args.level} S1 hit-rate={args.s}")
         print(
             f"{'workload':<20}{'models':>8}{'reps':>6}{'requests':>10}"
-            f"{'tok_in':>11}{'tok_out':>9}{'$ S0':>9}{'$ S1':>9}{'pp':>9}"
+            f"{'tok_in':>11}{'tok_out':>9}{'nonce':>8}{'$ S0':>9}{'$ S1':>9}{'pp':>9}"
         )
         for f in filas:
             pp = "unmeasured" if f.pp_expected is None else f"{f.pp_expected:.4f}"
             print(
-                f"{f.workload:<20}{f.models:>8}{f.reps:>8}{f.tokens_in:>10,}"
-                f"{f.tokens_out:>9,}{f.cost_s0:>10.4f}{f.cost_s1:>9.4f}{pp:>9}"
+                f"{f.workload:<20}{f.models:>8}{f.reps:>8}{f.requests:>10,}"
+                f"{f.tokens_in:>10,}{f.tokens_out:>9,}{f.nonce_tokens:>8,}"
+                f"{f.cost_s0:>10.4f}{f.cost_s1:>9.4f}{pp:>9}"
             )
         print(
             f"{'TOTAL ' + args.level:<20}{'':>8}{'':>8}"
+            f"{sum(f.requests for f in filas):>10,}"
             f"{sum(f.tokens_in for f in filas):>10,}{sum(f.tokens_out for f in filas):>9,}"
+            f"{sum(f.nonce_tokens for f in filas):>8,}"
             f"{sum(f.cost_s0 for f in filas):>10.4f}{sum(f.cost_s1 for f in filas):>9.4f}"
+        )
+        canario = estimado["canary"]
+        print(
+            f"billing canary (once per run): ~{canario['requests']} requests, "
+            f"~{canario['tokens_estimate']:,} tokens - the cache-free lane's gate check"
         )
     gate.mark_dry_run(_base(args), args.level, estimado)
     return 0
@@ -179,6 +211,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             rep_filter=rep_filter,
             k=args.k,
             settle_s=args.settle_s,
+            settle_poll_s=args.settle_poll_s,
             table_version=tabla.table_version,
             catalog={"http": catalogo.http, "ids": catalogo.ids, "matched": catalogo.matched},
             model_map={s: c for s, c in catalogo.matched.items() if c != s},
@@ -227,6 +260,25 @@ def _status_doc(nivel: str, manifiesto: Manifest) -> dict:
     con_bracket = cerrados = 0
     requests_ok = 0
     batches = []
+    # The billing canary's volleys are bracketed spend no batch line carries:
+    # kept separate so the quota totals stay equal to the per-batch rows, and
+    # the report can state the canary's own consumption explicitly.
+    canario = doc.get("canary")
+    canario_dpp = canario.get("dpp") if isinstance(canario, dict) else None
+    canario_sesion = canario_semanal = None
+    if isinstance(canario_dpp, dict):
+        canario_sesion = _numero(canario_dpp.get("salted_session"))
+        replay_s = _numero(canario_dpp.get("replay_session"))
+        if canario_sesion is not None and replay_s is not None:
+            canario_sesion += replay_s
+        else:
+            canario_sesion = None
+        canario_semanal = _numero(canario_dpp.get("salted_weekly"))
+        replay_w = _numero(canario_dpp.get("replay_weekly"))
+        if canario_semanal is not None and replay_w is not None:
+            canario_semanal += replay_w
+        else:
+            canario_semanal = None
     for batch_id, entrada in doc.get("batches", {}).items():
         if not isinstance(entrada, dict):
             entrada = {"status": "corrupt"}
@@ -283,6 +335,8 @@ def _status_doc(nivel: str, manifiesto: Manifest) -> dict:
             "dpp_weekly": dpp_weekly,
             "batches_with_bracket": con_bracket,
             "closed_batches": cerrados,
+            "canary_dpp_session": canario_sesion,
+            "canary_dpp_weekly": canario_semanal,
         },
         "batches": batches,
     }
@@ -304,6 +358,12 @@ def _print_status(doc: dict) -> None:
         f"({quota['batches_with_bracket']}/{quota['closed_batches']} closed batches with a "
         "readable bracket)"
     )
+    if quota.get("canary_dpp_weekly") is not None or quota.get("canary_dpp_session") is not None:
+        print(
+            f"  billing canary spend (not a batch line): session "
+            f"{_fmt(quota.get('canary_dpp_session'), ' pp')} | "
+            f"weekly {_fmt(quota.get('canary_dpp_weekly'), ' pp')}"
+        )
     atencion = {
         s: c
         for s, c in counts.items()
@@ -403,11 +463,9 @@ def cmd_probe_concurrency(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    if args.settle_s < 0 or not math.isfinite(args.settle_s):
-        print(
-            f"error: --settle-s must be a finite number >= 0; got {args.settle_s!r}",
-            file=sys.stderr,
-        )
+    error_settle = _validate_settle(args)
+    if error_settle:
+        print(f"error: {error_settle}", file=sys.stderr)
         return 2
     if not math.isfinite(args.ancla) or args.ancla <= 0:
         print(f"error: --ancla must be a finite number > 0; got {args.ancla!r}", file=sys.stderr)
@@ -447,6 +505,7 @@ def cmd_probe_concurrency(args: argparse.Namespace) -> int:
             model=args.model,
             k_max=args.k_max,
             settle_s=args.settle_s,
+            settle_poll_s=args.settle_poll_s,
             ancla=args.ancla,
             table_version=tabla.table_version,
             catalog={"http": catalogo.http, "ids": catalogo.ids, "matched": catalogo.matched},
@@ -511,11 +570,9 @@ def cmd_calibrate_cache(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    if args.settle_s < 0 or not math.isfinite(args.settle_s):
-        print(
-            f"error: --settle-s must be a finite number >= 0; got {args.settle_s!r}",
-            file=sys.stderr,
-        )
+    error_settle = _validate_settle(args)
+    if error_settle:
+        print(f"error: {error_settle}", file=sys.stderr)
         return 2
     try:
         tabla = PriceTable.load(_pricing_dir(args), args.table_version)
@@ -554,6 +611,7 @@ def cmd_calibrate_cache(args: argparse.Namespace) -> int:
             models=modelos,
             spaced_ages=edades,
             settle_s=args.settle_s,
+            settle_poll_s=args.settle_poll_s,
             table_version=tabla.table_version,
             tabla=tabla,
             catalog={"http": catalogo.http, "ids": catalogo.ids, "matched": catalogo.matched},
@@ -757,7 +815,9 @@ def cmd_predict(args: argparse.Namespace) -> int:
             print(f"  {etiqueta} - PENDING blind: {b['description']}")
             print(
                 f"      {b['requests_per_run']} requests/run, ~{b['tokens_in_per_request']:,} in / "
-                f"~{b['tokens_out_per_request']:,} out per request | rates: input "
+                f"~{b['tokens_out_per_request']:,} out per request"
+                f" (+~{b['nonce_tokens_per_request']:,} nonce in, cache-free lane)"
+                f" | rates: input "
                 f"${b['rates']['input']:g}, cached ${b['rates']['cached_input']:g}, output "
                 f"${b['rates']['output']:g} per {b['rates']['per']:,}"
                 + (" (cache discount)" if b["cache_discount"] else " (cached=input)")
@@ -820,7 +880,7 @@ def _analyze_release(args: argparse.Namespace) -> int:
         # fetch() refuses (before touching the previous fetch) when the
         # requested table version, level or model is not what the release
         # carries: a silent empty analysis would read as a verdict of none.
-        stage, _meta = releases.fetch(
+        stage, meta = releases.fetch(
             base,
             tag=args.release,
             repo=repo,
@@ -840,6 +900,7 @@ def _analyze_release(args: argparse.Namespace) -> int:
             s=args.s,
             level=args.level,
             model=args.model,
+            protocol_version=meta.get("protocol_version"),
         )
     except analyze.AnalyzeError as e:
         print(f"error: {e}", file=sys.stderr)
@@ -1063,7 +1124,20 @@ def build_parser() -> argparse.ArgumentParser:
         # assumption. Its knobs are --run and --repo only.
         if nombre != "release":  # release never reads a settle (it never brackets)
             parser.add_argument(
-                "--settle-s", type=float, default=90.0, help="settle between read and read (s)"
+                "--settle-s",
+                type=float,
+                default=60.0,
+                help=(
+                    "registration cap (s): the settle polls /api/usage until two "
+                    "consecutive reads agree in both windows, or this cap burns "
+                    "(protocol v3; the fixed 90 s wait is dead)"
+                ),
+            )
+            parser.add_argument(
+                "--settle-poll-s",
+                type=float,
+                default=5.0,
+                help="the registration loop's poll interval (s)",
             )
         parser.add_argument("--json", action="store_true")
         parser.set_defaults(func=DESPACHO.get(nombre, _stub(nombre)))

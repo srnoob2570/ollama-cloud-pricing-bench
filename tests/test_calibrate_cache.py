@@ -51,7 +51,9 @@ def calibrate_cli(tmp_path, *extra) -> tuple[int, str, str]:
         tmp_path,
         "calibrate-cache",
         "--settle-s",
-        "0",
+        "2",
+        "--settle-poll-s",
+        "0.01",
         "--spaced-gaps",
         *GAPS,
         *extra,
@@ -60,12 +62,14 @@ def calibrate_cli(tmp_path, *extra) -> tuple[int, str, str]:
 
 def always_hits(fake) -> None:
     """The caching world: hits persist, a hit bills fewer ticks, every reply
-    satisfies the replay's one-word contract."""
+    satisfies the replay's one-word contract. The hit field is reported (the
+    explicit-zero evidence the conclusive rule reads)."""
     fake.reply_for = lambda prompt: "OK"
     fake.cache_horizon_s = 999.0
     fake.cached_eval_count = 6
     fake.ticks_per_request = 10
     fake.cached_ticks = 2
+    fake.cache_report_hits = True
 
 
 def chats(fake) -> list[dict]:
@@ -281,7 +285,9 @@ def test_refuses_flags_it_does_not_read(tmp_path, fake_cli):
         # --s prefix-matches --spaced-gaps/--settle-s and dies as ambiguous; the
         # rest are outright unrecognized. Either way: never a silent no-op.
         assert code == 2 and ("unrecognized" in err or "ambiguous" in err), bandera
-    code, _out, err = run_cli(tmp_path, "calibrate-cache", "--level", "T2", "--settle-s", "0")
+    code, _out, err = run_cli(
+        tmp_path, "calibrate-cache", "--level", "T2", "--settle-s", "2", "--settle-poll-s", "0.01"
+    )
     assert code == 2 and "no --level" in err
     assert fake_cli.calls == []  # refused before any request
 
@@ -290,7 +296,14 @@ def test_spaced_gaps_are_validated(tmp_path, fake_cli):
     prepare(tmp_path)
     for malos in (["1", "2"], ["3", "2", "1"], ["0", "-1", "2"], ["0", "0", "0"]):
         code, _out, err = run_cli(
-            tmp_path, "calibrate-cache", "--spaced-gaps", *malos, "--settle-s", "0"
+            tmp_path,
+            "calibrate-cache",
+            "--spaced-gaps",
+            *malos,
+            "--settle-s",
+            "2",
+            "--settle-poll-s",
+            "0.01",
         )
         assert code == 2 and "spaced-gaps" in err, malos
     assert fake_cli.calls == []
@@ -303,7 +316,9 @@ def test_settle_s_is_validated_and_ancla_is_refused(tmp_path, fake_cli):
     for malo in ("nan", "inf", "-1"):
         code, _out, err = run_cli(tmp_path, "calibrate-cache", "--settle-s", malo)
         assert code == 2 and "settle-s" in err, malo
-    code, _out, err = run_cli(tmp_path, "calibrate-cache", "--settle-s", "0", "--ancla", "1000")
+    code, _out, err = run_cli(
+        tmp_path, "calibrate-cache", "--settle-s", "2", "--settle-poll-s", "0.01", "--ancla", "1000"
+    )
     assert code == 2 and "unrecognized" in err
     assert fake_cli.calls == []  # refused before any request
 
@@ -366,7 +381,8 @@ def test_conclusive_cache_measurement_end_to_end(tmp_path, fake_cli):
     assert lectura["paper_discount"] == {"declared": True, "materialized": True}
     assert doc["unmaterialized_paper_discounts"] == []
     assert all(r["hit"] is True for r in lectura["signals"]["cache_spaced"]["replays"])
-    assert len(reads(fake_cli)) == 9  # 3 brackets x (pre + count + post)
+    # 3 brackets x (pre + count check + 2 registration polls) under lag_reads = 2
+    assert len(reads(fake_cli)) == 12
 
 
 def test_no_cache_measurement_lands_at_the_s0_floor(tmp_path, fake_cli):
@@ -375,6 +391,7 @@ def test_no_cache_measurement_lands_at_the_s0_floor(tmp_path, fake_cli):
     fake_cli.reply_for = lambda prompt: "OK"
     fake_cli.cache_horizon_s = 0.0  # tracks hits, never grants one
     fake_cli.ticks_per_request = 10
+    fake_cli.cache_report_hits = True
     prepare(tmp_path)
     code, out, err = calibrate_cli(tmp_path, "--model", MODEL)
     assert code == 0, out or err
@@ -410,6 +427,7 @@ def test_horizon_expiry_shows_the_persistence_bucket(tmp_path, fake_cli):
     fake_cli.cached_eval_count = 6
     fake_cli.ticks_per_request = 10
     fake_cli.cached_ticks = 2
+    fake_cli.cache_report_hits = True
     prepare(tmp_path)
     code, out, err = calibrate_cli(tmp_path, "--model", MODEL)
     assert code == 0, out or err
@@ -432,6 +450,7 @@ def test_inconclusive_when_the_meter_cannot_resolve_the_discount(tmp_path, fake_
     fake_cli.cached_eval_count = 6
     fake_cli.ticks_per_request = 4
     fake_cli.cached_ticks = 4  # the hit bills the same: the meter cannot see it
+    fake_cli.cache_report_hits = True
     prepare(tmp_path)
     code, out, err = calibrate_cli(tmp_path, "--model", MODEL)
     assert code == 0, out or err
@@ -490,7 +509,7 @@ def test_second_invocation_extends_the_doc_and_skips_calibrated_models(tmp_path,
     code, out, err = calibrate_cli(tmp_path, "--model", "kimi-k3")
     assert code == 0, out or err
     assert len(chats(fake_cli)) == antes_chats + 8  # only kimi-k3's brackets ran
-    assert len(reads(fake_cli)) == antes_reads + 9
+    assert len(reads(fake_cli)) == antes_reads + 12
     doc = summary(tmp_path)
     assert doc["models"] == [MODEL, "kimi-k3"]  # the run's doc, not one model's
     assert doc["readings"][MODEL]["conclusive"] is True
@@ -502,6 +521,7 @@ def test_unscripted_world_is_unknown_never_a_false_no(tmp_path, fake_cli):
     'unknown' — an invisible cache cannot be ruled out, so S1 stays marked."""
     fake_cli.reply_for = lambda prompt: "OK"
     fake_cli.ticks_per_request = 10
+    fake_cli.cache_horizon_s = None  # the unscripted world: no cache, no field
     prepare(tmp_path)
     code, out, err = calibrate_cli(tmp_path, "--model", MODEL)
     assert code == 0, out or err
@@ -575,9 +595,9 @@ def test_meter_failure_mid_calibration_keeps_the_billed_evidence(tmp_path, fake_
 
     always_hits(fake_cli)
     prepare(tmp_path)
-    # reads: cold pre/count/post, intra pre/count/post, then the spaced pre dies
+    # reads: cold (pre/count/2 polls), intra (same), then the spaced pre dies
     fake_cli.usage_raise = httpx.ConnectError("meter dropped")
-    fake_cli.usage_raise_from = 7
+    fake_cli.usage_raise_from = 9
     code, _out, err = calibrate_cli(tmp_path, "--model", MODEL)
     assert code == 1
     assert "meter read failed" in err and "Traceback" not in err
@@ -599,7 +619,7 @@ def test_human_report_renders_an_incomplete_reading(tmp_path, fake_cli):
     always_hits(fake_cli)
     prepare(tmp_path)
     fake_cli.usage_raise = httpx.ConnectError("meter dropped")
-    fake_cli.usage_raise_from = 7  # the spaced bracket's pre-read dies
+    fake_cli.usage_raise_from = 9  # the spaced bracket's pre-read dies
     assert calibrate_cli(tmp_path, "--model", MODEL)[0] == 1
     fake_cli.usage_raise = None
     fresh_mark(tmp_path)
@@ -611,3 +631,25 @@ def test_human_report_renders_an_incomplete_reading(tmp_path, fake_cli):
     assert lectura["cache_exists"] == "yes" and lectura["conclusive"] is True
     assert lectura["persistence"] is None  # the missing bracket loses only the horizon
     assert "cache_spaced bracket never closed" in lectura["notes"]
+
+
+def test_the_calibration_is_exempt_from_the_cache_free_lane(tmp_path, fake_cli):
+    """Prefix replay is the one legitimate cached traffic a measured run never
+    sees: the calibration's lines carry null nonce hashes, and no canary runs."""
+    always_hits(fake_cli)
+    pricing = prepare(tmp_path)
+    code, out, err = calibrate_cli(tmp_path, "--model", MODEL)
+    assert code == 0, out or err
+    requests = read_jsonl(tmp_path, "runs", "requests-*.jsonl")
+    assert all(r["nonce_sha256"] is None for r in requests)  # the replays stay plain
+    assert all(r["prompt_sha256"] for r in requests)  # what was billed is still pinned
+    assert not list((tmp_path / "runs").glob("canary-*.jsonl"))  # no canary: not a measured run
+    manifiesto = json.loads(
+        pathlib.Path(tmp_path, "runs", "manifest-T2-cache.json").read_text(encoding="utf-8")
+    )
+    assert "lane" not in manifiesto  # the workstream's manifest carries no lane spec
+    assert "canary" not in manifiesto
+    # The registration settle is stamped on the calibration's brackets too.
+    batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")
+    assert all(b["settle_mode"] == "registration" and b["settle_exit"] == "stable" for b in batches)
+    assert pricing

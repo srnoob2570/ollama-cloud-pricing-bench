@@ -32,7 +32,9 @@ def prepare(tmp_path) -> str:
 
 
 def run_t2(tmp_path, *extra) -> tuple[int, str, str]:
-    return run_cli(tmp_path, "run", "--level", "T2", "--settle-s", "0", *extra)
+    return run_cli(
+        tmp_path, "run", "--level", "T2", "--settle-s", "2", "--settle-poll-s", "0.01", *extra
+    )
 
 
 def read_jsonl(tmp_path, dirname, pattern) -> list[dict]:
@@ -68,8 +70,15 @@ def schema_args(parameters: dict) -> dict:
     return args
 
 
+def cuerpo(prompt: str) -> str:
+    """The fixture body the test-side scripting parses: the wire prompt carries
+    the lane's nonce as one line above the fixture."""
+    return prompt.split("\n\n", 1)[1]
+
+
 def declared_calls(prompt: str) -> list[dict] | None:
     """The scenario's expected calls, in order, with schema-valid arguments."""
+    prompt = cuerpo(prompt)
     if fixtures_t2.workload_of(prompt) != "tool_calling":
         return None  # fall through to the text reply
     escenario = fixtures_t2.tool_scenario(prompt)
@@ -86,6 +95,7 @@ def declared_calls(prompt: str) -> list[dict] | None:
 
 def correct_transcript(prompt: str) -> str:
     """Every workload answers exactly as its fixture's contract prescribes."""
+    prompt = cuerpo(prompt)
     workload = fixtures_t2.workload_of(prompt)
     if workload in ("long_context", "ratio_in"):
         datums = fixtures_t2.register_datums(prompt)
@@ -130,6 +140,7 @@ def correct_transcript(prompt: str) -> str:
 
 def broken_reply(prompt: str) -> str:
     """Each workload breaks in its own characteristic way (every checker fails)."""
+    prompt = cuerpo(prompt)
     workload = fixtures_t2.workload_of(prompt)
     if workload == "long_context":
         datums = fixtures_t2.register_datums(prompt)
@@ -167,10 +178,10 @@ def broken_reply(prompt: str) -> str:
 
 def mutated_calls(prompt: str) -> list[dict] | None:
     """One tool_calling violation per scenario; TR-1 stays valid as the control."""
-    llamadas = declared_calls(prompt)
+    llamadas = declared_calls(prompt)  # declared_calls strips the lane's nonce
     if not llamadas:
         return None
-    tid = fixtures_t2.tool_scenario(prompt)["id"]
+    tid = fixtures_t2.tool_scenario(cuerpo(prompt))["id"]
     if tid == "TR-2":
         llamadas.reverse()  # wrong call order
     elif tid == "TR-3":
@@ -227,7 +238,9 @@ def test_full_t2_slate_produces_the_structural_dataset(tmp_path, fake_cli):
     # No warmup, no retry: the fake saw exactly the planned chats and meter reads.
     chats = [c for c in fake_cli.calls if c["path"] == "/api/chat"]
     reads = [c for c in fake_cli.calls if c["path"] == "/api/usage"]
-    assert len(chats) == 6 * 38 and len(reads) == 42 * 3
+    # No warmup, no retry: exactly the planned chats (plus the canary's 10 that
+    # open the run) and meter reads (per bracket: pre + count check + 2 polls).
+    assert len(chats) == 6 * 38 + 10 and len(reads) == 42 * 4 + 7
     assert all(c["auth"] for c in chats + reads)
 
 
@@ -256,6 +269,7 @@ def test_tool_calling_grades_the_call_sequence_and_the_arguments(tmp_path, fake_
     assert len(lineas) == 6
     por_indice = {r["req_id"].rsplit("-", 1)[1]: r for r in lineas}
     scenarios = fixtures_t2.specs("tool_calling", 6)  # prompt i == request index i
+    cuerpo = lambda p: p.split("\n\n", 1)[1]  # noqa: E731 - the lane's nonce stripped
     for i, (prompt, _tools) in enumerate(scenarios):
         linea = por_indice[f"{i:04d}"]
         nombres = [tc["function"]["name"] for tc in linea["tool_calls"]]
@@ -327,7 +341,7 @@ def test_register_grading_binds_values_to_their_units(tmp_path, fake_cli):
     """Right values attached to the wrong units fail: the binding is per-sentence."""
     fake_cli.reply_for = lambda prompt: (
         _wrong_unit_transcript(prompt)
-        if fixtures_t2.workload_of(prompt) == "long_context"
+        if fixtures_t2.workload_of(cuerpo(prompt)) == "long_context"
         else correct_transcript(prompt)
     )
     fake_cli.tool_calls_for = declared_calls
@@ -343,6 +357,7 @@ def test_register_grading_binds_values_to_their_units(tmp_path, fake_cli):
 
 def _wrong_unit_transcript(prompt: str) -> str:
     """Every ask answered with a right-looking value attached to the WRONG unit."""
+    prompt = cuerpo(prompt)
     datums = fixtures_t2.register_datums(prompt)
     asks = fixtures_t2.register_asks(prompt)
     labels = [l for l, _ in asks]

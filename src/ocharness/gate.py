@@ -1,8 +1,10 @@
 """The spending gate: a level only runs if a live dry-run authorizes it.
 
-The mark records the approved budget and the `table_version` it was estimated with:
-`run` validates it (level, integrity, and the live table) and consumes it at startup —
-one dry-run enables exactly one run.
+The mark records the approved budget, the `table_version` it was estimated with
+and the protocol it was estimated UNDER (the billing canary and the lane's
+nonce overhead are protocol v3 spend the mark must have priced):
+`run` validates it (level, integrity, protocol, and the live table) and
+consumes it at startup — one dry-run enables exactly one run.
 """
 
 from __future__ import annotations
@@ -10,6 +12,8 @@ from __future__ import annotations
 import json
 import pathlib
 import time
+
+from .client import PROTOCOL_VERSION
 
 
 class GateClosed(Exception):
@@ -28,6 +32,7 @@ def mark_dry_run(base, level: str, estimado: dict) -> pathlib.Path:
         "dry_run_at": time.time(),
         "level": level,
         "table_version": str(estimado.get("table_version")),
+        "protocol_version": PROTOCOL_VERSION,
         "estimado": estimado,
     }
     tmp = ruta.with_suffix(".json.tmp")
@@ -57,6 +62,16 @@ def require_dry_run(
         raise GateClosed(
             f"gate: the dry-run approved table {marca.get('table_version')!r} but the run "
             f"would use {table_version!r}; re-run `bench dry-run --level {level}`"
+        )
+    if marca.get("protocol_version") != PROTOCOL_VERSION:
+        # A mark from another protocol vintage priced a different spend: the
+        # billing canary and the lane's nonce overhead are protocol v3 costs a
+        # pre-v3 mark never approved (and never knew existed).
+        raise GateClosed(
+            f"gate: the dry-run mark was written under protocol "
+            f"{marca.get('protocol_version')!r} but this harness bills under "
+            f"{PROTOCOL_VERSION!r} (the billing canary + the lane's nonce overhead are "
+            f"v3 spend the mark never priced); re-run `bench dry-run --level {level}`"
         )
     if reps is not None:
         aprobadas = marca.get("estimado", {}).get("reps")

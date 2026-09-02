@@ -99,6 +99,8 @@ def craft_cell(tmp_path, workload: str, model: str, *, reps: dict[int, tuple[int
                 "tok_in": tin,
                 "tok_out": tout,
                 "tok_cached": None,
+                "prompt_sha256": "p" * 64,
+                "nonce_sha256": "n" * 64,
                 "api": {"done": True},
                 "http": 200,
                 "err": None,
@@ -122,7 +124,12 @@ def craft_cell(tmp_path, workload: str, model: str, *, reps: dict[int, tuple[int
                 "fixture_hash": "f" * 64,
                 "k": 1,
                 "n": 1,
-                "settle_s": 90.0,
+                "settle_s": 60.0,
+                "settle_mode": "registration",
+                "settle_reads": 2,
+                "registered_session_s": 0.0,
+                "registered_weekly_s": 0.0,
+                "settle_exit": "stable",
                 "count_check_s": 0.5,
                 "wall_clock_s": 10.0,
                 "medidor_pre": {"limits": {"session": {"usage": 0.5}, "weekly": {"usage": 0.5}}},
@@ -275,6 +282,10 @@ def test_brief_walkthrough_shows_only_public_information(tmp_path, fake_cli):
         assert f["blind"] is None and f["informed"] is None
         b = f["brief"]
         assert b["requests_per_run"] > 0 and b["tokens_in_per_request"] > 0
+        # The cache-free lane's overhead is public protocol, part of the brief:
+        # the estimate must be able to account for what will actually be sent.
+        assert b["nonce_words_per_request"] >= 4 and b["nonce_tokens_per_request"] > 0
+        assert "cache-free" in b["lane"]
         assert set(b["rates"]) == {"input", "cached_input", "output", "per"}
         assert b["table_version"] == "2026-08-31"
     # the T3 cell's brief describes the billed agent loop, not a single request

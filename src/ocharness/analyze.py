@@ -528,10 +528,18 @@ def build(
     s: float,
     level: str | None = None,
     model: str | None = None,
+    protocol_version: str | None = None,
 ) -> dict:
     """The analysis doc, computed from raw alone. Raises AnalyzeError when the
-    base holds no raw dataset at all."""
+    base holds no raw dataset at all.
+
+    `protocol_version` pins the vintage the filter keeps (default: this
+    harness's own). A fetched dataset release is analyzed with ITS OWN protocol
+    — the raw<->code<->table pairing, consumed: a frozen v2 release stays
+    analyzable as the opacity case study it is kept as, while the local path
+    never mixes vintages."""
     base = pathlib.Path(base)
+    vintage = protocol_version or PROTOCOL_VERSION
     runs_dir = base / "runs"
     requests = _read_dataset(runs_dir, "requests-*.jsonl")
     batches = _read_dataset(base / "batches", "batches-*.jsonl")
@@ -542,17 +550,17 @@ def build(
         )
     # Every line is stamped with the protocol that wrote it (methodology v1
     # story 17): mixing vintages under one median would silently blend
-    # incomparable measurements, so only this harness's protocol is analyzed
-    # and whatever else the directory holds is counted, never averaged in.
-    protocolo_requests = [r for r in requests if r.get("protocol_version") == PROTOCOL_VERSION]
-    protocolo_batches = [b for b in batches if b.get("protocol_version") == PROTOCOL_VERSION]
+    # incomparable measurements, so only the pinned vintage is analyzed and
+    # whatever else the directory holds is counted, never averaged in.
+    protocolo_requests = [r for r in requests if r.get("protocol_version") == vintage]
+    protocolo_batches = [b for b in batches if b.get("protocol_version") == vintage]
     descartadas = (len(requests) - len(protocolo_requests)) + (
         len(batches) - len(protocolo_batches)
     )
     requests, batches = protocolo_requests, protocolo_batches
     if not requests and not batches:
         raise AnalyzeError(
-            f"no raw dataset under {base} speaks protocol {PROTOCOL_VERSION!r} "
+            f"no raw dataset under {base} speaks protocol {vintage!r} "
             f"({descartadas} lines of other vintages were set aside): nothing to analyze"
         )
     if level is not None:
@@ -599,7 +607,7 @@ def build(
     return {
         "kind": "analysis",
         "generated_at": time.time(),
-        "protocol_version": PROTOCOL_VERSION,
+        "protocol_version": vintage,  # the vintage the filter kept (a release's own)
         "base_params": {
             "table_version": tabla.table_version,
             "ancla": ancla,

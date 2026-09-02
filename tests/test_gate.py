@@ -86,7 +86,21 @@ def test_one_dry_run_enables_one_run(tmp_path, fake_cli):
         == 0
     )
     assert (
-        main(["--base", str(tmp_path), "run", "--level", "T1", "--reps", "1", "--settle-s", "0"])
+        main(
+            [
+                "--base",
+                str(tmp_path),
+                "run",
+                "--level",
+                "T1",
+                "--reps",
+                "1",
+                "--settle-s",
+                "2",
+                "--settle-poll-s",
+                "0.01",
+            ]
+        )
         == 0
     )  # passes and consumes
     assert main(["--base", str(tmp_path), "run", "--level", "T1"]) == 2  # mark consumed

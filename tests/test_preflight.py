@@ -27,7 +27,19 @@ def full_catalog() -> list[str]:
 
 
 def run_t1(tmp_path, *extra) -> tuple[int, str, str]:
-    return run_cli(tmp_path, "run", "--level", "T1", "--reps", "1", "--settle-s", "0", *extra)
+    return run_cli(
+        tmp_path,
+        "run",
+        "--level",
+        "T1",
+        "--reps",
+        "1",
+        "--settle-s",
+        "2",
+        "--settle-poll-s",
+        "0.01",
+        *extra,
+    )
 
 
 def test_missing_slate_model_aborts_with_a_diff_before_spending(tmp_path, fake_cli):

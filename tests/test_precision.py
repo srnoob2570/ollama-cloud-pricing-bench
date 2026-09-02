@@ -86,9 +86,14 @@ def test_dry_run_budget_persists_the_exact_cost(tmp_path):
     )
     marca = json.loads((tmp_path / "runs" / "gate-T1.json").read_text(encoding="utf-8"))
     tabla = PriceTable.load(tmp_path / "pricing")
+    from ocharness.lane import nonce_tokens_estimate
+
     for fila in marca["estimado"]["rows"]:
         carga = next(w for w in workloads.WORKLOADS_BY_LEVEL["T1"] if w.name == fila["workload"])
-        t_in = carga.t_in * carga.requests
+        # The estimate prices what will actually be sent: the workload's tokens
+        # plus the cache-free lane's per-request nonce overhead (protocol v3).
+        nonce = nonce_tokens_estimate(carga.t_in)
+        t_in = (carga.t_in + nonce) * carga.requests
         t_out = carga.t_out * carga.requests
         esperado_s0 = esperado_s1 = 0.0
         for modelo in workloads.slate("T1", tabla):
@@ -97,6 +102,10 @@ def test_dry_run_budget_persists_the_exact_cost(tmp_path):
             esperado_s1 += new_task_cost(t_in, t_out, tarifa, s=0.5, per=tabla.per)
         assert fila["cost_s0"] == esperado_s0, fila["workload"]
         assert fila["cost_s1"] == esperado_s1, fila["workload"]
+        # The lane's overhead rides the row transparently: what was added to
+        # tokens_in is exactly the row's nonce_tokens (models × reps × requests).
+        assert fila["nonce_tokens"] == nonce * carga.requests * 19
+        assert fila["tokens_in"] == (carga.t_in + nonce) * carga.requests * 19
 
 
 def test_analyze_persists_full_precision_derivatives(tmp_path, monkeypatch):
@@ -129,7 +138,7 @@ def test_status_quota_sum_equals_the_raw_payloads_chain(tmp_path, fake_cli):
     """`status --json` sums the brackets' exact deltas: the report's figure is
     the meter payloads' chain, not a re-rounded display value."""
     prepare_t1(tmp_path)
-    assert run_t1(tmp_path, "--settle-s", "0", "--reps", "1")[0] == 0
+    assert run_t1(tmp_path, "--settle-s", "2", "--settle-poll-s", "0.01", "--reps", "1")[0] == 0
     batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")
     doc = json.loads(run_cli(tmp_path, "status", "--level", "T1", "--json")[1])
     nivel = doc["levels"][0]
@@ -191,7 +200,9 @@ def test_calibration_persists_unrounded_evidence(tmp_path, fake_cli):
         "--model",
         MODEL,
         "--settle-s",
-        "0",
+        "2",
+        "--settle-poll-s",
+        "0.01",
         "--spaced-gaps",
         "0.02",
         "0.04",
@@ -235,7 +246,9 @@ def test_probe_timestamps_persist_unrounded(tmp_path, fake_cli, monkeypatch):
         "--k-max",
         "4",
         "--settle-s",
-        "0",
+        "2",
+        "--settle-poll-s",
+        "0.01",
     )
     assert code == 0, err
     for linea in read_jsonl(tmp_path, "runs", "probe-*.jsonl"):
@@ -245,3 +258,33 @@ def test_probe_timestamps_persist_unrounded(tmp_path, fake_cli, monkeypatch):
         (tmp_path / "runs" / "manifest-T1-concurrency.json").read_text(encoding="utf-8")
     )
     assert manifiesto["probe"]["at"] == TICK
+
+
+def test_the_passive_detector_flags_only_a_collapse():
+    """The detector's predicate: below one tick (the tick read through the
+    comparison band) against a >= 3.5-tick budget collapses; anything readable
+    is recorded without a flag, and a sub-floor budget never flags."""
+    from ocharness import runner
+
+    registro = [{"done": {"prompt_eval_count": 30_000, "eval_count": 0}}]
+    # Prefill body (in-share 1.0): 30K tokens x 2.6 pp/1M = 0.078 pp expected.
+    colapsado = runner._passive_detector(registro, 0.0)
+    assert colapsado["collapsed"] is False  # 0.078 pp < the 3.5-tick (0.35 pp) floor
+    # A 5-rep pool (150K tokens): 0.39 pp expected >= 3.5 ticks.
+    grande = [{"done": {"prompt_eval_count": 30_000, "eval_count": 0}} for _ in range(5)]
+    assert runner._passive_detector(grande, 0.0)["collapsed"] is True
+    # Exactly one tick (0.1) is readable: not a collapse — and the tick read
+    # through the comparison band keeps a boundary-residue float (the exact
+    # 0.1 landing at 0.0999999999999999) on the "one tick" side too.
+    assert runner._passive_detector(grande, 0.1)["collapsed"] is False
+    assert runner._passive_detector(grande, 0.1 - 1e-13)["collapsed"] is False
+    # Below the band (a sub-tick residue), it collapses.
+    assert runner._passive_detector(grande, 0.0999)["collapsed"] is True
+    # A readable delta never flags, and an unreadable budget never flags.
+    assert runner._passive_detector(grande, 0.5)["collapsed"] is False
+    assert (
+        runner._passive_detector([{"done": {"prompt_eval_count": 26, "eval_count": 12}}], 0.0)[
+            "collapsed"
+        ]
+        is False
+    )

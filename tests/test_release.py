@@ -159,6 +159,8 @@ def hand_dataset(tmp_path, run_id: str = RUN, *, poison: str | None = None) -> s
         "tok_in": 1000,
         "tok_out": 500,
         "tok_cached": None,
+        "prompt_sha256": "p" * 64,
+        "nonce_sha256": "n" * 64,
         "api": {"done": True},
         "http": 200,
         "err": poison,
@@ -180,7 +182,12 @@ def hand_dataset(tmp_path, run_id: str = RUN, *, poison: str | None = None) -> s
         "fixture_hash": FIX,
         "k": 1,
         "n": 1,
-        "settle_s": 90.0,
+        "settle_s": 60.0,
+        "settle_mode": "registration",
+        "settle_reads": 2,
+        "registered_session_s": 0.0,
+        "registered_weekly_s": 0.0,
+        "settle_exit": "stable",
         "count_check_s": 0.5,
         "wall_clock_s": 1.0,
         "medidor_pre": {"limits": {"session": {"usage": 0.5}, "weekly": {"usage": 0.6}}},
@@ -229,7 +236,21 @@ def test_release_publishes_a_run_end_to_end(tmp_path, fake_cli, fake_gh):
     from test_run import prepare
 
     prepare(tmp_path)
-    assert run_cli(tmp_path, "run", "--level", "T1", "--settle-s", "0", "--reps", "1")[0] == 0
+    assert (
+        run_cli(
+            tmp_path,
+            "run",
+            "--level",
+            "T1",
+            "--settle-s",
+            "2",
+            "--settle-poll-s",
+            "0.01",
+            "--reps",
+            "1",
+        )[0]
+        == 0
+    )
     run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
 
     codigo, salida, errores = run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)
@@ -254,6 +275,7 @@ def test_release_publishes_a_run_end_to_end(tmp_path, fake_cli, fake_gh):
         [
             f"runs/requests-{run_id}.jsonl",
             f"batches/batches-{run_id}.jsonl",
+            f"runs/canary-{run_id}.jsonl",  # the canary's raw evidence ships too
             "runs/manifest-T1.json",
             "pricing/2026-08-31.json",
             "metadata.json",
@@ -278,6 +300,21 @@ def test_release_publishes_a_run_end_to_end(tmp_path, fake_cli, fake_gh):
     assert tag in notas and "analyze --release" in notas
 
 
+def test_release_notes_freeze_a_protocol_v2_dataset(tmp_path, fake_cli, fake_gh):
+    """The v2 freeze (methodology v1.2): a protocol-2 dataset's release notes
+    carry the freeze sentence - the opacity case study, never mixed with v3."""
+    hand_dataset(tmp_path, RUN)
+    ruta_manifiesto = tmp_path / "runs" / "manifest-T1.json"
+    manifiesto = json.loads(ruta_manifiesto.read_text(encoding="utf-8"))
+    manifiesto["protocol_version"] = "2"
+    ruta_manifiesto.write_text(json.dumps(manifiesto), encoding="utf-8")
+    assert run_cli(tmp_path, "release", "--run", RUN, "--repo", REPO)[0] == 0
+    tag = f"run-{RUN}"
+    notas = (gh_assets(fake_gh, tag) / "_notes.md").read_text(encoding="utf-8")
+    assert "protocol v2 dataset, frozen" in notas
+    assert "never mixed with v3" in notas
+
+
 def test_release_priced_table_snapshot_matches_the_run(tmp_path, fake_cli, fake_gh):
     """The release pairs the run with ITS table snapshot: a different table in
     the pricing dir must not leak into the release."""
@@ -292,7 +329,9 @@ def test_release_priced_table_snapshot_matches_the_run(tmp_path, fake_cli, fake_
             "--level",
             "T1",
             "--settle-s",
-            "0",
+            "2",
+            "--settle-poll-s",
+            "0.01",
             "--reps",
             "1",
             "--table-version",
@@ -396,7 +435,21 @@ def test_release_reports_a_missing_gh_cleanly(tmp_path, monkeypatch, fake_cli):
     from test_run import prepare
 
     prepare(tmp_path)
-    assert run_cli(tmp_path, "run", "--level", "T1", "--settle-s", "0", "--reps", "1")[0] == 0
+    assert (
+        run_cli(
+            tmp_path,
+            "run",
+            "--level",
+            "T1",
+            "--settle-s",
+            "2",
+            "--settle-poll-s",
+            "0.01",
+            "--reps",
+            "1",
+        )[0]
+        == 0
+    )
     run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
     monkeypatch.setenv("PATH", str(tmp_path / "no-gh-here"))
     codigo, _, errores = run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)
@@ -446,7 +499,21 @@ def test_release_carries_the_code_commit(tmp_path, fake_cli, fake_gh):
     git("add", "nota.txt")  # a tracked-but-uncommitted change -> dirty
 
     prepare(tmp_path)
-    assert run_cli(tmp_path, "run", "--level", "T1", "--settle-s", "0", "--reps", "1")[0] == 0
+    assert (
+        run_cli(
+            tmp_path,
+            "run",
+            "--level",
+            "T1",
+            "--settle-s",
+            "2",
+            "--settle-poll-s",
+            "0.01",
+            "--reps",
+            "1",
+        )[0]
+        == 0
+    )
     run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
     codigo, salida, errores = run_cli(
         tmp_path, "release", "--run", run_id, "--repo", REPO, "--json"
@@ -473,7 +540,9 @@ def test_release_carries_the_code_commit(tmp_path, fake_cli, fake_gh):
             "--model",
             "glm-5.3-flash",
             "--settle-s",
-            "0",
+            "2",
+            "--settle-poll-s",
+            "0.01",
             "--reps",
             "1",
         )[0]
@@ -509,7 +578,21 @@ def test_analyze_consumes_the_release_offline(tmp_path, fake_cli, fake_gh):
     from test_run import prepare
 
     prepare(tmp_path)
-    assert run_cli(tmp_path, "run", "--level", "T1", "--settle-s", "0", "--reps", "1")[0] == 0
+    assert (
+        run_cli(
+            tmp_path,
+            "run",
+            "--level",
+            "T1",
+            "--settle-s",
+            "2",
+            "--settle-poll-s",
+            "0.01",
+            "--reps",
+            "1",
+        )[0]
+        == 0
+    )
     run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
     tag = f"run-{run_id}"
     assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO, "--json")[0] == 0
@@ -537,7 +620,21 @@ def test_analyze_release_binds_the_table_version(tmp_path, fake_cli, fake_gh):
     from test_run import prepare
 
     prepare(tmp_path)
-    assert run_cli(tmp_path, "run", "--level", "T1", "--settle-s", "0", "--reps", "1")[0] == 0
+    assert (
+        run_cli(
+            tmp_path,
+            "run",
+            "--level",
+            "T1",
+            "--settle-s",
+            "2",
+            "--settle-poll-s",
+            "0.01",
+            "--reps",
+            "1",
+        )[0]
+        == 0
+    )
     run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
     assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)[0] == 0
     codigo, _, errores = run_cli(
@@ -560,7 +657,21 @@ def test_analyze_release_refuses_a_tampered_release(tmp_path, fake_cli, fake_gh)
     from test_run import prepare
 
     prepare(tmp_path)
-    assert run_cli(tmp_path, "run", "--level", "T1", "--settle-s", "0", "--reps", "1")[0] == 0
+    assert (
+        run_cli(
+            tmp_path,
+            "run",
+            "--level",
+            "T1",
+            "--settle-s",
+            "2",
+            "--settle-poll-s",
+            "0.01",
+            "--reps",
+            "1",
+        )[0]
+        == 0
+    )
     run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
     assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)[0] == 0
     activos = gh_assets(fake_gh, f"run-{run_id}")
@@ -594,7 +705,21 @@ def test_analyze_release_refuses_a_metadata_of_another_run(tmp_path, fake_cli, f
     from test_run import prepare
 
     prepare(tmp_path)
-    assert run_cli(tmp_path, "run", "--level", "T1", "--settle-s", "0", "--reps", "1")[0] == 0
+    assert (
+        run_cli(
+            tmp_path,
+            "run",
+            "--level",
+            "T1",
+            "--settle-s",
+            "2",
+            "--settle-poll-s",
+            "0.01",
+            "--reps",
+            "1",
+        )[0]
+        == 0
+    )
     run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
     assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)[0] == 0
     activos = gh_assets(fake_gh, f"run-{run_id}")
@@ -625,14 +750,37 @@ def test_resume_skips_completed_batches_without_new_requests(tmp_path, fake_cli)
     from test_run import consumer_calls, prepare
 
     pricing = prepare(tmp_path)
-    assert run_cli(tmp_path, "run", "--level", "T1", "--settle-s", "0", "--reps", "1")[0] == 0
+    assert (
+        run_cli(
+            tmp_path,
+            "run",
+            "--level",
+            "T1",
+            "--settle-s",
+            "2",
+            "--settle-poll-s",
+            "0.01",
+            "--reps",
+            "1",
+        )[0]
+        == 0
+    )
     antes = len(consumer_calls(fake_cli))
     assert (
         run_cli(tmp_path, "dry-run", "--level", "T1", "--reps", "1", "--pricing-dir", pricing)[0]
         == 0
     )
     codigo, salida, errores = run_cli(
-        tmp_path, "resume", "--level", "T1", "--settle-s", "0", "--reps", "1"
+        tmp_path,
+        "resume",
+        "--level",
+        "T1",
+        "--settle-s",
+        "2",
+        "--settle-poll-s",
+        "0.01",
+        "--reps",
+        "1",
     )
     assert codigo == 0, salida or errores
     assert "not implemented" not in (salida + errores)
@@ -699,7 +847,21 @@ def test_release_carries_the_model_calibrations_and_skips_blank_sidecars(
     from test_run import prepare
 
     prepare(tmp_path)
-    assert run_cli(tmp_path, "run", "--level", "T1", "--settle-s", "0", "--reps", "1")[0] == 0
+    assert (
+        run_cli(
+            tmp_path,
+            "run",
+            "--level",
+            "T1",
+            "--settle-s",
+            "2",
+            "--settle-poll-s",
+            "0.01",
+            "--reps",
+            "1",
+        )[0]
+        == 0
+    )
     run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
     # a conclusive reading for a model THIS run measured, one for a stranger,
     # and one blank sidecar from a killed writer
@@ -737,7 +899,21 @@ def test_analyze_release_refuses_added_files(tmp_path, fake_cli, fake_gh):
     from test_run import prepare
 
     prepare(tmp_path)
-    assert run_cli(tmp_path, "run", "--level", "T1", "--settle-s", "0", "--reps", "1")[0] == 0
+    assert (
+        run_cli(
+            tmp_path,
+            "run",
+            "--level",
+            "T1",
+            "--settle-s",
+            "2",
+            "--settle-poll-s",
+            "0.01",
+            "--reps",
+            "1",
+        )[0]
+        == 0
+    )
     run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
     assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)[0] == 0
     tarball = gh_assets(fake_gh, f"run-{run_id}") / f"dataset-{run_id}.tar.gz"
@@ -787,7 +963,21 @@ def test_analyze_release_keeps_the_previous_bundle_when_refused(tmp_path, fake_c
     from test_run import prepare
 
     prepare(tmp_path)
-    assert run_cli(tmp_path, "run", "--level", "T1", "--settle-s", "0", "--reps", "1")[0] == 0
+    assert (
+        run_cli(
+            tmp_path,
+            "run",
+            "--level",
+            "T1",
+            "--settle-s",
+            "2",
+            "--settle-poll-s",
+            "0.01",
+            "--reps",
+            "1",
+        )[0]
+        == 0
+    )
     run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
     tag = f"run-{run_id}"
     assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)[0] == 0
@@ -808,7 +998,21 @@ def test_analyze_release_refuses_a_foreign_level_or_model(tmp_path, fake_cli, fa
     from test_run import prepare
 
     prepare(tmp_path)
-    assert run_cli(tmp_path, "run", "--level", "T1", "--settle-s", "0", "--reps", "1")[0] == 0
+    assert (
+        run_cli(
+            tmp_path,
+            "run",
+            "--level",
+            "T1",
+            "--settle-s",
+            "2",
+            "--settle-poll-s",
+            "0.01",
+            "--reps",
+            "1",
+        )[0]
+        == 0
+    )
     run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
     assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)[0] == 0
     tag = f"run-{run_id}"

@@ -145,15 +145,15 @@ def test_chat_bills_ticks_per_accepted_request(fake):
 
 
 def test_undercount_drops_requests_from_the_reported_counts(fake):
-    """Scriptable meter undercount: the runner's count check must abort on it."""
+    """Scriptable dropped bill: the request bills, the meter's counter never sees it."""
     auth = {"Authorization": "Bearer test-key"}
+    fake.undercount_at = 2  # the second chat is accepted and billed, never counted
     with httpx.Client(transport=fake.transport()) as client:
         client.post("https://fake.ollama/api/chat", json={"model": "glm-5.3-flash"}, headers=auth)
         client.post("https://fake.ollama/api/chat", json={"model": "glm-5.3-flash"}, headers=auth)
-        fake.undercount_by = 1
         r = client.get("https://fake.ollama/api/usage", headers=auth).json()
     counts = {m["name"]: m["request_count"] for m in r["limits"]["session"]["models"]}
-    assert counts["glm-5.3-flash"] == 1  # two billed, one dropped from the report
+    assert counts["glm-5.3-flash"] == 1  # two billed, one dropped from the counter
 
 
 def test_429_by_concurrency_reachable_through_the_async_transport(fake):

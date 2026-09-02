@@ -27,12 +27,21 @@ def fake_cli(fake, monkeypatch):
     the per-key 429 branch fires (the concurrency workstream's seam). The
     catalog defaults to the official table's ids so preflight passes; drift
     tests script `fake.catalog` explicitly.
+
+    The default world is the one the paired probe measured (docs/research/
+    cache-pareado-kimi-2026-09-01.md): the endpoint caches, so the billing
+    canary's replay volley bills the discount and the lane check passes. Hits
+    stay invisible in reported tokens (`cache_report_hits = False`), the
+    evidence shape every pre-lane test pinned; the calibration's own tests
+    script their horizons and report flags explicitly.
     """
     monkeypatch.setenv("OLLAMA_API_KEY", "test-key")
     from ocharness import client
 
     monkeypatch.setattr(client, "default_transport", lambda: fake.async_transport())
     fake.catalog = sorted(standard_table())
+    fake.cache_horizon_s = 3600.0
+    fake.cache_report_hits = False
     return fake
 
 

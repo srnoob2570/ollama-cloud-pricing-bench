@@ -17,7 +17,8 @@ The goal is to answer with data, not to compare nominal prices:
 > concurrency workstream (`bench probe-concurrency` measures the real per-key cut-off, the
 > k∈{1,4,8} cells re-anchor to it), the cache calibration (`bench calibrate-cache` replaces
 > the S1=50% assumption with the measured hit rate when conclusive), the predictability
-> flow (`bench predict`: 12 cells estimated blind and hash-locked before they run, with the
+> flow (`bench predict`: the 14 measurable-set cells estimated blind and hash-locked before
+> they run, with the
 > comparative MAPE report), `bench analyze` (the whole break-even bundle recomputed from raw
 > alone, so a price change re-runs the verdict with zero quota spent), and dataset sync to
 > GitHub releases (`bench release --run <id>` pairs raw ↔ code ↔ table; `bench analyze
@@ -77,7 +78,7 @@ work happens, run manifests, `analysis/` (derivatives, dashboard), `predictabili
 | `resume --level ...` | `run`'s resumable twin: continues an interrupted run from its manifest without duplicating any batch. It passes the gate like `run`, a fresh (free) dry-run approving the same density, and on a level with no manifest it is simply a fresh run. |
 | `probe-concurrency --model X [--k-max K]` | Fires short volleys at increasing k to measure the real per-key cut-off (429/queueing), then runs the k∈{1,4,8} cells re-anchored to it (a planned k above the cut-off runs at the cut-off, documented in the dataset). |
 | `calibrate-cache [--model X] [--spaced-gaps 5 30 90]` | Replays one fixed ~20K prefix per T2-slate model (cold reference, r=4 intra-batch, spaced replays); when conclusive, the measured hit-rate replaces the S1 assumption per model, with S0 as the floor. |
-| `predict [--phase blind\|informed ...] [--report]` | The predictability flow (§8): 12 cells estimated blind (only the fixture's public description + rates), locked with timestamp and hash before the cell runs; informed re-estimation after; `--report` emits the comparative MAPE (legacy pp vs new $, bootstrap CI), excluding sub-resolution cells and flagging them. Zero quota. |
+| `predict [--phase blind\|informed ...] [--report]` | The predictability flow (§8): the 14 measurable-set cells (strong four T2 + T3, v1.1 re-scope) estimated blind (only the fixture's public description + rates), locked with timestamp and hash before the cell runs; informed re-estimation after; `--report` emits the comparative MAPE (legacy pp vs new $, bootstrap CI), anchored to the persisted S0/S1 pair, excluding sub-resolution cells and flagging them. Zero quota. |
 | `analyze [--ancla P] [--s S] [--table-version V] [--level L] [--model M]` | **The re-run without re-measuring**: every derivative (medians with p25–p75/p95 per model×workload, per-task S0/S1 costs, critical-threshold pp/1M, who-wins-by-profile, the dp-tokens curve, the 4 sensitivity sweeps) and the static dashboard (theme-token SVG charts, verdict-first, cache slider), regenerated from the raw data alone, offline. |
 | `analyze --release <tag> [--repo owner/name]` | The same analysis over a fetched dataset release, verified against its metadata sha256 map and priced by the release's own table. |
 | `status [--level L]` | Pending/done/aborted/in-flight batches and the quota consumed per level, read from the manifests alone. |

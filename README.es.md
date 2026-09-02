@@ -19,7 +19,8 @@ de predecir"? ¿qué incentivos tiene Ollama y a quién beneficia el cambio?
 > catálogo y checkers reales, el workstream de concurrencia (`bench probe-concurrency` mide
 > el corte real por key; las celdas k∈{1,4,8} se re-anclan a él), la calibración de caché
 > (`bench calibrate-cache` reemplaza el supuesto S1=50% por el hit-rate medido cuando es
-> concluyente), el flujo de predictibilidad (`bench predict`: 12 celdas estimadas a ciegas y
+> concluyente), el flujo de predictibilidad (`bench predict`: las 14 celdas del conjunto
+> medible estimadas a ciegas y
 > bloqueadas con hash antes de correr, con el reporte MAPE comparativo), `bench analyze`
 > (el paquete break-even completo recalculado solo desde el raw, así que un cambio de precios
 > re-corre el veredicto con cuota cero) y la sincronización de datasets a releases de
@@ -79,7 +80,7 @@ dashboard), `predictability/` (estimaciones bloqueadas) y `releases/`.
 | `resume --level ...` | El gemelo reanudable de `run`: continúa una corrida interrumpida desde su manifiesto sin duplicar ningún lote. Pasa la compuerta igual que `run`, una dry-run fresca (gratis) que apruebe la misma densidad, y en un nivel sin manifiesto es simplemente una corrida nueva. |
 | `probe-concurrency --model X [--k-max K]` | Lanza andanadas cortas con k creciente para medir el corte real por key (429/encolamiento) y luego ejecuta las celdas k∈{1,4,8} re-ancladas a él (un k planificado por encima del corte corre EN el corte, documentado en el dataset). |
 | `calibrate-cache [--model X] [--spaced-gaps 5 30 90]` | Re-repite un prefijo fijo de ~20K por modelo del slate T2 (referencia fría, r=4 intra-lote, re-envíos espaciados); cuando es concluyente, el hit-rate medido reemplaza el supuesto S1 por modelo, con S0 como piso. |
-| `predict [--phase blind\|informed ...] [--report]` | El flujo de predictibilidad (§8): 12 celdas estimadas a ciegas (solo la descripción pública del fixture + las tarifas), bloqueadas con timestamp y hash antes de que la celda corra; re-estimación informada después; `--report` emite el MAPE comparativo (pp legado vs $ nuevo, bootstrap CI), excluyendo las celdas sub-resolución y marcándolas. Cuota cero. |
+| `predict [--phase blind\|informed ...] [--report]` | El flujo de predictibilidad (§8): las 14 celdas del conjunto medible (las cuatro fuertes de T2 + T3, re-alcance v1.1) estimadas a ciegas (solo la descripción pública del fixture + las tarifas), bloqueadas con timestamp y hash antes de que la celda corra; re-estimación informada después; `--report` emite el MAPE comparativo (pp legado vs $ nuevo, bootstrap CI), anclado al par S0/S1 persistido, excluyendo las celdas sub-resolución y marcándolas. Cuota cero. |
 | `analyze [--ancla P] [--s S] [--table-version V] [--level L] [--model M]` | **El re-correr sin re-medir**: todas las derivadas (medianas con p25–p75/p95 por modelo×workload, costes por tarea S0/S1, umbral crítico pp/1M, quién-gana-por-perfil, la curva Δpp-tokens, los 4 barridos de sensibilidad) y el dashboard estático (gráficos SVG con tokens de tema, veredicto primero, deslizador de cache), regenerados solo desde el raw, sin red. |
 | `analyze --release <tag> [--repo owner/name]` | El mismo análisis sobre una release de dataset descargada, verificada contra su mapa sha256 del metadata y valorada con la tabla de la propia release. |
 | `status [--level L]` | Lotes pending/done/aborted/in-flight y la cuota consumida por nivel, leídos solo de los manifiestos. |

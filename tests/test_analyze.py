@@ -389,7 +389,7 @@ def test_dashboard_is_selfcontained_and_offline(tmp_path):
     assert "http://" not in bajo and "https://" not in bajo  # no CDN, no fetches
     assert "<script src" not in bajo and "<link " not in bajo and "url(" not in bajo
     assert 'id="filter-model"' in html  # the model filter
-    assert 'name="filter-scenario"' in html  # the scenario toggle
+    assert 'id="slider-s"' in html  # the cache slider (the scenario control's successor)
     # the data rides inside the file (no sibling fetch): it parses back
     marcador = '<script id="analysis-data" type="application/json">'
     assert marcador in html
@@ -401,15 +401,104 @@ def test_dashboard_is_selfcontained_and_offline(tmp_path):
         assert f'value="{modelo}"' in html
 
 
-def test_analyze_writes_threshold_bars_and_curve_pngs(tmp_path):
+# ---------------------------------------------------------------------------
+# dashboard v2 (#41): verdict first, theme-token charts, cache slider
+# ---------------------------------------------------------------------------
+
+
+def render_dashboard_v2(tmp_path: pathlib.Path, *args) -> str:
     pricing = with_tables(tmp_path)
     craft_dataset(tmp_path)
-    analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
-    pngs = sorted(p.name for p in (tmp_path / "analysis" / "pngs").glob("*.png"))
-    assert "dp-tokens.png" in pngs
-    assert any(n.startswith("threshold-") for n in pngs)
-    for p in (tmp_path / "analysis" / "pngs").glob("*.png"):
-        assert p.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"  # a real PNG, not a stub
+    analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31", *args)
+    return (tmp_path / "analysis" / "dashboard.html").read_text(encoding="utf-8")
+
+
+def test_dashboard_v2_charts_are_theme_token_svgs_and_pngs_leave_the_bundle(tmp_path):
+    """The matplotlib PNGs leave the dashboard: the charts are inline SVG drawn
+    from theme tokens, and the bundle ships no pngs/ folder at all."""
+    html = render_dashboard_v2(tmp_path)
+    assert not (tmp_path / "analysis" / "pngs").exists()
+    assert html.count("<svg") >= 3  # threshold, diverging margins, dp-tokens curve
+    # zero hardcoded chart colors: every SVG fill/stroke is a CSS variable, and
+    # the validated palette lives ONLY in the theme token definitions
+    assert 'fill="#' not in html and "stroke='#" not in html
+    assert "background:#" not in html and "background: #" not in html
+    assert "var(--legacy)" in html and "var(--new)" in html
+    # the validated two-mode palette (legacy blue / new orange, light + dark)
+    for hexcolor in ("#2a78d6", "#3987e5", "#eb6834", "#d95926"):
+        assert hexcolor in html
+    # the old matplotlib chart colors are gone
+    for hexcolor in ("#4878a8", "#c44e52", "#dd8452"):
+        assert hexcolor not in html
+
+
+def test_dashboard_v2_theme_has_three_states(tmp_path):
+    """system/light/dark: the toggle stamps data-theme (system = none), and the
+    tokens carry both palettes under their own selectors."""
+    html = render_dashboard_v2(tmp_path)
+    for estado in ("system", "light", "dark"):
+        assert f'value="{estado}"' in html
+    assert "data-theme" in html
+    # dark tokens are selected, not flipped: their own block, distinct values
+    assert '[data-theme="dark"]' in html
+    assert "prefers-color-scheme: dark" in html
+    assert '[data-theme="light"]' in html
+
+
+def test_dashboard_v2_verdict_band_leads_and_margins_ride_everywhere(tmp_path):
+    """The recommendation band leads; every measured verdict shows its margin
+    in the cells column AND in the diverging chart (legacy left / new right /
+    tie dot)."""
+    html = render_dashboard_v2(tmp_path)
+    # the recommendation band leads: it precedes the cells table in the file
+    assert html.index('id="reco"') < html.index('id="tabla-cuerpo"')
+    # the cells table carries a margin column; the diverging chart exists
+    assert ">margin</th>" in html
+    assert 'id="chart-margins"' in html
+    assert 'id="chart-threshold"' in html
+    # the verdict chips and the diverging bars both draw from margin_pct
+    assert "margin_pct" in html
+
+
+def test_dashboard_v2_slider_recomputes_from_embedded_rates(tmp_path):
+    """The amendment v1.2: a presentation-layer slider (0-100 %, default 50 %)
+    recomputes new-plan costs, the critical threshold and the verdict margins
+    in live JS from the embedded per-cell tokens + rates + anchor. Nothing
+    persisted changes: the rates ride only in the dashboard."""
+    html = render_dashboard_v2(tmp_path)
+    # the slider exists, spans 0-100 and defaults to the versioned 50 %
+    marcador = '<script id="rates-data" type="application/json">'
+    assert marcador in html
+    tarifas = json.loads(html.split(marcador, 1)[1].split("</script>", 1)[0])
+    assert set(tarifas["rates"]) == {"alpha", "beta", "gamma"}
+    assert tarifas["per"] == 1_000_000
+    for modelo, t in tarifas["rates"].items():
+        assert set(t) == {"input", "cached_input", "output", "has_cache_discount"}
+    assert tarifas["rates"]["beta"]["has_cache_discount"] is False  # cached=input
+    deslizador = html[html.index('id="slider-s"') : html.index('id="slider-s"') + 200]
+    assert 'min="0"' in deslizador and 'max="100"' in deslizador and 'value="50"' in deslizador
+    # presentation-layer only: the note says so
+    assert "presentation" in html.lower()
+    assert "nothing persisted changes" in html
+
+
+def test_dashboard_v2_marks_measured_s_and_notes_the_s0_models(tmp_path):
+    """Models with a conclusive measured hit-rate keep it, visibly marked, and
+    the slider cannot move them; models without a published discount
+    (cached=input) are noted as unmoved: S(x) ≡ S0 for them."""
+    html = render_dashboard_v2(tmp_path)
+    assert "S(x) &equiv; S0" in html or "S(x) ≡ S0" in html  # the in-place note
+    assert "measured" in html  # the measured marker's label
+    # the per-model effective S rides in the embedded doc so the JS can pin it
+    marcador = '<script id="analysis-data" type="application/json">'
+    datos = json.loads(html.split(marcador, 1)[1].split("</script>", 1)[0])
+    assert set(datos["s_per_model"]) == {"alpha", "beta", "gamma"}
+
+
+def test_dashboard_v2_copy_is_english(tmp_path):
+    html = render_dashboard_v2(tmp_path).lower()
+    for palabra in ("margen", "empate", "asignado", "escenario", "ganador"):
+        assert palabra not in html
 
 
 # ---------------------------------------------------------------------------

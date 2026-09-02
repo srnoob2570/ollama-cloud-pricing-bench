@@ -44,7 +44,7 @@ de predecir"? ¿qué incentivos tiene Ollama y a quién beneficia el cambio?
 
 ## Uso: la CLI `bench`
 
-El harness es un único binario (`src/ocharness/`, Python >= 3.12, httpx + matplotlib;
+El harness es un único binario (`src/ocharness/`, Python >= 3.12, httpx;
 dependencias mínimas, sin TUI ni base de datos):
 
 ```bash
@@ -55,7 +55,7 @@ bench --help     # cada subcomando acepta --base DIR (por defecto .) y --json
 Todo opera sobre un directorio de trabajo (`--base`, por defecto `.`) que contiene
 `pricing/` (las tablas de precios versionadas), `runs/` + `batches/` (el dataset crudo
 inmutable) y, conforme avanza el trabajo, manifiestos de corrida, `analysis/` (derivadas,
-dashboard, PNGs), `predictability/` (estimaciones bloqueadas) y `releases/`.
+dashboard), `predictability/` (estimaciones bloqueadas) y `releases/`.
 
 ### La compuerta de gasto (la aplica la herramienta, no la memoria)
 
@@ -80,7 +80,7 @@ dashboard, PNGs), `predictability/` (estimaciones bloqueadas) y `releases/`.
 | `probe-concurrency --model X [--k-max K]` | Lanza andanadas cortas con k creciente para medir el corte real por key (429/encolamiento) y luego ejecuta las celdas k∈{1,4,8} **re-ancladas a él** (un k planificado por encima del corte corre EN el corte, documentado en el dataset). |
 | `calibrate-cache [--model X] [--spaced-gaps 5 30 90]` | Re-repite un prefijo fijo de ~20K por modelo del slate T2 (referencia fría, r=4 intra-lote, re-envíos espaciados); cuando es concluyente, el **hit-rate medido reemplaza el supuesto S1** por modelo, con S0 como piso. |
 | `predict [--phase blind\|informed ...] [--report]` | El flujo de predictibilidad (§8): 12 celdas estimadas **a ciegas** (solo la descripción pública del fixture + las tarifas), bloqueadas con timestamp y hash antes de que la celda corra; re-estimación informada después; `--report` emite el MAPE comparativo (pp legado vs $ nuevo, bootstrap CI), excluyendo las celdas sub-resolución y marcándolas. Cuota cero. |
-| `analyze [--ancla P] [--s S] [--table-version V] [--level L] [--model M]` | **El re-correr sin re-medir**: todas las derivadas (medianas con p25–p75/p95 por modelo×workload, costes por tarea S0/S1, umbral crítico pp/1M, quién-gana-por-perfil, la curva Δpp-tokens, los 4 barridos de sensibilidad), los PNGs y el dashboard estático — regenerados solo desde el raw, sin red. |
+| `analyze [--ancla P] [--s S] [--table-version V] [--level L] [--model M]` | **El re-correr sin re-medir**: todas las derivadas (medianas con p25–p75/p95 por modelo×workload, costes por tarea S0/S1, umbral crítico pp/1M, quién-gana-por-perfil, la curva Δpp-tokens, los 4 barridos de sensibilidad) y el dashboard estático (gráficos SVG con tokens de tema, veredicto primero, deslizador de cache) — regenerados solo desde el raw, sin red. |
 | `analyze --release <tag> [--repo owner/name]` | El mismo análisis sobre una release de dataset descargada, verificada contra su mapa sha256 del metadata y valorada con **la tabla de la propia release**. |
 | `status [--level L]` | Lotes pending/done/aborted/in-flight y la cuota consumida por nivel, leídos solo de los manifiestos. |
 | `release --run <run_id> [--repo owner/name]` | Empaqueta el dataset de una corrida — requests + batches + el manifiesto que los liga + la instantánea de la tabla de precios + un `metadata.json` (commit del código, versión de tabla + sha256, versión de protocolo, un mapa sha256 de cada archivo) — y lo publica como release de GitHub. **Una release por corrida, nunca reescrita**; la key viva de la API (y cualquier cadena con forma de bearer token) no puede aparecer en ningún byte empaquetado o la release se niega. |

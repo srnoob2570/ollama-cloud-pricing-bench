@@ -13,8 +13,15 @@ The bundle (written to `analysis/`):
   threshold pp/1M, the who-wins-by-user-profile table, the dp-vs-tokens
   curve data and the 4 fixed sensitivity sweeps;
 - `dashboard.html` — the static self-contained dashboard (no CDNs, no fetches:
-  the data rides inside the file) with model/scenario filters;
-- `pngs/*.png` — the threshold bars and the dp-tokens curve (matplotlib).
+  the data rides inside the file): the recommendation band leads, every
+  measured verdict carries its margin, and the charts are theme-aware SVG
+  (system/light/dark tokens, the validated legacy-blue / new-orange palette).
+  The v1.2 cache slider is presentation-layer only: from the embedded
+  per-cell tokens + rates + anchor it recomputes new-plan costs, the
+  critical threshold and the verdict margins in live JS — nothing persisted
+  changes, measured hit rates keep precedence (visibly marked), and models
+  without a published discount are noted as unmoved (S(x) ≡ S0). No
+  matplotlib PNGs: the charts are SVG and leave the bundle with them.
 
 Cost model (methodology v1 §3, CONTEXT.md "critical threshold"):
 
@@ -849,104 +856,46 @@ def build(
 
 
 # ---------------------------------------------------------------------------
-# the bundle: analysis.json, the dashboard, the PNGs
+# the bundle: analysis.json and the dashboard (the charts are in-page SVG —
+# the matplotlib PNGs left the bundle with dashboard v2, #41)
 # ---------------------------------------------------------------------------
 
 
-def write_bundle(base: pathlib.Path, doc: dict, emit=print) -> pathlib.Path:
-    """Writes the analysis bundle under `base/analysis/`; returns the folder."""
+def rates_map(tabla, doc: dict) -> dict:
+    """The per-model rates the dashboard's slider recomputes from, embedded in
+    the DASHBOARD ONLY (presentation layer, #41's amendment v1.2): nothing
+    persisted changes — analysis.json carries no rates, the raw is immutable,
+    and derivatives regenerate only with versioned parameters. A cell's model
+    the chosen table no longer prices takes no rate: the dashboard already
+    renders it as no data and the slider cannot recompute it either."""
+    tarifas = {}
+    for modelo in sorted({c["model"] for c in doc["cells"]}):
+        try:
+            r = tabla.rate(modelo)
+        except TableError:
+            continue
+        tarifas[modelo] = {
+            "input": r.input,
+            "cached_input": r.cached_input,
+            "output": r.output,
+            "has_cache_discount": r.has_cache_discount,
+        }
+    return {"per": tabla.per, "rates": tarifas}
+
+
+def write_bundle(
+    base: pathlib.Path, doc: dict, emit=print, *, rates: dict | None = None
+) -> pathlib.Path:
+    """Writes the analysis bundle under `base/analysis/`; returns the folder.
+    `rates` (from `rates_map`) rides only inside the dashboard: the slider's
+    live recomputation needs them, analysis.json does not."""
     carpeta = pathlib.Path(base) / "analysis"
     carpeta.mkdir(parents=True, exist_ok=True)
     (carpeta / "analysis.json").write_text(
         json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    (carpeta / "dashboard.html").write_text(render_dashboard(doc), encoding="utf-8")
-    try:
-        write_pngs(doc, carpeta / "pngs")
-    except Exception as e:  # noqa: BLE001 - a PNG failure must not lose the analysis
-        if emit:
-            emit(
-                f"analyze: PNG generation failed ({type(e).__name__}: {e}); the JSON and "
-                "dashboard bundle is complete without them"
-            )
+    (carpeta / "dashboard.html").write_text(render_dashboard(doc, rates), encoding="utf-8")
     return carpeta
-
-
-def write_pngs(doc: dict, carpeta: pathlib.Path) -> list[pathlib.Path]:
-    """The threshold bars (one chart per workload: the measured pp/1M median
-    of each model against its own S0/S1 threshold marks) and the dp-tokens
-    curve (one series per workload)."""
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    carpeta = pathlib.Path(carpeta)
-    carpeta.mkdir(parents=True, exist_ok=True)
-    escritos: list[pathlib.Path] = []
-    tabla_version = doc["base_params"]["table_version"]
-
-    por_workload: dict = {}
-    for c in doc["cells"]:
-        if c["pp_per_1m"] and c["threshold_pp_per_1m"]:
-            por_workload.setdefault(c["workload"], []).append(c)
-    for workload, grupo in sorted(por_workload.items()):
-        figura, ax = plt.subplots(figsize=(9, 4.8))
-        modelos = [c["model"] for c in grupo]
-        ax.bar(
-            range(len(modelos)),
-            [c["pp_per_1m"]["median"] for c in grupo],
-            color="#4878a8",
-            label="measured pp/1M (median)",
-        )
-        for i, c in enumerate(grupo):
-            for escenario, color, estilo in (("s0", "#c44e52", "-"), ("s1", "#dd8452", "--")):
-                etiqueta = f"threshold {escenario.upper()}" if i == 0 else None
-                ax.hlines(
-                    c["threshold_pp_per_1m"][escenario],
-                    i - 0.4,
-                    i + 0.4,
-                    colors=color,
-                    linestyles=estilo,
-                    linewidth=2,
-                    label=etiqueta,
-                )
-        ax.set_xticks(range(len(modelos)), modelos, rotation=45, ha="right", fontsize=8)
-        ax.set_ylabel("pp per 1M tokens")
-        ax.set_title(f"Critical threshold - {workload} (table {tabla_version})")
-        ax.legend(fontsize=8)
-        ax.grid(True, axis="y", alpha=0.3)
-        figura.tight_layout()
-        destino = carpeta / f"threshold-{workload}.png"
-        figura.savefig(destino, dpi=110)
-        plt.close(figura)
-        escritos.append(destino)
-
-    puntos = doc["dp_tokens_curve"]
-    if puntos:
-        figura, ax = plt.subplots(figsize=(9, 5))
-        series: dict = {}
-        for p in puntos:
-            series.setdefault(p["workload"], []).append(p)
-        for workload, ps in sorted(series.items()):
-            ax.scatter(
-                [p["tokens_total"] / 1e6 for p in ps],
-                [p["dpp_weekly"] for p in ps],
-                s=28,
-                alpha=0.85,
-                label=workload,
-            )
-        ax.set_xlabel("tokens billed (millions)")
-        ax.set_ylabel("weekly quota delta (pp)")
-        ax.set_title(f"Legacy quota vs tokens (table {tabla_version})")
-        ax.legend(fontsize=8)
-        ax.grid(True, alpha=0.3)
-        figura.tight_layout()
-        destino = carpeta / "dp-tokens.png"
-        figura.savefig(destino, dpi=110)
-        plt.close(figura)
-        escritos.append(destino)
-    return escritos
 
 
 # ---------------------------------------------------------------------------
@@ -958,228 +907,502 @@ _DASHBOARD = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ollama Cloud cost analysis</title>
+<title>Ollama Cloud cost analysis &mdash; legacy or new?</title>
 <style>
-:root { color-scheme: light dark; --tinta: #1c1c1c; --fondo: #f7f7f5;
-        --panel: #ffffff; --borde: #d9d9d4; --tenue: #6b6b66; }
+/* three-state theme tokens: system is the default (no attribute), light and
+   dark are selectable. Chart colors NEVER appear here outside these tokens. */
+:root {
+  color-scheme: light;
+  --plane: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --ring: rgba(11,11,11,.10);
+  --legacy: #2a78d6; --new: #eb6834;            /* series: legacy / new (validated) */
+  --legacy-soft: rgba(42,120,214,.14); --new-soft: rgba(235,104,52,.14);
+  --tie: #898781;
+}
 @media (prefers-color-scheme: dark) {
-  :root { --tinta: #e4e4e0; --fondo: #17181a; --panel: #202226; --borde: #3a3d42;
-          --tenue: #9a9a94; }
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --plane: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,.10);
+    --legacy: #3987e5; --new: #d95926;
+    --legacy-soft: rgba(57,135,229,.18); --new-soft: rgba(217,89,38,.18);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --plane: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,.10);
+  --legacy: #3987e5; --new: #d95926;
+  --legacy-soft: rgba(57,135,229,.18); --new-soft: rgba(217,89,38,.18);
 }
 * { box-sizing: border-box; }
-body { font: 14px/1.45 system-ui, sans-serif; color: var(--tinta);
-       background: var(--fondo); margin: 0; padding: 24px; }
-h1 { font-size: 20px; margin: 0 0 4px; }
-h2 { font-size: 15px; margin: 28px 0 8px; border-bottom: 1px solid var(--borde);
-     padding-bottom: 4px; }
-h3 { font-size: 13px; margin: 12px 0 6px; }
-.sub { color: var(--tenue); font-size: 12px; margin-bottom: 16px; }
-.panel { background: var(--panel); border: 1px solid var(--borde); border-radius: 8px;
-         padding: 14px 16px; margin-bottom: 12px; }
-.filtros { display: flex; gap: 24px; flex-wrap: wrap; align-items: center;
-           margin: 14px 0 4px; }
+body { margin: 0; padding: 24px 20px; background: var(--plane); color: var(--ink);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1 { font-size: 19px; margin: 0 0 2px; letter-spacing: -.01em; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2);
+  margin: 26px 0 10px; font-weight: 600; }
+.sub { color: var(--muted); font-size: 12.5px; }
+.mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+.badge { display: inline-block; font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+  border: 1px solid var(--ring); border-radius: 4px; padding: 1px 6px; color: var(--ink-2);
+  background: var(--surface); margin-left: 6px; vertical-align: 1px; }
+.panel { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px;
+  padding: 16px 18px; margin: 0 0 14px; }
+.controls { display: flex; gap: 22px; flex-wrap: wrap; align-items: center; margin: 14px 0 4px; }
 select, fieldset { font: inherit; }
-fieldset { border: 1px solid var(--borde); border-radius: 6px; padding: 4px 10px;
-           margin: 0; }
-legend { font-size: 12px; color: var(--tenue); }
+fieldset { border: 1px solid var(--ring); border-radius: 6px; padding: 4px 10px; margin: 0; }
+legend { font-size: 11px; color: var(--muted); }
+input[type="range"] { accent-color: var(--new); vertical-align: middle; width: 260px; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
-th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--borde); }
-th { font-size: 12px; color: var(--tenue); font-weight: 600; }
-td.v, th.v { text-align: right; font-variant-numeric: tabular-nums; }
-tr.gana-legacy td:last-child { color: #b3543f; font-weight: 600; }
-tr.gana-new td:last-child { color: #2e7d4f; font-weight: 600; }
-.sin-datos { color: var(--tenue); font-style: italic; }
-.fila-barra { display: flex; align-items: center; margin: 5px 0; }
-.nombre { width: 170px; flex: none; font-size: 12px; overflow: hidden;
-          text-overflow: ellipsis; white-space: nowrap; padding-right: 8px; }
-.pista { position: relative; flex: 1; height: 14px;
-         background: rgba(127, 127, 127, 0.15); border-radius: 3px; }
-.barra { display: block; height: 100%; background: #4878a8; border-radius: 3px; }
-.umbral { position: absolute; top: -3px; bottom: -3px; width: 2px; }
-.umbral-s0 { background: #c44e52; }
-.umbral-s1 { background: #dd8452; }
-.umbral:not(.activo) { opacity: 0.3; }
-.leyenda { font-size: 12px; color: var(--tenue); margin: 8px 0 0; }
-.leyenda .muestra { display: inline-block; width: 10px; height: 10px;
-                    border-radius: 2px; margin: 0 4px 0 12px; }
-.nota { font-size: 12px; color: var(--tenue); }
+th { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+  text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--axis); font-weight: 600; }
+td { padding: 7px 8px; border-bottom: 1px solid var(--grid); vertical-align: middle; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 2px 9px;
+  border-radius: 999px; font-weight: 600; white-space: nowrap; }
+.chip .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.chip.legacy { color: var(--legacy); background: var(--legacy-soft); }
+.chip.legacy .dot { background: var(--legacy); }
+.chip.new { color: var(--new); background: var(--new-soft); }
+.chip.new .dot { background: var(--new); }
+.chip.tie { color: var(--ink-2); border: 1px dashed var(--axis); }
+.chip.nodata { color: var(--muted); font-weight: 500; }
+.mbar { display: inline-flex; align-items: center; gap: 7px; }
+.mbar .track { position: relative; width: 84px; height: 10px; background: var(--grid);
+  border-radius: 3px; overflow: hidden; }
+.mbar .fill { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
+.mbar .fill.legacy { left: 0; background: var(--legacy); }
+.mbar .fill.new { right: 0; background: var(--new); }
+.mbar b { font-weight: 600; min-width: 48px; text-align: right; }
+.big { font-size: 26px; font-weight: 700; letter-spacing: -.02em; margin: 4px 0 2px; }
+.h-legacy { color: var(--legacy); } .h-new { color: var(--new); }
+.pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.pill { background: var(--surface); border: 1px solid var(--ring); border-radius: 8px;
+  padding: 8px 12px; font-size: 12.5px; min-width: 150px; }
+.pill b { display: block; font-size: 11px; color: var(--muted); font-weight: 600;
+  text-transform: uppercase; letter-spacing: .05em; margin-bottom: 3px; }
+.legend { display: flex; gap: 14px; align-items: center; font-size: 12px; color: var(--ink-2);
+  margin: 8px 0 0; flex-wrap: wrap; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+  margin-right: 5px; vertical-align: -1px; }
+.note { font-size: 12px; color: var(--muted); }
+details { border-top: 1px solid var(--grid); padding-top: 10px; margin-top: 10px; }
+summary { cursor: pointer; color: var(--ink-2); font-weight: 600; font-size: 13px; }
+svg { display: block; max-width: 100%; }
 </style>
 </head>
 <body>
-<h1>Ollama Cloud cost analysis &mdash; legacy vs new</h1>
+<h1>Ollama Cloud cost analysis &mdash; legacy or new?</h1>
 <div class="sub">__RESUMEN__</div>
 
+<section id="reco" class="panel">
+  <div class="big" id="reco-headline"></div>
+  <div class="sub" id="reco-sub"></div>
+  <div class="pills" id="reco-pills"></div>
+</section>
+
 <div class="panel">
-  <div class="filtros">
+  <div class="controls">
     <label>model
       <select id="filter-model"><option value="">all models</option>__OPCIONES__</select>
     </label>
     <fieldset>
-      <legend>cache scenario</legend>
-      <label><input type="radio" name="filter-scenario" value="s0" checked> S0 (0% cache)</label>
-      <label><input type="radio" name="filter-scenario" value="s1"> S1 (assumed/measured)</label>
+      <legend>theme</legend>
+      <label><input type="radio" name="theme" value="system" checked> system</label>
+      <label><input type="radio" name="theme" value="light"> light</label>
+      <label><input type="radio" name="theme" value="dark"> dark</label>
     </fieldset>
-    <span id="estado-filtro" class="nota"></span>
+    <span id="estado-filtro" class="note"></span>
   </div>
 </div>
 
-<h2>Cells (per model &times; workload)</h2>
+<div class="panel">
+  <label for="slider-s"><b>Cache hit-rate S(x)</b> &mdash; presentation layer only:
+    <input type="range" id="slider-s" min="0" max="100" value="50" step="1">
+    <b id="slider-val" class="mono">50%</b></label>
+  <p class="note" id="slider-note">The slider recomputes in live JS the new-plan costs, the critical
+    threshold and the verdict margins from the embedded per-cell tokens, rates and anchor &mdash;
+    nothing persisted changes (raw immutable; derivatives regenerate only with versioned parameters).
+    Models with a conclusive measured hit-rate keep it (marked &laquo;measured S&raquo;) and the slider
+    cannot move them; models without a published discount are unmoved: S(x) &equiv; S0 for them. A
+    custom value that overrides measurements belongs to a stamped re-run (--s), never to this
+    dashboard.</p>
+</div>
+
+<h2>Cells (model &times; workload)</h2>
 <div class="panel" style="overflow-x: auto;">
   <table>
     <thead><tr>
       <th>model</th><th>workload</th><th>level</th>
-      <th class="v">legacy $/task</th><th class="v">new $/task</th>
-      <th class="v">measured pp/1M</th><th class="v">threshold pp/1M</th>
-      <th class="v">pass rate</th><th>verdict</th>
+      <th class="num">legacy $/task</th><th class="num">new $/task</th>
+      <th class="num">measured pp/1M</th><th class="num">threshold pp/1M</th>
+      <th class="num">pass rate</th><th>verdict</th><th>margin</th>
     </tr></thead>
     <tbody id="tabla-cuerpo"></tbody>
   </table>
+  <p class="note" style="margin-top:8px">Every verdict shows its margin: the saving from picking the
+    winner, (loser &minus; winner) &divide; loser. A verdict exists only when the margin clears the
+    tie band (&gt;2 meter ticks or &gt;5 % of the cheaper cost); inside it the cell is a tie. The new
+    $/task, the threshold and the verdicts follow the slider.</p>
 </div>
 
-<h2>Critical threshold (pp/1M): measured vs threshold</h2>
+<h2>Critical threshold (pp/1M): measured vs new-plan price</h2>
 <div class="panel">
-  <div id="barras"></div>
-  <div class="leyenda">bar = measured pp/1M (median, k=1 cells)
-    <span class="muestra" style="background:#c44e52"></span>threshold S0
-    <span class="muestra" style="background:#dd8452"></span>threshold S1
-    (the highlighted tick follows the scenario filter; unmeasured cells appear
-    as no data and never take a bar or a threshold)</div>
+  <div id="chart-threshold"></div>
+  <div class="legend"><span><span class="sw" style="background:var(--legacy)"></span>measured pp/1M
+    (median, k=1 cells)</span>
+    <span><span class="sw" style="background:var(--new);width:3px"></span>threshold at the slider's
+    S(x)</span>
+    <span>measured left of the threshold &rArr; legacy is cheaper</span></div>
 </div>
 
-<h2>Who wins, by user profile</h2>
-<div class="panel">__WHO_WINS__</div>
+<h2>How much do you save by picking the winner?</h2>
+<div class="panel">
+  <div id="chart-margins"></div>
+  <div class="legend"><span><span class="sw" style="background:var(--legacy)"></span>legacy wins
+    (left)</span>
+    <span><span class="sw" style="background:var(--new)"></span>new wins (right)</span>
+    <span><span class="sw" style="background:var(--tie);border-radius:50%"></span>tie</span>
+    <span>the center axis is the tie band (&gt;2 ticks or &gt;5 %); margins follow the slider</span></div>
+</div>
 
-<h2>Sensitivity sweeps</h2>
-<div class="panel">__SENSIBILIDAD__</div>
+<details>
+  <summary>Robustness: who wins by profile, sensitivity sweeps, cache calibration, legacy quota
+    vs tokens</summary>
+  <h2>Who wins, by user profile (persisted S0/S1 reference)</h2>
+  <div class="panel">__WHO_WINS__</div>
+  <h2>Sensitivity sweeps</h2>
+  <div class="panel">__SENSIBILIDAD__</div>
+  <h2>Cache calibration (effective S per model)</h2>
+  <div class="panel">__CALIBRACION__</div>
+  <h2>Legacy quota vs billed tokens</h2>
+  <div class="panel"><div id="chart-dp"></div></div>
+</details>
 
-<h2>Cache calibration</h2>
-<div class="panel">__CALIBRACION__</div>
-
-<p class="nota">__NOTAS__</p>
+<p class="note" style="margin-top:16px">__NOTAS__</p>
 
 <script id="analysis-data" type="application/json">__DATOS__</script>
+<script id="rates-data" type="application/json">__RATES__</script>
 <script>
 "use strict";
 var DATA = JSON.parse(document.getElementById("analysis-data").textContent);
-var estado = { modelo: "", escenario: "s0" };
+var RATES = JSON.parse(document.getElementById("rates-data").textContent);
+var BP = DATA.base_params;
+var USDPP = BP.usd_per_pp;   // the anchor: USD per weekly pp
+var TICKUSD = BP.tick_usd;   // one meter tick, in USD
+var PER = RATES.per || 1000000;
+var SLIDER_DEFAULT = Math.round((typeof BP.s === "number" ? BP.s : 0.5) * 100);
+var estado = { model: "", slider: SLIDER_DEFAULT };
+
 function $(id) { return document.getElementById(id); }
-function sin(x) { return x === null || x === undefined; }
-function dinero(x) { return sin(x) ? "no data" : "$" + Number(x).toPrecision(6); }
-function pps(x) { return sin(x) ? "no data" : Number(x).toFixed(4) + " pp/1M"; }
-function veredicto(v) {
-  if (!v || v.winner === "no data") return "no data";
-  if (v.winner === "tie") return "tie";
-  return v.winner + " (" + Number(v.margin_pct).toPrecision(4) + "%)";
-}
-
-function celdasFiltradas() {
-  return DATA.cells.filter(function (c) {
-    return !estado.modelo || c.model === estado.modelo;
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
   });
 }
+function isNum(x) { return typeof x === "number" && isFinite(x); }
+function isNull(x) { return x === null || x === undefined; }
+function money(x) { return isNull(x) ? "no data" : "$" + Number(x).toPrecision(6); }
+function pps(x) { return isNull(x) ? "no data" : Number(x).toPrecision(6) + " pp/1M"; }
 
-function renderTabla() {
-  var cuerpo = $("tabla-cuerpo");
-  cuerpo.textContent = "";
-  var esc = estado.escenario;
-  celdasFiltradas().forEach(function (c) {
-    var tr = document.createElement("tr");
-    [
-      c.model, c.workload, c.level,
-      dinero(c.legacy_cost_task_usd ? c.legacy_cost_task_usd.median : null),
-      dinero(esc === "s0" ? c.new_cost_task_s0_usd : c.new_cost_task_s1_usd),
-      pps(c.pp_per_1m ? c.pp_per_1m.median : null),
-      c.threshold_pp_per_1m ? pps(c.threshold_pp_per_1m[esc]) : "no data",
-      sin(c.pass_rate) ? "no data" : Math.round(c.pass_rate * 100) + "%",
-      veredicto(c.verdict[esc])
-    ].forEach(function (valor) {
-      var td = document.createElement("td");
-      td.textContent = valor;
-      tr.appendChild(td);
+function cellsFiltered() {
+  return DATA.cells.filter(function (c) { return !estado.model || c.model === estado.model; });
+}
+function rateOf(model) { return (RATES && RATES.rates) ? RATES.rates[model] || null : null; }
+function sPerModel(model) { return (DATA.s_per_model || {})[model] || null; }
+function measuredS(model) {
+  var spm = sPerModel(model);
+  return spm && spm.source === "measured" && isNum(spm.s) ? spm.s : null;
+}
+function effectiveS(model) {
+  // measured keeps precedence: the slider governs only the assumed models
+  var m = measuredS(model);
+  return m === null ? estado.slider / 100 : m;
+}
+function newCostAt(cell) {
+  var r = rateOf(cell.model);
+  if (!r || isNull(cell.tok_in_median) || isNull(cell.tok_out_median)) return null;
+  var s = effectiveS(cell.model);
+  if (!r.has_cache_discount) s = 0;  // no published discount: S(x) is S0, the slider cannot move it
+  return (cell.tok_in_median * (1 - s) * r.input +
+          cell.tok_in_median * s * r.cached_input +
+          cell.tok_out_median * r.output) / PER;
+}
+function thresholdAt(cell) {
+  // the threshold exists only for a MEASURED cell (the same rule as the
+  // persisted `_cell_doc`): without a readable legacy bracket there is no
+  // comparison to draw, and no line is invented for the bars
+  if (!cell.legacy_cost_task_usd) return null;
+  var cost = newCostAt(cell);
+  var tokens = isNull(cell.tok_in_median) || isNull(cell.tok_out_median)
+    ? null : cell.tok_in_median + cell.tok_out_median;
+  if (!isNum(cost) || !tokens) return null;
+  return cost / (tokens / 1e6) / USDPP;
+}
+function verdictOf(legacy, nuevo, tickUsd) {
+  // the same rule as the persisted verdicts: the tie band is the MINIMUM of
+  // 2 ticks and 5 % of the cheaper cost; margin_pct = (loser - winner) / loser
+  if (isNull(legacy) || isNull(nuevo)) return { winner: "no data", margin_pct: null };
+  var band = Math.min(2 * tickUsd, 0.05 * Math.min(legacy, nuevo));
+  if (Math.abs(legacy - nuevo) <= band) return { winner: "tie", margin_pct: null };
+  if (legacy < nuevo) return { winner: "legacy", margin_pct: (nuevo - legacy) / nuevo * 100 };
+  return { winner: "new", margin_pct: (legacy - nuevo) / legacy * 100 };
+}
+function verdictAt(cell) {
+  var legacy = cell.legacy_cost_task_usd ? cell.legacy_cost_task_usd.median : null;
+  return verdictOf(legacy, newCostAt(cell), TICKUSD);
+}
+
+function chip(v) {
+  if (!v || v.winner === "no data") return '<span class="chip nodata">no data</span>';
+  if (v.winner === "tie") return '<span class="chip tie">tie</span>';
+  return '<span class="chip ' + v.winner + '"><span class="dot"></span>' + v.winner +
+    " &minus;" + Number(v.margin_pct).toFixed(1) + "%</span>";
+}
+function marginBar(v) {
+  if (!v || v.winner === "no data" || v.winner === "tie") return '<span class="note">&mdash;</span>';
+  return '<span class="mbar"><span class="track"><span class="fill ' + v.winner +
+    '" style="width:' + Math.min(100, v.margin_pct).toFixed(2) + '%"></span></span><b class="mono">' +
+    Number(v.margin_pct).toFixed(1) + "%</b></span>";
+}
+
+function medianOf(vals) {
+  // statistics.median's convention: the middle value, or the mean of the two
+  // middles for an even count — the same median the persisted doc uses
+  if (!vals.length) return null;
+  var a = vals.slice().sort(function (x, y) { return x - y; });
+  var m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+function renderReco() {
+  var grupos = {};
+  cellsFiltered().forEach(function (c) {
+    var v = verdictAt(c);
+    if (v.winner === "no data") return;
+    (grupos[c.workload] = grupos[c.workload] || []).push(v);
+  });
+  var workloads = Object.keys(grupos).sort();
+  var newWl = 0, legWl = 0, decided = 0;
+  var pills = workloads.map(function (wl) {
+    var xs = grupos[wl];
+    var nw = 0, lw = 0;
+    xs.forEach(function (v) {
+      if (v.winner === "new") nw++;
+      else if (v.winner === "legacy") lw++;
     });
-    if (c.verdict[esc].winner === "legacy") tr.className = "gana-legacy";
-    if (c.verdict[esc].winner === "new") tr.className = "gana-new";
-    cuerpo.appendChild(tr);
-  });
+    // the pill's side is the cells' majority; a workload whose cells all tie
+    // renders the tie chip, never a fabricated winner with a fake margin
+    var win = nw > lw ? "new" : lw > nw ? "legacy" : "tie";
+    // the margin is the median over the WINNING side's cells only
+    var side = win === "tie" ? [] : xs.filter(function (v) { return v.winner === win; })
+      .map(function (v) { return v.margin_pct; }).filter(function (x) { return x !== null; });
+    if (win === "new") { newWl++; decided++; }
+    else if (win === "legacy") { legWl++; decided++; }
+    return '<div class="pill"><b>' + esc(wl) + "</b>" +
+      chip({ winner: win, margin_pct: medianOf(side) }) + "</div>";
+  }).join("");
+  var headline;
+  if (!workloads.length) headline = "No measured verdict under this filter";
+  else if (!decided) headline = "Every measured workload ties inside the band";
+  else if (newWl && !legWl) headline = 'The <span class="h-new">new plan</span> wins every decided workload';
+  else if (legWl && !newWl) headline = 'The <span class="h-legacy">legacy plan</span> wins every decided workload';
+  else headline = 'Split: the <span class="h-legacy">legacy</span> plan wins ' + legWl + " of " +
+    decided + " decided workloads";
+  $("reco-headline").innerHTML = headline;
+  $("reco-pills").innerHTML = pills || '<p class="note">no measured cell under this filter</p>';
+  $("reco-sub").textContent =
+    "The margin is the saving from picking the winner. Anchor: $" + BP.ancla + "/mo = " +
+    Number(USDPP).toFixed(6) + " USD per weekly pp (tick $" + Number(TICKUSD).toFixed(6) + ").";
 }
 
-function renderBarras() {
-  var cont = $("barras");
-  cont.textContent = "";
-  var medidas = celdasFiltradas().filter(function (c) {
-    return c.pp_per_1m && c.threshold_pp_per_1m;
-  });
+function renderTable() {
+  var filas = cellsFiltered().map(function (c) {
+    var v = verdictAt(c);
+    var r = rateOf(c.model);
+    var measuredBadge = measuredS(c.model) !== null ? ' <span class="badge">measured S</span>' : "";
+    var s0Badge = r && !r.has_cache_discount ? ' <span class="badge">S(x) &equiv; S0</span>' : "";
+    return '<tr><td class="mono">' + esc(c.model) + measuredBadge + "</td>" +
+      "<td>" + esc(c.workload) + "</td>" +
+      "<td>" + esc(isNull(c.level) ? "—" : c.level) + "</td>" +
+      '<td class="num mono">' + money(c.legacy_cost_task_usd ? c.legacy_cost_task_usd.median : null) + "</td>" +
+      '<td class="num mono">' + money(newCostAt(c)) + s0Badge + "</td>" +
+      '<td class="num mono">' + pps(c.pp_per_1m ? c.pp_per_1m.median : null) + "</td>" +
+      '<td class="num mono">' + pps(thresholdAt(c)) + "</td>" +
+      '<td class="num mono">' + (isNull(c.pass_rate) ? "no data" : Math.round(c.pass_rate * 100) + "%") + "</td>" +
+      "<td>" + chip(v) + "</td>" +
+      "<td>" + marginBar(v) + "</td></tr>";
+  }).join("");
+  $("tabla-cuerpo").innerHTML = filas;
+}
+
+function renderThreshold() {
+  var cont = $("chart-threshold");
+  var medidas = cellsFiltered().filter(function (c) {
+    return c.pp_per_1m && thresholdAt(c) !== null;
+  }).sort(function (a, b) { return b.pp_per_1m.median - a.pp_per_1m.median; });
   if (!medidas.length) {
-    var vacio = document.createElement("p");
-    vacio.className = "nota";
-    vacio.textContent = "no measured cell under this filter";
-    cont.appendChild(vacio);
+    cont.innerHTML = '<p class="note">no measured cell under this filter</p>';
     return;
   }
-  var maximo = 0;
+  var top = 0;
   medidas.forEach(function (c) {
-    maximo = Math.max(maximo, c.pp_per_1m.median, c.threshold_pp_per_1m.s0,
-                      c.threshold_pp_per_1m.s1 || 0);
+    top = Math.max(top, c.pp_per_1m.median, thresholdAt(c));
   });
-  var porWorkload = {};
-  medidas.forEach(function (c) {
-    (porWorkload[c.workload] = porWorkload[c.workload] || []).push(c);
+  top *= 1.05;
+  if (!(top > 0)) top = 1;  // an all-zero scale must not divide into NaN widths
+  var W = 660, labelW = 200, right = 90, rowH = 24, H = medidas.length * rowH + 12;
+  var plotW = W - labelW - right;
+  var rows = "";
+  medidas.forEach(function (c, i) {
+    var y = i * rowH + 10;
+    // the meter can recalculate a bracket downward (negative median): clamp,
+    // the row keeps its label and threshold, the bar just never goes negative
+    var bw = Math.max(0, c.pp_per_1m.median / top * plotW);
+    var tx = thresholdAt(c) / top * plotW;
+    rows += '<text x="' + (labelW - 8) + '" y="' + (y + 10) + '" text-anchor="end" font-size="11" ' +
+      'fill="var(--ink-2)" font-family="ui-monospace,Menlo,monospace">' +
+      esc(c.model) + " &middot; " + esc(c.workload) + "</text>" +
+      '<rect x="' + labelW + '" y="' + y + '" width="' + bw.toFixed(2) + '" height="14" rx="3" ' +
+      'fill="var(--legacy)"><title>' + esc(c.model) + " (" + esc(c.workload) + "): measured " +
+      c.pp_per_1m.median + " pp/1M</title></rect>" +
+      '<rect x="' + (labelW + tx - 1.5).toFixed(2) + '" y="' + (y - 3) + '" width="3" height="20" ' +
+      'rx="1.5" fill="var(--new)"><title>' + esc(c.model) + " (" + esc(c.workload) +
+      "): threshold " + Number(thresholdAt(c)).toPrecision(6) + " pp/1M at S(x)=" +
+      Math.round(effectiveS(c.model) * 100) + "%</title></rect>" +
+      '<text x="' + (labelW + bw + 6).toFixed(2) + '" y="' + (y + 10) + '" font-size="10" ' +
+      'fill="var(--muted)" font-family="ui-monospace,Menlo,monospace">' +
+      Number(c.pp_per_1m.median).toPrecision(4) + "</text>";
   });
-  Object.keys(porWorkload).sort().forEach(function (workload) {
-    var seccion = document.createElement("div");
-    var titulo = document.createElement("h3");
-    titulo.textContent = workload;
-    seccion.appendChild(titulo);
-    porWorkload[workload].forEach(function (c) {
-      var fila = document.createElement("div");
-      fila.className = "fila-barra";
-      var nombre = document.createElement("span");
-      nombre.className = "nombre";
-      nombre.textContent = c.model;
-      var pista = document.createElement("span");
-      pista.className = "pista";
-      var barra = document.createElement("span");
-      barra.className = "barra";
-      barra.style.width = (c.pp_per_1m.median / maximo * 100).toFixed(2) + "%";
-      barra.title = "measured: " + c.pp_per_1m.median + " pp/1M";
-      pista.appendChild(barra);
-      ["s0", "s1"].forEach(function (esc) {
-        if (sin(c.threshold_pp_per_1m[esc])) return;
-        var tick = document.createElement("span");
-        tick.className = "umbral umbral-" + esc +
-          (esc === estado.escenario ? " activo" : "");
-        tick.style.left = (c.threshold_pp_per_1m[esc] / maximo * 100).toFixed(2) + "%";
-        tick.title = "threshold " + esc + ": " + c.threshold_pp_per_1m[esc] + " pp/1M";
-        pista.appendChild(tick);
-      });
-      fila.appendChild(nombre);
-      fila.appendChild(pista);
-      seccion.appendChild(fila);
-    });
-    cont.appendChild(seccion);
-  });
+  cont.innerHTML = '<svg viewBox="0 0 ' + W + " " + H + '" width="' + W + '" height="' + H +
+    '" role="img" aria-label="measured pp per 1M against the new-plan threshold">' + rows + "</svg>";
 }
 
-function render() {
-  renderTabla();
-  renderBarras();
-  $("estado-filtro").textContent =
-    (estado.modelo || "all models") + " - scenario " + estado.escenario.toUpperCase();
-}
-$("filter-model").addEventListener("change", function (e) {
-  estado.modelo = e.target.value;
-  render();
-});
-Array.prototype.forEach.call(
-  document.querySelectorAll('input[name="filter-scenario"]'),
-  function (radio) {
-    radio.addEventListener("change", function (e) {
-      estado.escenario = e.target.value;
-      render();
-    });
+function renderMargins() {
+  var cont = $("chart-margins");
+  var filas = cellsFiltered().filter(function (c) { return c.legacy_cost_task_usd; });
+  if (!filas.length) {
+    cont.innerHTML = '<p class="note">no measured cell under this filter</p>';
+    return;
   }
-);
-render();
+  var verdicts = filas.map(function (c) { return { c: c, v: verdictAt(c) }; });
+  var max = 12;
+  verdicts.forEach(function (x) {
+    if (x.v.margin_pct !== null && x.v.margin_pct > max) max = x.v.margin_pct;
+  });
+  max *= 1.1;
+  var W = 660, labelW = 220, rowH = 26, H = verdicts.length * rowH + 20;
+  var half = (W - labelW - 16) / 2, cx = labelW + half;
+  var svg = '<line x1="' + cx + '" y1="8" x2="' + cx + '" y2="' + (H - 10) +
+    '" stroke="var(--axis)" stroke-width="1"/>';
+  verdicts.forEach(function (x, i) {
+    var y = i * rowH + 14;
+    svg += '<text x="' + (labelW - 8) + '" y="' + (y + 4) + '" text-anchor="end" font-size="11" ' +
+      'fill="var(--ink-2)" font-family="ui-monospace,Menlo,monospace">' +
+      esc(x.c.model) + " &middot; " + esc(x.c.workload) + "</text>";
+    if (x.v.winner === "no data") {
+      svg += '<text x="' + cx + '" y="' + (y + 4) + '" text-anchor="middle" font-size="10" ' +
+        'fill="var(--muted)">no data</text>';
+      return;
+    }
+    if (x.v.winner === "tie") {
+      svg += '<circle cx="' + cx + '" cy="' + y + '" r="4" fill="var(--tie)"><title>tie: inside ' +
+        'the band (2 meter ticks or 5 % of the cheaper cost)</title></circle>';
+      return;
+    }
+    var len = x.v.margin_pct / max * half;
+    var isLegacy = x.v.winner === "legacy";
+    svg += '<rect x="' + (isLegacy ? cx - len : cx).toFixed(2) + '" y="' + (y - 7) +
+      '" width="' + len.toFixed(2) + '" height="14" rx="3" fill="var(--' + x.v.winner +
+      ')"><title>' + esc(x.c.model) + " (" + esc(x.c.workload) + "): " + x.v.winner +
+      " by " + Number(x.v.margin_pct).toFixed(2) + "%</title></rect>" +
+      '<text x="' + (isLegacy ? cx - len - 6 : cx + len + 6).toFixed(2) + '" y="' + (y + 4) +
+      '" text-anchor="' + (isLegacy ? "end" : "start") + '" font-size="10" fill="var(--ink-2)" ' +
+      'font-family="ui-monospace,Menlo,monospace">' + Number(x.v.margin_pct).toFixed(1) + "%</text>";
+  });
+  cont.innerHTML = '<svg viewBox="0 0 ' + W + " " + H + '" width="' + W + '" height="' + H +
+    '" role="img" aria-label="verdict margin by cell: legacy left, new right, tie dot">' +
+    svg + "</svg>";
+}
+
+function renderDp() {
+  var cont = $("chart-dp");
+  var puntos = DATA.dp_tokens_curve || [];
+  if (!puntos.length) {
+    cont.innerHTML = '<p class="note">no measured bracket</p>';
+    return;
+  }
+  var maxX = Math.max.apply(null, puntos.map(function (p) { return p.tokens_total; })) * 1.05;
+  var maxY = Math.max.apply(null, puntos.map(function (p) { return p.dpp_weekly; })) * 1.05;
+  // an all-zero axis (every readable bracket below the tick) must not divide
+  // by zero into NaN coordinates: the dots sit on the baseline instead
+  if (!(maxX > 0)) maxX = 1;
+  if (!(maxY > 0)) maxY = 1;
+  var W = 660, H = 280, padL = 52, padB = 34, padT = 12, padR = 12;
+  var ejes = '<line x1="' + padL + '" y1="' + (H - padB) + '" x2="' + (W - padR) + '" y2="' +
+    (H - padB) + '" stroke="var(--axis)" stroke-width="1"/>' +
+    '<line x1="' + padL + '" y1="' + padT + '" x2="' + padL + '" y2="' + (H - padB) +
+    '" stroke="var(--axis)" stroke-width="1"/>';
+  var dots = puntos.map(function (p) {
+    var x = padL + p.tokens_total / maxX * (W - padL - padR);
+    var y = H - padB - p.dpp_weekly / maxY * (H - padB - padT);
+    return '<circle cx="' + x.toFixed(2) + '" cy="' + y.toFixed(2) + '" r="4" fill="var(--legacy)" ' +
+      'fill-opacity="0.85"><title>' + esc(p.model) + " &middot; " +
+      esc(isNull(p.workload) ? "pooled" : p.workload) + ": " + p.dpp_weekly + " weekly pp / " +
+      p.tokens_total + " tokens</title></circle>";
+  }).join("");
+  cont.innerHTML = '<svg viewBox="0 0 ' + W + " " + H + '" width="' + W + '" height="' + H +
+    '" role="img" aria-label="legacy weekly quota delta versus billed tokens">' + ejes + dots +
+    "</svg>" +
+    '<p class="note">one dot per measured bracket: legacy weekly &Delta;pp vs billed tokens ' +
+    "(the legacy side never moves with the slider)</p>";
+}
+
+function renderStatus() {
+  $("estado-filtro").textContent = (estado.model || "all models") +
+    " - cache slider at " + estado.slider + "%";
+}
+function renderAll() {
+  renderReco();
+  renderTable();
+  renderThreshold();
+  renderMargins();
+  renderStatus();
+}
+
+$("filter-model").addEventListener("change", function (e) {
+  estado.model = e.target.value;
+  renderAll();
+});
+var slider = $("slider-s");
+slider.value = String(SLIDER_DEFAULT);
+slider.addEventListener("input", function () {
+  estado.slider = Number(slider.value);
+  $("slider-val").textContent = estado.slider + "%";
+  renderAll();
+});
+$("slider-val").textContent = SLIDER_DEFAULT + "%";
+
+function applyTheme(t) {
+  if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  else document.documentElement.removeAttribute("data-theme");
+}
+Array.prototype.forEach.call(document.querySelectorAll('input[name="theme"]'), function (radio) {
+  radio.addEventListener("change", function (e) {
+    applyTheme(e.target.value);
+    try { localStorage.setItem("dashboard-theme", e.target.value); } catch (err) { /* unavailable */ }
+  });
+});
+(function initTheme() {
+  var guardado = null;
+  try { guardado = localStorage.getItem("dashboard-theme"); } catch (err) { /* unavailable */ }
+  if (guardado !== "light" && guardado !== "dark") guardado = "system";
+  var radio = document.querySelector('input[name="theme"][value="' + guardado + '"]');
+  if (radio) radio.checked = true;
+  applyTheme(guardado);
+})();
+
+renderDp();
+renderAll();
 </script>
 </body>
 </html>
@@ -1239,7 +1462,7 @@ def _sensibilidad_html(doc: dict) -> str:
     for nombre, barrido, valores in (
         ("table rates", sens["rates"], sens["rates"]["factors"]),
         ("cache hit rate S", sens["cache"], sens["cache"]["s_values"]),
-        ("P_LEGADO (ancla)", sens["ancla"], sens["ancla"]["factors"]),
+        ("P_LEGADO (anchor)", sens["ancla"], sens["ancla"]["factors"]),
     ):
         filas.append(
             [
@@ -1281,11 +1504,13 @@ def _calibracion_html(doc: dict) -> str:
     ) + aviso
 
 
-def render_dashboard(doc: dict) -> str:
+def render_dashboard(doc: dict, rates: dict | None = None) -> str:
     """The dashboard: one self-contained HTML file. The analysis doc rides
-    inside it as JSON (no fetches, no CDN, no sibling files), the model and
-    scenario filters are plain DOM, and every value escapes through
-    textContent or html.escape."""
+    inside it as JSON (no fetches, no CDN, no sibling files), the model filter,
+    the three-state theme and the cache slider are plain DOM, and every value
+    escapes through textContent, html.escape or the JS esc() helper. `rates`
+    (from `rates_map`) rides in its own JSON block: the slider's live
+    recomputation needs them; analysis.json never does."""
     bp = doc["base_params"]
     bruto = doc["raw"]
     opciones = "".join(
@@ -1300,6 +1525,7 @@ def render_dashboard(doc: dict) -> str:
         f"raw: {bruto['request_lines']} request lines, {bruto['batch_lines']} batch lines "
         f"({', '.join(bruto['run_ids']) or 'no runs'}) | protocol {doc['protocol_version']}"
     )
+    tarifas = rates if rates is not None else {"per": 1_000_000, "rates": {}}
     return (
         _DASHBOARD.replace("__RESUMEN__", html.escape(resumen))
         .replace("__OPCIONES__", opciones)
@@ -1307,6 +1533,10 @@ def render_dashboard(doc: dict) -> str:
         .replace("__SENSIBILIDAD__", _sensibilidad_html(doc))
         .replace("__CALIBRACION__", _calibracion_html(doc))
         .replace("__NOTAS__", html.escape(doc["notes"]))
+        .replace(
+            "__RATES__",
+            json.dumps(tarifas, ensure_ascii=False).replace("</", "<\\/"),
+        )
         .replace(
             "__DATOS__",
             json.dumps(doc, ensure_ascii=False).replace("</", "<\\/"),

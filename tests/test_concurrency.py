@@ -466,8 +466,10 @@ def test_second_model_reuses_the_probe_without_a_flush(tmp_path, fake_cli):
     )
     code, out, err = probe_cli(tmp_path, "--model", "kimi-k3")
     assert code == 0, out or err
-    # 3 cells x 4 bracket reads (pre + count + 2 polls), NO flush read
-    assert len(reads(fake_cli)) == antes + 12
+    # 3 cells x 4 bracket reads (pre + count + 2 polls), NO flush read; the
+    # second model's billing canary re-runs (7 reads, 10 chats): the lane is
+    # never inherited across models - MODEL's proof says nothing about kimi-k3's.
+    assert len(reads(fake_cli)) == antes + 12 + 7
     assert "reusing cut-off" in (out + err)  # the probe was reused, loudly
     doc = summary(tmp_path)
     assert doc["models"] == sorted([MODEL, "kimi-k3"])  # the run's doc, not one model's

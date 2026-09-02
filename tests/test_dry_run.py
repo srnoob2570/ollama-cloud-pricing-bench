@@ -179,3 +179,28 @@ def test_dry_run_estimates_carry_the_lane_nonce_and_the_canary(tmp_path, fake):
     assert "ratio above 0.5" in canario["note"]
     _code, out, _err = run_cli(tmp_path, "dry-run", "--level", "T2", "--pricing-dir", pricing)
     assert "billing canary (once per run)" in out and "nonce" in out
+
+
+def test_t3_budget_prices_the_agent_loops_worst_case(tmp_path, fake, capsys):
+    """A T3 task is an agent loop, not one request: up to MAX_STEPS billed
+    consultations, each re-sending the task plus the transcript grown so far,
+    each with its nonce — the gate approves the worst case, never a fraction
+    of it ('a run may never bill more than the dry-run approved')."""
+    from ocharness import lane
+    from ocharness.fixtures_t3 import MAX_STEPS
+    from ocharness.workloads import SLATE_T3
+
+    pricing = with_pricing(tmp_path)
+    doc = json_doc(tmp_path, "dry-run", "--level", "T3", "--reps", "1", "--pricing-dir", pricing)
+    fila = next(f for f in doc["rows"] if f["workload"] == "multi_file")
+    nonce = lane.nonce_tokens_estimate(150_000)  # the workload's own nonce size
+    # per model: MAX_STEPS consultations, step p carries the task + nonce + the
+    # p prior outputs; the output side bills MAX_STEPS answers
+    esperado_in = sum(150_000 + nonce + paso * 30_000 for paso in range(MAX_STEPS))
+    esperado_out = 30_000 * MAX_STEPS
+    assert fila["requests"] == len(SLATE_T3) * 1 * 1 * MAX_STEPS
+    assert fila["tokens_in"] == len(SLATE_T3) * esperado_in
+    assert fila["tokens_out"] == len(SLATE_T3) * esperado_out
+    assert fila["cost_s0"] > 0  # and it prices strictly above the one-request story
+    una = 150_000 + nonce  # what a single-request budget would send in, per model
+    assert fila["tokens_in"] > len(SLATE_T3) * una

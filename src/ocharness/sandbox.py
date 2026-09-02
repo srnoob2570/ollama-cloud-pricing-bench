@@ -87,7 +87,9 @@ def run_pytest(task_dir: pathlib.Path) -> dict:
     SANDBOX_TIMEOUT_S.
     """
     destino = pathlib.Path(task_dir)
-    config = destino.parent / ".ocharness-pytest.ini"
+    # The config file names its task: concurrent in-loop run_tests actions of
+    # one batch (a k>1 cell) must never share one ini path.
+    config = destino.parent / f".ocharness-pytest-{destino.name}.ini"
     config.write_text("[pytest]\n", encoding="utf-8")
     env = _subprocess_env(destino)
     argv = [sys.executable, "-m", "ocharness.sandbox_runner", "-c", str(config)]

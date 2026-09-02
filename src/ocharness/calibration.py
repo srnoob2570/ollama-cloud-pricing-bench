@@ -50,6 +50,7 @@ import statistics
 from . import fixtures
 from .client import PROTOCOL_VERSION, OllamaCloud
 from .concurrency import _read_jsonl
+from .pricing import TableError
 from .runner import (
     BatchContext,
     BatchSpec,
@@ -368,7 +369,15 @@ def _analyze_model(
             primer_fallo = min(i for i, g in enumerate(golpes) if g is False)
             persistencia = f"between {edades[ultimo_golpe]:g} and {edades[primer_fallo]:g} s"
 
-    declarado = tabla.rate(modelo).has_cache_discount
+    try:
+        declarado = tabla.rate(modelo).has_cache_discount
+    except TableError:
+        # A slate model the chosen table no longer prices: the reading still
+        # ships (the brackets' spend is already in the raw dataset) with no
+        # declared-discount signal and a note - never a traceback after the
+        # quota is spent, and never a lost runs/calibration-<run_id>.json.
+        declarado = None
+        notas.append(f"the price table does not price {modelo!r} - no declared-discount signal")
     materializado = {"yes": True, "no": False}.get(existe)
 
     def _evidencia(rec: dict) -> dict:

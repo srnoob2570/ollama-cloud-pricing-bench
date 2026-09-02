@@ -810,3 +810,20 @@ def test_canary_refuses_to_measure_from_failed_requests(tmp_path, fake_cli):
     )
     code, _out, err = run_t1(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")
     assert code == 1 and "never completed" in err
+
+
+def test_t1_resume_at_another_reps_grows_the_plan(tmp_path, fake_cli):
+    """The drift guard anchors on T2's hybrid composition only: T1's batch ids
+    embed the rep, so a resume planned wider grows the plan the union allows
+    (the guard's own comment, reachable again)."""
+    pricing = prepare(tmp_path)
+    assert run_t1(tmp_path, "--reps", "1")[0] == 0
+    antes = len(read_jsonl(tmp_path, "batches", "batches-*.jsonl"))
+    assert (
+        run_cli(tmp_path, "dry-run", "--level", "T1", "--reps", "2", "--pricing-dir", pricing)[0]
+        == 0
+    )
+    code, out, err = run_t1(tmp_path, "--reps", "2")
+    assert code == 0, out or err  # no 'planned at --reps' refusal on T1
+    despues = len(read_jsonl(tmp_path, "batches", "batches-*.jsonl"))
+    assert despues > antes  # rep 2's brackets landed

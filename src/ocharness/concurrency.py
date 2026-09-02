@@ -496,18 +496,24 @@ async def _run_async(cfg: dict) -> dict:
         ]
         if pendientes and (probe_ran_ahora or not cerradas):
             # The probe's own spend is unbracketed: the registration loop (poll
-            # until the meter is stable, capped) so its usage lands before the
-            # first cell's pre-read and no cell's Δpp absorbs it. Skipped when
-            # the probe was reused AND some cell already closed (that close
-            # proves the flush already ran for this run). A flush that never
-            # read the meter is no flush at all: the baselining failed.
+            # until the meter is stable) so its usage lands before the first
+            # cell's pre-read and no cell's Δpp absorbs it. Skipped when the
+            # probe was reused AND some cell already closed (that close proves
+            # the flush already ran for this run). A flush that never read the
+            # meter is no flush at all: the baselining failed. A capped one is
+            # no better: the meter lag (60-90 s documented) can outlast the cap,
+            # and a capped "post" predates the probe's registration — accepting
+            # it would baseline the cells before the probe's spend lands and
+            # silently absorb it into the first cell's Δpp. Only a stable flush
+            # proves the spend predates the cells.
             flush = await _registration_settle(
                 client, primera=None, cap_s=cfg["settle_s"], poll_s=cfg["settle_poll_s"]
             )
-            if flush["exit"] is None or flush["post"] is None:
+            if flush["exit"] != "stable" or flush["post"] is None:
                 raise RunnerError(
-                    f"probe flush read failed ({flush['error'] or 'no meter read landed'}) - "
-                    "the probe's spend cannot be baselined before the cells"
+                    f"probe flush did not stabilize ({flush['error'] or flush['exit'] or 'no meter read landed'}) - "
+                    "the probe's spend cannot be proven to predate the cells' brackets; "
+                    "raise --settle-s and re-run"
                 )
             if emit:
                 emit(

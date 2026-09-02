@@ -734,7 +734,7 @@ def _exigir_volley_aceptado(volley: dict, fase: str) -> None:
 
 
 async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str, model: str) -> dict:
-    """The billing canary, once per run, before the first bracket.
+    """The billing canary, once per (run, model), before the first bracket.
 
     5 salted requests (fresh nonces — full price, cache misses by construction)
     + 5 identical-prefix replays (salted[0]'s nonce verbatim, the prefix a
@@ -746,13 +746,19 @@ async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str, mod
     under an unproven lane. The volleys must be fully accepted (a 429 or an
     errored chat would reshape the ratio in either direction) and both settles
     must close stable: capped evidence is recorded as inconclusive, never as a
-    verdict. The result lives in the manifest (a resume reuses it; an alarmed
-    or failed canary keeps refusing until the operator deletes the manifest —
-    an explicit decision, never a silent retry)."""
+    verdict. The result lives in the manifest (a resume reuses it — for the
+    model it was proven on: a resume under another model re-runs the canary,
+    the lane is never inherited across models; an alarmed or failed canary
+    keeps refusing until the operator deletes the manifest — an explicit
+    decision, never a silent retry)."""
     manifiesto = ctx.manifiesto
     emit = cfg["emit"]
     previo = manifiesto.doc.get("canary")
-    if isinstance(previo, dict) and previo.get("status") in ("ok", "inconclusive"):
+    if (
+        isinstance(previo, dict)
+        and previo.get("status") in ("ok", "inconclusive")
+        and previo.get("model") == model
+    ):
         if emit:
             emit(
                 f"canary: already ran for this run on {previo.get('model')!r} (ratio "
@@ -1505,14 +1511,16 @@ def _check_drift(existente: Manifest, cfg: dict) -> None:
     reps_cfg = cfg.get("reps")
     if (
         reps_cfg is not None
-        and existente.doc.get("composition") == COMPOSITION_VERSION
+        and existente.doc.get("level") == "T2"
         and existente.doc.get("reps") != reps_cfg
     ):
-        # Hybrid manifests only: their pooled brackets' batch ids anchor on the
-        # first rep alone, so a resume at another density would read the earlier
-        # brackets done (a wide resume would measure nothing new) or collide
-        # with them. The per-rep compositions (T1/T3) never collide — their
-        # wider resume still grows the plan the union allows.
+        # The hybrid composition (T2 only) anchors its brackets' batch ids on
+        # the first rep alone — the strong four pool all the cell's reps into
+        # one bracket, the weak trio pools the trio's reps per model — so a
+        # resume at another density would read the earlier brackets done (a
+        # wide resume would measure nothing new) or collide with them. The
+        # per-rep compositions (T1/T3) never collide — their batch ids embed
+        # the rep, so their wider resume still grows the plan the union allows.
         raise RunnerError(
             f"manifest {existente.ruta.name} was planned at --reps "
             f"{existente.doc.get('reps')!r} but this run would use --reps {reps_cfg!r} - "

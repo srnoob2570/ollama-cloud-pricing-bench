@@ -591,3 +591,23 @@ def test_t2_refuses_rep_narrowing_and_reps_drift(tmp_path, fake_cli):
     code, _out, err = run_t2(tmp_path, "--model", "glm-5.3-flash", "--reps", "3")
     assert code == 1
     assert "--reps" in err  # the manifest binds the density the pool was planned at
+
+
+def test_t2_resume_at_another_reps_is_refused(tmp_path, fake_cli):
+    """The drift guard lives where the collision lives: the hybrid composition's
+    pooled brackets anchor their batch ids on the first rep alone, so a resume
+    at another density would read the earlier brackets done or collide — the
+    guard refuses it. The per-rep levels (T1/T3) take the wide resume."""
+    pricing = prepare(tmp_path)
+    assert run_t2(tmp_path, "--reps", "1")[0] == 0
+    # the drift guard runs on any existing manifest, completed or not; the gate
+    # still wants its fresh dry-run approving the wider density first
+    assert (
+        run_cli(tmp_path, "dry-run", "--level", "T2", "--reps", "2", "--pricing-dir", pricing)[0]
+        == 0
+    )
+    code, out, err = run_t2(tmp_path, "--reps", "2")
+    # the drift guard fires after the gate (the dry-run mark is consumed): a
+    # RunnerError refusal exits 1 with the error line on stderr
+    assert code == 1, f"expected the drift refusal, got {code}: {out or err}"
+    assert "planned at --reps 1" in err and "--reps 2" in err

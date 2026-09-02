@@ -205,7 +205,11 @@ async def run_task(
                 ok, resultado = False, "rejected: the reply carries no parsable JSON action"
             else:
                 nombre = str(accion.get("action"))
-                ok, resultado = execute_action(accion, task_dir)
+                # run_tests runs a subprocess (up to the sandbox's timeout plus
+                # its post-kill drain): off the event loop's thread, or one
+                # task's pytest would freeze the shared loop and stall every
+                # sibling task's awaited chat/meter work in a k>1 cell.
+                ok, resultado = await asyncio.to_thread(execute_action, accion, task_dir)
         except Exception as e:  # noqa: BLE001 - a harness-side crash is data, not a lost batch
             # a write that cannot land (disk full, a lone surrogate) ends the
             # task: the step is still recorded (it was billed), and a broken

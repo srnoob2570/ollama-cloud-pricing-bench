@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 
 from . import lane, workloads
+from .fixtures_t3 import MAX_STEPS
 from .pricing import Rate
 
 
@@ -65,13 +66,27 @@ def budget(level: str, tabla, *, reps: int = 5, s: float = 0.5) -> list[BudgetLi
         # nonce size for every model of the workload (it keys on the workload's
         # expected input, not on the model), so it adds once per request.
         nonce_por_request = lane.nonce_tokens_estimate(w.t_in)
+        # A T3 task is an agent loop, not one request: up to MAX_STEPS billed
+        # consultations per task, each re-sending the task plus the transcript
+        # grown so far (every prior step's output rides along), each with its
+        # own nonce. The gate approves the WORST case - a run may never bill
+        # more than the dry-run approved.
+        pasos = MAX_STEPS if level == "T3" else 1
         for modelo in modelos:
             tarifa = tabla.rate(modelo)
-            t_in = (w.t_in + nonce_por_request) * w.requests * reps
-            t_out = w.t_out * w.requests * reps
+            if pasos == 1:
+                t_in = (w.t_in + nonce_por_request) * w.requests * reps
+                t_out = w.t_out * w.requests * reps
+            else:
+                t_in = (
+                    w.requests
+                    * reps
+                    * sum(w.t_in + nonce_por_request + paso * w.t_out for paso in range(pasos))
+                )
+                t_out = w.t_out * w.requests * reps * pasos
             t_in_total += t_in
             t_out_total += t_out
-            nonce_total += nonce_por_request * w.requests * reps
+            nonce_total += nonce_por_request * w.requests * reps * pasos
             s0 = new_task_cost(t_in, t_out, tarifa, s=0.0, per=tabla.per)
             s0_total += s0
             # no cache discount: new_task_cost already makes S1 equal S0
@@ -82,7 +97,7 @@ def budget(level: str, tabla, *, reps: int = 5, s: float = 0.5) -> list[BudgetLi
                 level=level,
                 models=len(modelos),
                 reps=reps,
-                requests=len(modelos) * reps * w.requests,
+                requests=len(modelos) * reps * w.requests * pasos,
                 tokens_in=t_in_total,
                 tokens_out=t_out_total,
                 nonce_tokens=nonce_total,

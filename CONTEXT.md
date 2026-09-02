@@ -40,6 +40,13 @@ One hundredth of 1 % of a quota window. The meter is only observable in multiple
 **tick** of 0.1 pp; any difference below the tick is resolution noise.
 _Avoid_: punto de uso · _es_: punto de cuota (pp)
 
+**Registration**:
+The batch's requests becoming visible in the per-model `request_count` of **both** quota
+windows; the settlement signal of the bracketed batch. When the requests register, both
+windows' usage has already been recalculated — a pp delta below the tick is expected (small
+usage need not move the displayed pp) and is resolution, never latency.
+_Avoid_: usage update (confuses registration with pp movement) · _es_: registro
+
 **Quota**:
 The legacy plan's usage budget, measured as a fraction per window (`0.235` equals 23.5 %),
 with a per-model breakdown. The primary unit of account of the legacy system.
@@ -56,20 +63,56 @@ Delta of the ollama.com usage meter (API-key endpoint) between two moments; the 
 observation of legacy consumption. Measured with **bracketed batches** (never per request).
 _Avoid_: consumo reportado (vague) · _es_: uso medido
 
+**Bracket pool**:
+One bracketed batch covering several workloads and/or all repetitions of a cell: the meter
+reading is the pool's Δpp; the n=5 statistics live in the per-request rows, so pooling costs
+no extra tokens. Settles serialize — the bracket count, not the token count, is what wall
+time is made of. _Avoid_: batch (without k), lote agrupado (vague) · _es_: bracket agrupado
+
+**Allocated reading**:
+A legacy cost attributed to a cell by token-share allocation from a pooled bracket's
+measured Δpp. Marked as allocated and never verdicted: verdicts require a directly
+measured legacy reading (margin rule: >2 ticks or >5 % of the cheaper cost).
+_Avoid_: estimado (unmarked), medido (it is not) · _es_: lectura asignada
+
+**Verdict margin**:
+The saving from picking the winner: (loser − winner) ÷ loser, as a percentage of the
+loser's cost. It rides the verdict object alongside the winner; a verdict exists only
+when the margin clears the tie band (>2 ticks or >5 % of the cheaper cost).
+_Avoid_: beneficio (unquantified), ventaja · _es_: margen del veredicto
+
 **Extrapolation**:
 Estimating the new-plan cost from measured tokens × official model rates, without a new-plan
-key; always computed under both **cache scenarios**. _Avoid_: simulación · _es_: extrapolación
+key; computed under **S0 and the versioned S1 default**, with any other **S(x)** entering
+only as a stamped re-run's separate analysis set. _Avoid_: simulación · _es_: extrapolación
 
 **Cache scenario (S0/S1)**:
-The pair of assumed hit rates under which every new-plan prediction is reported:
-**S0 = 0 %** and **S1 = 50 %** (a versioned parameter of the cost model). The official table
-already fixes the per-model *discount*; for models without a discount (cached input = input)
-S1 is identical to S0. The legacy side uses no scenarios: it measures the caching Ollama
-actually does, baked into the observed Δ%. _Avoid_: porcentaje estándar · _es_: escenario de cache
+The persisted reference pair for every new-plan prediction: **S0 = 0 %** (the floor) and
+**S1 = the versioned default hit rate (50 %)**, declared by the methodology — a versioned
+parameter, never a fixed constant. **S(x)** is the parameterized hit rate a stamped re-run or
+the dashboard's slider may use; S(x) ≡ S0 for models without a published discount (cached
+input = input). The legacy side keeps no scenarios: under the **cache-free lane** it measures
+cache-free work, and real caching is measured only by calibration and the billing canary.
+_Avoid_: valor fijo, porcentaje estándar · _es_: escenario de cache
 
 **Cached input**:
 Input tokens served from cache (its own rate, distinct from input, in the new-plan table).
 _Avoid_: prompt cache hit (unspecified as input) · _es_: cached input
+
+**Cache-free lane**:
+The run mode where every measured request carries a run-scoped, seeded **nonce as its very
+first tokens** — Ollama Cloud's prefix cache keys from token 0 and offers no toggle — forcing
+a cache miss, so the measured pp is the workload's **raw work**. Multi-turn salts every turn.
+Exempt: prefix replay (calibration), the billing canary, and the concurrency probe (a
+locator, not a measured cell). _Avoid_: desactivar el cache (there is no switch), warm run ·
+_es_: carril sin cache
+
+**Billing canary**:
+The per-run paired check that the cache-free lane holds: 5 salted requests + 5
+identical-prefix replays; the replay must bill at ~11–14 % of the salted quota (measured
+1/7 on kimi-k3). An alarm above 0.5 aborts the run at the gate — a ratio near 1 means the
+salting broke. The passive detector cross-checks every bracket's Δpp against the token
+budget. _Avoid_: healthcheck (it bills quota) · _es_: canario de facturación
 
 ### Benchmarks
 
@@ -161,5 +204,7 @@ never extrapolated from unmeasured models. _Avoid_: crossover · _es_: umbral cr
 
 **Re-run (without re-measuring)**:
 Recomputing the entire analysis from raw data + versioned table + parameters (anchor, S, k)
-without touching quota: the study's answer to any price change.
+without touching quota: the study's answer to any price change — or any **S(x)** other than
+the default, which produces a **new, parameter-stamped analysis set** (methodology version
+included) and never edits the persisted S0/S1 reference.
 _Avoid_: re-benchmark (that re-spends quota) · _es_: re-correr

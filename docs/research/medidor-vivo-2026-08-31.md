@@ -1,11 +1,11 @@
 # Live verification of the usage meter (2026-08-31)
 
-Resolves the ticket "Verify the usage meter live" — the only run with a real account of
+Resolves the ticket "Verify the usage meter live", the only run with a real account of
 this map (map guardrail: ~10 trivial requests). Actual spend: 6 requests to
 `nemotron-3-nano:30b` (156 in + 72 out tokens, ~3.4 s of aggregate `total_duration`).
 
 Raw logs: [`logs/medidor-vivo-2026-08-31/reads.jsonl`](./logs/medidor-vivo-2026-08-31/reads.jsonl)
-(and sibling `requests.jsonl`) — no credentials. Theoretical complement:
+(and sibling `requests.jsonl`). No credentials. Theoretical complement:
 [`medidor-uso-ollama.md`](./medidor-uso-ollama.md), which this doc corrects live.
 
 ## 1. The API key (Bearer) DOES authenticate the meter
@@ -13,7 +13,7 @@ Raw logs: [`logs/medidor-vivo-2026-08-31/reads.jsonl`](./logs/medidor-vivo-2026-
 `GET https://ollama.com/api/usage` with `Authorization: Bearer <API key>` → **200**.
 Without auth → 401 (`{"error":"invalid credentials"}`); `/api/usage/session` and
 `/api/usage/weekly` → 404. The documentary research said only the session cookie was
-proven: now **corrected** — the owner's original proposal (polling the endpoint between
+proven. Now **corrected**: the owner's original proposal (polling the endpoint between
 requests) works directly, without a browser.
 
 ## 2. What exactly it exposes (observed structure)
@@ -33,14 +33,14 @@ requests) works directly, without a browser.
   = 0.1 percentage points). Do not read them as "0.235 %".
 - `limits.*.models[]`: `request_count` **integer per model** (name = catalog id, with
   tag: `nemotron-3-nano:30b`).
-- `activity.cost`: balance in $ at 5 decimals, **stayed invariant** ("0.00000")
+- `activity.cost`: balance in $ at 5 decimals, stayed invariant ("0.00000")
   throughout the experiment, quota-based usage included. Hypothesis: it only accumulates
-  with the *extra* pay-as-you-go balance — not verifiable without funds (remains in the
+  with the *extra* pay-as-you-go balance, not verifiable without funds (remains in the
   map's fog).
 
 ## 3. Measured lag and quantization
 
-**Convention**: `sess`/`week` are fractions exactly as the API returns them —
+**Convention**: `sess`/`week` are fractions exactly as the API returns them:
 `0.235` = 23.5 % of the quota.
 
 | Read | t (s) | sess | week | nemotron reqs |
@@ -59,20 +59,20 @@ requests) works directly, without a browser.
 - **The quota % lags ~60–90 s** (first session change ∈ (39 s, 69 s] after r1; weekly
   ~76–83 s) and **quantizes in 0.1 % steps**: the 6 requests moved only +0.002 (session)
   and +0.001 (weekly).
-- With these data, **attributing Δ% to an individual request is ruled out** (as the
-  research anticipated); what this ticket adds is that **the per-model counter not only
-  does not lag but is exact**: `nemotron-3-nano:30b` → 1,1,2,3,4,5,6 with 6 requests.
+- With these data, attributing Δ% to an individual request is ruled out (as the
+  research anticipated); what this ticket adds is that the per-model counter does not
+  lag and is exact: `nemotron-3-nano:30b` → 1,1,2,3,4,5,6 with 6 requests.
 
 ## 4. Derived measurement protocol (input for "Cost model" and "Measurement protocol")
 
 **Primitive = bracketed batch**, not an individual request:
 
 1. Meter read (full raw JSON saved).
-2. Batch of N requests, **one model or few**, all `request_count` values present in the
+2. Batch of N requests, one model or few, all `request_count` values present in the
    pre read.
 3. Immediate registration confirmation via Δ`request_count` (≈1 s), also useful as a
    sanity check that the whole batch was billed.
-4. Wait **≥ 90 s** and second read: quota Δ% **per batch** (not per request).
+4. Wait **≥ 90 s** and second read: quota Δ% per batch (not per request).
 5. The tokens per request (`prompt_eval_count`/`eval_count` from the API) are
    cross-checked against the batch's Δ% to build the tokens↔quota mapping; the resolution
    of that mapping is **0.001 of quota**, so batches must be large relative to the
@@ -80,7 +80,7 @@ requests) works directly, without a browser.
    indistinguishable from rounding).
 
 Corollary for the formulas: the error of any per-batch Δ% is ±0.001 (resolution) and the
-billing clock stabilizes at ~90 s — benchmark runs must sleep ~90 s between batches or
+billing clock stabilizes at ~90 s. Benchmark runs must sleep ~90 s between batches or
 accept carryover from one batch to the next.
 
 ## 5. Side discoveries
@@ -89,7 +89,7 @@ accept carryover from one batch to the next.
   `mistral-large-3:675b`…) versus the price table without tags (`nemotron-3-nano`):
   the harness needs a prefix mapping rule.
 - **Owner's real usage** (baseline context): glm-5.3-flash dominates with 2391 weekly
-  requests and 962 session ones — perfect as anchor model and as a proxy for "a user
+  requests and 962 session ones, perfect as anchor model and as a proxy for "a user
   with many small requests".
 - `activity.cost` (a $ field with 5 decimals) is the natural candidate for a direct cost
   read if it ever accumulates; today, at 0.00000, nothing can be confirmed.
@@ -100,18 +100,18 @@ Owner's read ~25 min after the experiment (42 real glm-5.3-flash requests in bet
 1004/2433 in their session/week versus 962/2391 when this ticket started):
 
 - **Natural calibration experiment**: 42 real glm-5.3-flash requests moved the session
-  quota +0.005 (0.236 → 0.241, i.e. **23.6 % → 24.1 %**) — ~0.00012 %/request on a
+  quota +0.005 (0.236 → 0.241, i.e. 23.6 % → 24.1 %), ~0.00012 %/request on a
   mid-size "flash" model, consistent
   with the 0.001 quantum per batch. Second tokens↔quota calibration point (with no
-  known tokens per request for those 42, it stands as an order-of-magnitude figure,
-  not as an exact ratio).
+  known tokens per request for those 42, it is an order-of-magnitude figure,
+  not an exact ratio).
 - **`activity.period` is a rolling 4-week window** (`type: "last_4_weeks"`,
-  `starting_at: 2026-08-10T00:00:00Z`, `ending_at` advances with each call) — data for
+  `starting_at: 2026-08-10T00:00:00Z`, `ending_at` advances with each call). Data for
   the **anchor** to dollars: the limits' "monthly quota" is not a calendar month; the
   activity period rolls.
 - **"web search" counts as a pseudo-model** in `request_count` (9 session / 51 weekly
-  for the owner) — the harness must decide whether to count it or filter it out.
-- `nemotron-3-nano:30b` stayed stable at **6** in both tracks exactly as the experiment
+  for the owner). The harness must decide whether to count it or filter it out.
+- `nemotron-3-nano:30b` stayed stable at 6 in both tracks exactly as the experiment
   left it: the counters do not decay or revert.
 
 ## 7. Questions that remain open (fog of the map)

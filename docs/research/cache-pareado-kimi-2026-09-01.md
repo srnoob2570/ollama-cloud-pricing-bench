@@ -13,11 +13,11 @@ tenía dos defectos que el owner señaló:
    idénticos) y el brazo salteado (10 con nonce) vinieron de variantes distintas del script;
    nada prueba que compartieran el mismo cuerpo de prompt.
 2. **El encuadre "11 % del precio" mezcla denominadores**: el medidor legado no cobra por
-   tokens — mide uso (GPU-time declarado, opaco). El ratio correcto es de **cuota consumida**,
+   tokens. Mide uso (GPU-time declarado, opaco). El ratio correcto es de cuota consumida,
    no de precio por token; el "precio completo" del §8 eran ticks del medidor, no dólares.
 
 Además, la investigación externa (docs.ollama.com, ollama/ollama #16714/#15758) confirmó que
-**no existe toggle de cache** — el cache es implícito, prefijo-indexado e invisible
+**no existe toggle de cache**. El cache es implícito, prefijo-indexado e invisible
 (`cached_tokens` nunca se reporta). "Desactivar el cache" operacionalmente = forzar cache-miss
 con un nonce aleatorio al inicio de cada prompt (el cache casa el prefijo izquierda→derecha
 desde el token 0).
@@ -27,7 +27,7 @@ desde el token 0).
 Mismo cuerpo (T2 `long_context`, sha `ca123ce574e4febc`, 153,071 chars), mismo presupuesto de
 nonce (~400 palabras) en los tres brazos; la única variable es si el nonce se repite. Cada fase
 es su propio bracket (quiet 5 s → pre → burst serial → settle 15 s → post → confirm 30 s), con
-guardia de contaminación (`glm-5.3-flash` counts pre/post — planos en ambas ventanas durante
+guardia de contaminación (`glm-5.3-flash` counts pre/post, planos en ambas ventanas durante
 toda la corrida: 391/10,558). 30 requests reales, todos 200, `tok_in` 39,892–39,893/request.
 
 | Brazo | Construcción | Esperado |
@@ -52,27 +52,27 @@ B1/A = 0.197, semanal B2/A = 0.125.
 1. **El brazo A replica el bracket verificado del §8**: 402,062 vs 402,150 tokens;
    +0.056/+0.008 vs +0.056/+0.009. El diseño salteado queda re-validado: uniformidad de
    `tok_in` (39,892–39,893) y precio completo uniforme por request.
-2. **El descuento de trabajo cacheado es r ≈ 0.11–0.15** (lectura central **~1/7 ≈ 0.14**):
+2. **El descuento de trabajo cacheado es r ≈ 0.11–0.15** (lectura central ~1/7 ≈ 0.14):
    un request servido desde cache consume ~7× menos cuota que el mismo request sin cache
    (banda 7–9×). El B1 implica r ≈ 0.108 por aritmética de ticks ((1+9r)/10 = 0.197, req 1
-   frío); el B2 da 1/7 exacto. El ~11 % del §8 queda **dentro de la banda** — su magnitud
+   frío); el B2 da 1/7 exacto. El ~11 % del §8 queda dentro de la banda. Su magnitud
    sobrevive, pero ahora con prefijos probadamente iguales y con el encuadre correcto.
-3. **El encuadre corregido (owner)**: el cache de Ollama Cloud reduce el **trabajo** que el
-   medidor legado refleja — no es un descuento de factura por token (el plan legado no tiene
-   precio por token). Consecuencia: cada pp compra ~7× más trabajo cacheado — mayor capacidad
+3. **El encuadre corregido (owner)**: el cache de Ollama Cloud reduce el trabajo que el
+   medidor legado refleja, no es un descuento de factura por token (el plan legado no tiene
+   precio por token). Consecuencia: cada pp compra ~7× más trabajo cacheado. Es mayor capacidad
    efectiva del plan, no "precio con descuento". El 10 % publicado de kimi-k3 ($3.00 →
-   $0.30 cached) es un **denominador distinto** (descuento de facturación del lado nuevo);
-   su cercanía al ratio medido es sugestiva, no establecida — y por modelo.
+   $0.30 cached) es un denominador distinto (descuento de facturación del lado nuevo);
+   su cercanía al ratio medido es sugestiva, no establecida, y por modelo.
 4. **Persistencia**: B2 arrancó caliente inmediatamente (~35 s tras B1) y en el test del §8
    el replay calentó *antes* del primer request del brazo cacheado (persistió desde el
    bracket T2 de horas antes). El horizonte del cache excede los minutos; la medición fina
    (5/30/90 s) es trabajo de `calibrate-cache`.
 5. **Latencia como corroboración TTFT**: los requests calientes corren visiblemente más
-   rápido (B2 ~2.3–6.0 s vs A ~5.0–6.8 s) — la segunda señal, junto al Δpp, de que el
+   rápido (B2 ~2.3–6.0 s vs A ~5.0–6.8 s), la segunda señal, junto al Δpp, de que el
    prefill se está saltando.
 6. **R (sesión:semanal) en brazos cacheados es ruidoso** (5.5/8.0, Δpp semanal sub-tick):
    la banda R ≈ 5–7 sigue anclada a requests a precio completo; los ratios de cache deben
-   montarse en **sesión** (el readout prácticamente más fino), con la semanal como
+   montarse en sesión (el readout prácticamente más fino), con la semanal como
    corroboración.
 
 ## 5. Consecuencias para las decisiones en vuelo
@@ -80,8 +80,8 @@ B1/A = 0.197, semanal B2/A = 0.125.
 - **Defecto documentado del dataset v2**: todo request cuya cola repite prefijos (reps de
   bracket, celdas k>1 idénticas, turnos de multi-turn, re-runs calientes) subestima el costo
   raw en el medidor legado. Los carriles sin cache (nonce por request, registrado en el
-  manifiesto) son **requisito de protocolo v3**, no una refinación.
-- **Corrección al registro de #36**: el hallazgo se re- redacta como "un replay de prefijo
+  manifiesto) son requisito de protocolo v3, no una refinación.
+- **Corrección al registro de #36**: el hallazgo se re-redacta como "un replay de prefijo
   exacto consume ~11–14 % de la cuota que consume el mismo request sin cache (kimi-k3,
   prefijo ~40K tokens)", nunca como "11 % del precio". La entrada de glosario *Cache scenario*
   ("the legacy side measures the caching Ollama actually does") muere bajo carriles sin

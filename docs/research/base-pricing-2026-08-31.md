@@ -1,11 +1,11 @@
-# Pricing baseline — the two systems (2026-08-31)
+# Pricing baseline, the two systems (2026-08-31)
 
 Sources from transition day: [ollama.com/pricing](https://ollama.com/pricing) (snapshot in
 [`pricing-snapshot/`](./pricing-snapshot/)) and the official post
 [ollama.com/blog/transparent-pricing](https://ollama.com/blog/transparent-pricing) dated
-2026-08-31. Anything **unverifiable** is explicitly flagged in the final section.
+2026-08-31. Anything unverifiable is explicitly flagged in the final section.
 
-## 1. New plan (token-based) — in effect for new signups
+## 1. New plan (token-based), in effect for new signups
 
 | Plan | Price | Included credits/month | Concurrency |
 |---|---|---|---|
@@ -15,16 +15,16 @@ Sources from transition day: [ollama.com/pricing](https://ollama.com/pricing) (s
 | Team | $500/month | $1,000 (shared, unlimited users) | 10 |
 | Enterprise | custom | volume pricing | custom |
 
-- Billing is **per token at each model's rates** ("Usage is measured in tokens
-  at each model's rates" — official FAQ).
-- Credits **do not accumulate** ("unused credits do not roll over"); they refresh at the
+- Billing is per token at each model's rates ("Usage is measured in tokens
+  at each model's rates", official FAQ).
+- Credits do not accumulate ("unused credits do not roll over"); they refresh at the
   monthly reset. Once exhausted, usage draws from the extra pay-as-you-go balance
   (available even on Free).
 - Pro advertises **"Fast mode (coming soon)"**: per-plan speed announced, not implemented;
   today "Speed depends on model size, architecture, and hardware optimization. […] Priority
   tiers with faster performance may be available in the future."
-- The FAQ states that the old limits of 5 h sessions and 7-day weekly windows **no longer
-  apply** to the new plans.
+- The FAQ states that the old limits of 5 h sessions and 7-day weekly windows no longer
+  apply to the new plans.
 
 ### Official per-1M-token table (input / cached input / output)
 
@@ -50,11 +50,11 @@ Sources from transition day: [ollama.com/pricing](https://ollama.com/pricing) (s
 | nemotron-3-ultra | $0.10 | $0.10 | $3.00 |
 | qwen3.5:397b | $0.60 | $0.60 | $3.60 |
 
-## 2. Legacy system — GPU-time (status of the existing subscriber as of 2026-08-31)
+## 2. Legacy system, GPU-time (status of the existing subscriber as of 2026-08-31)
 
 - Existing Pro/Max/Team subscribers "**remain on your current plan**" and may migrate
   voluntarily in billing settings; new signups already enter the new system.
-- The study owner's legacy plan: **Max on GPU-time** (the only account available — see
+- The study owner's legacy plan: **Max on GPU-time** (the only account available, see
   guardrail: do not migrate during collection).
 - **Unverifiable**: how much GPU-time the quota represents (% of the 5 h session / % of the
   7-day weekly window / per-model levels); neither the rate in $ nor the level → GPU-seconds
@@ -90,16 +90,16 @@ Official post of 2026-08-31 (`/blog/transparent-pricing`):
 Also: "no service fees and no 5-hour or weekly limits"; per-request cost visible in
 account settings. Prior pressure context (not an Ollama quote):
 
-- [Issue 17435](https://github.com/ollama/ollama/issues/17435) — "Usage quota silently
+- [Issue 17435](https://github.com/ollama/ollama/issues/17435): "Usage quota silently
   slashed ~70% with ZERO notification" (GPU-time "completely opaque" for an annual Pro user).
-- [Issue 15663](https://github.com/ollama/ollama/issues/15663) — request to expose
+- [Issue 15663](https://github.com/ollama/ollama/issues/15663): request to expose
   quota/usage via the API; "the outlier" compared to OpenAI/Anthropic.
-- [Issue 15741](https://github.com/ollama/ollama/issues/15741) — large models behind a
+- [Issue 15741](https://github.com/ollama/ollama/issues/15741): large models behind a
   403 paywall without prior notice.
 
 ## 5. Open-weights comparables served in the cloud
 
-Verified for **Kimi K2 Thinking** (1T params, open-weights, INT4) — secondary sources
+Verified for **Kimi K2 Thinking** (1T params, open-weights, INT4). Secondary sources
 (aggregators), not live pricing pages:
 
 | Provider | Input | Output |
@@ -109,8 +109,8 @@ Verified for **Kimi K2 Thinking** (1T params, open-weights, INT4) — secondary 
 | Together AI | $1.20 | $4.00 |
 | OpenRouter | $0.60 (+$0.15 cache) | $2.50 |
 
-The direct comparable model on Ollama today would be kimi-k2.6 ($0.95/$4.00); **no
-comparable public data exists for kimi-k3**. Not verified in this pass: Gemini API and
+The direct comparable model on Ollama today would be kimi-k2.6 ($0.95/$4.00); no
+comparable public data exists for kimi-k3. Not verified in this pass: Gemini API and
 DeepSeek direct.
 
 ## 6. Unverifiable (explicit)

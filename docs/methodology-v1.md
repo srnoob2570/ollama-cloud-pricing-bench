@@ -76,7 +76,7 @@ verification (already done); every real run goes through the gate (§11).
 | **Separate constraints** | 5 h session and the rolling 4-week `activity` window = saturation, not the anchor |
 | **Extrapolation** | `t_in×r_in + t_cached×r_cached + t_out×r_out` under **S0 = 0 %** (floor) and **S1 = the versioned default (50 %)**; any other **S(x)** enters only as a stamped re-run; S(x)≡S0 for the 5 models with cached=input |
 | **Useful unit** | primary = cost per **completed task** (checker passes); attempted and $/1M as secondary |
-| **Verdict margin** | (loser − winner) ÷ loser; the verdict is `{winner, margin_pct}`; a tie inside the tie band (>2 ticks or >5 % of the cheaper cost); an **allocated reading is never verdicted** |
+| **Verdict margin** | (loser − winner) ÷ winner, as a percentage of the winner's cost (can exceed 100 % when the loser costs more than twice the winner); a **sub-tick winner** (weekly reads 0.0) prices with its session-derived weekly-equivalent — under the R mapping the session dollar figure IS that estimate — falling back to the loser's cost (exactly 100 %) with no session reading; the verdict is `{winner, margin_pct}`; a tie inside the tie band (>2 ticks or >5 % of the cheaper cost); an **allocated reading is never verdicted** |
 | **Uncertainty** | new side: n=5, median, p25–p75+p95 over per-request tokens; legacy side: the meter's tick (±1 tick of phase error per reading) at the level the legacy was measured (direct bracket or pooled bracket); a real difference = clears the tie band at that level; brackets are planned with expected Δpp ≥ 3.5 ticks |
 
 Cache: the legacy side measures **cache-free work** (the cache-free lane forces misses, so

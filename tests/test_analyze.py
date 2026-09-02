@@ -21,6 +21,7 @@ from test_dry_run import run_cli  # noqa: F401  (the shared CLI-seam runner, kep
 
 from ocharness.client import PROTOCOL_VERSION
 from ocharness.concurrency import usd_per_pp
+from ocharness.analyze import SESSION_R
 from ocharness.schema import validate_batch_line, validate_request_line
 
 # The default anchor ($100/mo) bridged to USD per weekly pp (tested primitive).
@@ -512,20 +513,20 @@ def test_dashboard_v2_copy_is_english(tmp_path):
 
 
 def test_every_measured_verdict_carries_its_margin_pct(tmp_path):
-    """margin_pct = (loser - winner) / loser, as a percentage of the loser's
-    cost — the saving from picking the winner, riding the verdict object.
+    """margin_pct = (loser - winner) / winner, as a percentage of the winner's
+    cost — how much more expensive the loser is, riding the verdict object.
 
     Hand math (cell C): legacy $9.6*U vs new S0 $2.0 -> new wins by
-    (9.6U - 2.0) / (9.6U). Cell B: legacy $0.2U vs new $2.0 -> legacy wins by
-    (2.0 - 0.2U) / 2.0. gamma has no legacy reading: no data, no margin."""
+    (9.6U - 2.0) / 2.0. Cell B: legacy $0.2U vs new $2.0 -> legacy wins by
+    (2.0 - 0.2U) / 0.2U. gamma has no legacy reading: no data, no margin."""
     pricing = with_tables(tmp_path)
     craft_dataset(tmp_path)
     doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
 
     c = cell(doc, "beta", "qa_short")
-    assert c["verdict"]["s0"] == {"winner": "new", "margin_pct": (9.6 * U - 2.0) / (9.6 * U) * 100}
+    assert c["verdict"]["s0"] == {"winner": "new", "margin_pct": (9.6 * U - 2.0) / 2.0 * 100}
     b = cell(doc, "beta", "throughput")
-    assert near(b["verdict"]["s0"]["margin_pct"], (2.0 - 0.2 * U) / 2.0 * 100, 9)
+    assert near(b["verdict"]["s0"]["margin_pct"], (2.0 - 0.2 * U) / (0.2 * U) * 100, 9)
     assert b["verdict"]["s0"]["winner"] == "legacy"
     g = cell(doc, "gamma", "qa_short")
     assert g["verdict"]["s0"] == {"winner": "no data", "margin_pct": None}
@@ -545,6 +546,25 @@ def test_a_tie_verdict_carries_no_margin(tmp_path):
     doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
     t = cell(doc, "beta", "throughput")
     assert t["verdict"]["s0"] == {"winner": "tie", "margin_pct": None}
+
+
+def test_a_sub_tick_winner_prices_with_its_session_equivalent(tmp_path):
+    """A weekly reading of 0.0 is sub-tick, not free: the cost tends to zero
+    per task but accumulates, so the margin prices the winner with its
+    session-derived weekly-equivalent (under the R mapping — session $/pp =
+    weekly $/pp / R — the session dollar figure IS that estimate). Hand math:
+    legacy weekly $0.0 vs new S0 $2.0 -> legacy wins; margin =
+    2.0 / (0.2 * U / SESSION_R) * 100 — unbounded, far above 100 %."""
+    pricing = with_tables(tmp_path)
+    b = batch("throughput", "beta", "bSub")
+    b["dpp_weekly"] = 0.0
+    b["dpp_session"] = 0.2
+    requests = [req("throughput", "beta", "bSub", tok_in=2_000_000, tok_out=0)]
+    write_raw(tmp_path, requests, [b])
+    doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
+    t = cell(doc, "beta", "throughput")
+    assert t["verdict"]["s0"]["winner"] == "legacy"
+    assert near(t["verdict"]["s0"]["margin_pct"], 2.0 / (0.2 * U / SESSION_R) * 100, 9)
 
 
 def test_allocated_readings_carry_costs_marked_and_never_verdicted(tmp_path):

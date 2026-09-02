@@ -39,7 +39,8 @@ Cost model (methodology v1 §3, CONTEXT.md "critical threshold"):
 - verdict: `{winner, margin_pct}` — legacy/new when one system is cheaper by a
   real margin (>2 meter ticks OR >5 % of the cheaper cost, the methodology's
   uncertainty rule), tie inside it, "no data" whenever either side is
-  unmeasurable; margin_pct = (loser − winner) / loser. Allocated readings
+  unmeasurable; margin_pct = (loser − winner) / winner, unbounded (it exceeds
+  100 % when the loser costs more than twice the winner). Allocated readings
   (pooled brackets) carry the allocated marker and are never verdicted.
 
 The derivatives' baseline is the k=1 (serial) cell, as methodology v1 §6
@@ -134,10 +135,26 @@ def _cuantiles(values: list) -> dict | None:
     }
 
 
-def verdict_of(legacy: float | None, nuevo: float | None, tick_usd: float) -> dict:
+def verdict_of(
+    legacy: float | None,
+    nuevo: float | None,
+    tick_usd: float,
+    legacy_session: float | None = None,
+) -> dict:
     """Who wins this cell, and by how much: `{winner, margin_pct}`, where
-    margin_pct = (loser − winner) / loser — the saving from picking the winner,
-    as a percentage of the loser's cost (the methodology's verdict margin).
+    margin_pct = (loser − winner) / winner — how much more expensive the loser
+    is, as a percentage of the winner's cost (the methodology's verdict
+    margin). Unbounded above: it exceeds 100 % whenever the loser costs more
+    than twice the winner.
+
+    A sub-tick winner is not a free winner: when the winner's weekly reading
+    is 0.0 the weekly meter cannot resolve it (the cost tends to zero per task
+    but accumulates), so the margin prices the winner with its session-derived
+    weekly-equivalent — under the R mapping (session $/pp = weekly $/pp / R)
+    the session dollar figure IS that estimate — and inherits the mapping's
+    uncertainty (R verified 6.22, expected 5-7). With no session reading
+    either, the margin falls to the loser's own cost: a free winner saves the
+    whole bill, exactly 100 %.
 
     A real margin is the methodology's uncertainty rule in dollars — the gap
     must exceed 2 ticks of the meter OR 5 % of the cheaper cost — so the tie
@@ -152,8 +169,10 @@ def verdict_of(legacy: float | None, nuevo: float | None, tick_usd: float) -> di
     if abs(legacy - nuevo) <= margen:
         return {"winner": "tie", "margin_pct": None}
     if legacy < nuevo:
-        return {"winner": "legacy", "margin_pct": (nuevo - legacy) / nuevo * 100}
-    return {"winner": "new", "margin_pct": (legacy - nuevo) / legacy * 100}
+        ganador = legacy or legacy_session or nuevo
+        return {"winner": "legacy", "margin_pct": (nuevo - legacy) / ganador * 100}
+    ganador = nuevo or legacy
+    return {"winner": "new", "margin_pct": (legacy - nuevo) / ganador * 100}
 
 
 def load_calibrations(runs_dir: pathlib.Path) -> dict:
@@ -323,6 +342,14 @@ def _cell_doc(
         [r["cost_task_attempted_usd"] for r in reps if r["cost_task_attempted_usd"] is not None]
     )
     legacy_med = legacy_cuantiles["median"] if legacy_cuantiles else None
+    legacy_s_cuantiles = _cuantiles(
+        [
+            r["cost_task_attempted_usd_session"]
+            for r in reps
+            if r["cost_task_attempted_usd_session"] is not None
+        ]
+    )
+    legacy_s_med = legacy_s_cuantiles["median"] if legacy_s_cuantiles else None
     # The threshold exists only for a MEASURED cell: without a readable bracket
     # there is no comparison to draw, and no line is invented for the bars.
     umbral = None
@@ -348,14 +375,10 @@ def _cell_doc(
         ),
         # the session window rides as the secondary signal: the same per-task
         # math on the bracket's dpp_session, priced at the DERIVED session
-        # $/pp — the doc-level unanchored caveat applies to every figure here
-        "legacy_cost_task_usd_session": _cuantiles(
-            [
-                r["cost_task_attempted_usd_session"]
-                for r in reps
-                if r["cost_task_attempted_usd_session"] is not None
-            ]
-        ),
+        # $/pp — the doc-level unanchored caveat applies to every figure here.
+        # Its median also backs the verdict margin when the weekly winner
+        # reads 0.0 (sub-tick): see verdict_of.
+        "legacy_cost_task_usd_session": legacy_s_cuantiles,
         "legacy_cost_completed_usd_session": _cuantiles(
             [
                 r["cost_task_completed_usd_session"]
@@ -368,8 +391,8 @@ def _cell_doc(
         "s_effective": {"s": s_efectivo.s, "source": s_efectivo.source},
         "threshold_pp_per_1m": umbral,
         "verdict": {
-            "s0": verdict_of(legacy_med, s0, tick_usd),
-            "s1": verdict_of(legacy_med, s1, tick_usd),
+            "s0": verdict_of(legacy_med, s0, tick_usd, legacy_session=legacy_s_med),
+            "s1": verdict_of(legacy_med, s1, tick_usd, legacy_session=legacy_s_med),
         },
     }
 
@@ -441,7 +464,16 @@ def _sweep_rates(celdas: list[dict], tick_usd: float) -> dict:
             if c["legacy_cost_task_usd"] is None or c["new_cost_task_s0_usd"] is None:
                 continue
             nuevo = c["new_cost_task_s0_usd"] * factor
-            veredicto = verdict_of(c["legacy_cost_task_usd"]["median"], nuevo, tick_usd)
+            veredicto = verdict_of(
+                c["legacy_cost_task_usd"]["median"],
+                nuevo,
+                tick_usd,
+                legacy_session=(
+                    c["legacy_cost_task_usd_session"]["median"]
+                    if c.get("legacy_cost_task_usd_session")
+                    else None
+                ),
+            )
             celdas_f.append(
                 {
                     "model": c["model"],
@@ -488,7 +520,16 @@ def _sweep_cache(celdas: list[dict], tabla, tick_usd: float) -> dict:
             nuevo = new_task_cost(
                 c["tok_in_median"], c["tok_out_median"], tarifa, s=s, per=tabla.per
             )
-            veredicto = verdict_of(c["legacy_cost_task_usd"]["median"], nuevo, tick_usd)
+            veredicto = verdict_of(
+                c["legacy_cost_task_usd"]["median"],
+                nuevo,
+                tick_usd,
+                legacy_session=(
+                    c["legacy_cost_task_usd_session"]["median"]
+                    if c.get("legacy_cost_task_usd_session")
+                    else None
+                ),
+            )
             celdas_s.append(
                 {
                     "model": c["model"],
@@ -522,7 +563,16 @@ def _sweep_ancla(celdas: list[dict], tick_usd: float) -> dict:
             if c["legacy_cost_task_usd"] is None or c["new_cost_task_s0_usd"] is None:
                 continue
             legacy = c["legacy_cost_task_usd"]["median"] * factor
-            veredicto = verdict_of(legacy, c["new_cost_task_s0_usd"], tick_usd * factor)
+            veredicto = verdict_of(
+                legacy,
+                c["new_cost_task_s0_usd"],
+                tick_usd * factor,
+                legacy_session=(
+                    c["legacy_cost_task_usd_session"]["median"]
+                    if c.get("legacy_cost_task_usd_session")
+                    else None
+                ),
+            )
             celdas_f.append(
                 {
                     "model": c["model"],
@@ -871,8 +921,11 @@ def build(
             "calibration/probe workstreams stay out of the cells). The threshold "
             "pp/1M prices each cell's OWN measured token mix on the table: an "
             "unmeasured cell reports no data and never borrows a threshold. A "
-            "verdict is {winner, margin_pct}, the margin (loser - winner)/loser: "
-            "a real margin is >2 meter ticks or >5 % of the cheaper cost; the "
+            "verdict is {winner, margin_pct}, the margin (loser - winner)/winner: "
+            "a real margin is >2 meter ticks or >5 % of the cheaper cost; a "
+            "sub-tick winner (weekly reads 0.0) prices with its session-derived "
+            "weekly-equivalent, falling back to the loser's own cost (exactly "
+            "100 %) with no session reading either; the "
             "per-rep quantiles carry the full uncertainty. Both windows ship per "
             f"bracket: weekly is the primary (the anchor); the session is the "
             f"secondary signal, {SESSION_CAVEAT[0].lower() + SESSION_CAVEAT[1:]}. "
@@ -1135,8 +1188,10 @@ svg { display: block; max-width: 100%; }
     </tr></thead>
     <tbody id="tabla-cuerpo"></tbody>
   </table>
-  <p class="note" style="margin-top:8px">Every verdict shows its margin: the saving from picking the
-    winner, (loser &minus; winner) &divide; loser. A verdict exists only when the margin clears the
+  <p class="note" style="margin-top:8px">Every verdict shows its margin: how much more expensive the
+    loser is, (loser &minus; winner) &divide; winner — it can exceed 100 % when the loser costs
+    more than twice the winner. A sub-tick winner (weekly reads $0) prices with its
+    session-derived weekly-equivalent. A verdict exists only when the margin clears the
     tie band (&gt;2 meter ticks or &gt;5 % of the cheaper cost); inside it the cell is a tie. The new
     $/task, the threshold and the verdicts follow the slider.</p>
 </div>
@@ -1234,18 +1289,25 @@ function thresholdAt(cell) {
   if (!isNum(cost) || !tokens) return null;
   return cost / (tokens / 1e6) / USDPP;
 }
-function verdictOf(legacy, nuevo, tickUsd) {
+function verdictOf(legacy, nuevo, tickUsd, legacySession) {
   // the same rule as the persisted verdicts: the tie band is the MINIMUM of
-  // 2 ticks and 5 % of the cheaper cost; margin_pct = (loser - winner) / loser
+  // 2 ticks and 5 % of the cheaper cost; margin_pct = (loser - winner) / winner.
+  // A sub-tick winner (weekly reads 0.0) prices with its session-derived
+  // weekly-equivalent; with no session reading either, the loser's own cost
+  // (a free winner saves the whole bill: exactly 100 %)
   if (isNull(legacy) || isNull(nuevo)) return { winner: "no data", margin_pct: null };
   var band = Math.min(2 * tickUsd, 0.05 * Math.min(legacy, nuevo));
   if (Math.abs(legacy - nuevo) <= band) return { winner: "tie", margin_pct: null };
-  if (legacy < nuevo) return { winner: "legacy", margin_pct: (nuevo - legacy) / nuevo * 100 };
-  return { winner: "new", margin_pct: (legacy - nuevo) / legacy * 100 };
+  if (legacy < nuevo) {
+    var winnerCost = legacy || legacySession || nuevo;
+    return { winner: "legacy", margin_pct: (nuevo - legacy) / winnerCost * 100 };
+  }
+  return { winner: "new", margin_pct: (legacy - nuevo) / (nuevo || legacy) * 100 };
 }
 function verdictAt(cell) {
   var legacy = cell.legacy_cost_task_usd ? cell.legacy_cost_task_usd.median : null;
-  return verdictOf(legacy, newCostAt(cell), TICKUSD);
+  var legacySession = cell.legacy_cost_task_usd_session ? cell.legacy_cost_task_usd_session.median : null;
+  return verdictOf(legacy, newCostAt(cell), TICKUSD, legacySession);
 }
 
 function chip(v) {

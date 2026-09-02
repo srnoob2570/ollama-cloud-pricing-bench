@@ -392,8 +392,9 @@ def test_dashboard_is_selfcontained_and_offline(tmp_path):
     assert "<script src" not in bajo and "<link " not in bajo and "url(" not in bajo
     assert 'id="filter-model"' in html  # the model filter
     assert 'id="slider-s"' in html  # the cache slider (the scenario control's successor)
-    assert 'id="input-tokens"' in html  # the token-quantity input (default 1M)
-    assert "data-tokens" in html  # the quick presets that set the input
+    assert 'id="input-tokens-in"' in html  # the token scenario: input...
+    assert 'id="input-tokens-out"' in html  # ...and output, priced at their own rates
+    assert "data-in" in html  # the ratio presets that set both fields
     assert 'name="theme"' in html  # the theme radios survive inside the segmented control
     # the cells table prices nominally at N tokens: the meter-native columns
     # left the thead (they survive in tooltips and the threshold chart)

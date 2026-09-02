@@ -17,12 +17,15 @@ its own `analysis-s<x>/` set and never edits the persisted s0/s1 reference):
   the data rides inside the file): the recommendation band leads, every
   measured verdict carries its margin, and the charts are theme-aware SVG
   (system/light/dark tokens, the validated legacy-blue / new-orange palette).
-  The cells table prices each cell nominally for a user-chosen token amount
-  (default 1M, so the columns read USD per million tokens): the legacy column
-  from the measured meter read at the weekly anchor (a sub-tick weekly read
-  falls back to the session-derived equivalent, marked), the new column from
-  the measured token mix on the official table; the meter-native pp/1M and
-  the per-task prices ride in the tooltips and the threshold chart.
+  The cells table prices each cell nominally for a user-chosen token scenario
+  (default 1M in / 250k out): the new column prices the scenario exactly on the
+  official table (input / cached input / output at their own rates, following
+  the S(x) slider), the legacy column applies the cell's measured pp/1M to the
+  scenario's in+out total at the weekly anchor (a sub-tick weekly read falls
+  back to the session-derived equivalent, marked) — the legacy meter emits one
+  pp read per bracket with no in/out decomposition, so no billing model is
+  invented; the meter-native pp/1M and the per-task prices ride in the
+  tooltips and the threshold chart, and the verdict chips stay measured.
   The v1.2 cache slider is presentation-layer only: from the embedded
   per-cell tokens + rates + anchor it recomputes new-plan costs, the
   critical threshold and the verdict margins in live JS — nothing persisted

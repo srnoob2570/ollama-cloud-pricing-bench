@@ -67,7 +67,7 @@ select, input[type="number"] { font: inherit; color: var(--ink); background: var
   transition: border-color .15s ease; }
 select:hover, input[type="number"]:hover { border-color: var(--axis); }
 #filter-model { width: 180px; }
-#input-tokens { width: 110px; }
+#input-tokens-in, #input-tokens-out { width: 110px; }
 button.preset { font: inherit; font-size: 12px; color: var(--ink-2); background: var(--surface);
   border: 1px solid var(--ring); border-radius: 8px; padding: 5px 9px; cursor: pointer;
   transition: border-color .15s ease, color .15s ease, background .15s ease; }
@@ -150,13 +150,16 @@ svg { display: block; max-width: 100%; }
       <select id="filter-model"><option value="">all models</option>__OPCIONES__</select>
     </div>
     <div class="ctl">
-      <label class="ctl-label" for="input-tokens">tokens</label>
+      <label class="ctl-label" for="input-tokens-in">tokens in</label>
+      <input type="number" id="input-tokens-in" min="1" step="1000" value="1000000" class="mono">
+    </div>
+    <div class="ctl">
+      <label class="ctl-label" for="input-tokens-out">tokens out</label>
       <div class="ctl-row">
-        <input type="number" id="input-tokens" min="1" step="1000" value="1000000" class="mono">
-        <button type="button" class="preset mono" data-tokens="1000000">1M</button>
-        <button type="button" class="preset mono" data-tokens="5000000">5M</button>
-        <button type="button" class="preset mono" data-tokens="10000000">10M</button>
-        <button type="button" class="preset mono" data-tokens="100000000">100M</button>
+        <input type="number" id="input-tokens-out" min="1" step="1000" value="250000" class="mono">
+        <button type="button" class="preset mono" data-in="1000000" data-out="250000">4:1</button>
+        <button type="button" class="preset mono" data-in="625000" data-out="625000">1:1</button>
+        <button type="button" class="preset mono" data-in="250000" data-out="1000000">1:4</button>
       </div>
     </div>
     <fieldset>
@@ -175,7 +178,7 @@ svg { display: block; max-width: 100%; }
   <label for="slider-s"><b>Cache hit-rate S(x)</b> &mdash; presentation layer only:
     <input type="range" id="slider-s" min="0" max="100" value="50" step="1">
     <b id="slider-val" class="mono">50%</b></label>
-  <p class="note" id="slider-note">The slider and the token-quantity input recompute in live JS
+  <p class="note" id="slider-note">The slider and the token scenario (in/out) recompute in live JS
     the new-plan costs, the critical threshold and the verdict margins from the embedded
     per-cell tokens, rates and anchor &mdash;
     nothing persisted changes (raw immutable; derivatives regenerate only with versioned parameters).
@@ -190,21 +193,24 @@ svg { display: block; max-width: 100%; }
   <table>
     <thead><tr>
       <th>model</th><th>workload</th><th>level</th>
-      <th class="num">legacy $ / <span class="hdr-tokens mono">1M</span> tok</th>
-      <th class="num">new $ / <span class="hdr-tokens mono">1M</span> tok</th>
+      <th class="num">legacy $ / <span class="hdr-tokens mono">1M+250k</span> tok</th>
+      <th class="num">new $ / <span class="hdr-tokens mono">1M+250k</span> tok</th>
       <th class="num">pass rate</th><th>verdict</th><th>margin</th>
     </tr></thead>
     <tbody id="tabla-cuerpo"></tbody>
   </table>
   <p class="note" style="margin-top:8px">The two price columns are nominal dollars for the
-    number of tokens set in the &laquo;tokens&raquo; input (default 1M, so the columns read
-    USD per million tokens). The legacy column prices the cell's measured meter read
-    (hover for the underlying pp/1M and the per-task price) at the study's weekly anchor;
-    when the weekly window reads below the tick, the price falls back to the session-derived
-    weekly-equivalent and is marked &laquo;session&raquo;. The new column prices the cell's measured
-    token mix on the official table and follows the S(x) slider (hover for the per-task
-    price). The meter-native view lives in the threshold chart below; the per-task view
-    rides in the tooltips. Every verdict shows its margin (the chip's +X&nbsp;%): how much
+    token scenario set in the &laquo;tokens in&raquo; / &laquo;tokens out&raquo; inputs
+    (default 1M in / 250k out). The new column prices the scenario exactly on the official
+    table (input, cached input and output at their own rates) and follows the S(x) slider.
+    The legacy meter emits a single pp read per bracket with no in/out decomposition (the
+    GPU-time rate was never published), so the legacy column applies the cell's measured
+    pp/1M to the scenario's in+out total &mdash; hover for the underlying meter read and
+    the per-task prices; a sub-tick weekly read falls back to the session-derived
+    equivalent, marked &laquo;session&raquo;. The verdict chips are the measured per-task
+    comparison of each cell and do not follow the scenario inputs. The meter-native view
+    lives in the threshold chart below. Every verdict shows its margin (the chip's
+    +X&nbsp;%): how much
     more expensive the loser is, (loser &minus; winner) &divide; winner — it can exceed 100 %
     when the loser costs more than twice the winner. A verdict exists only when the margin
     clears the tie band (&gt;2 meter ticks or &gt;5 % of the cheaper cost); inside it the cell
@@ -258,8 +264,10 @@ var USDPP = BP.usd_per_pp;   // the anchor: USD per weekly pp
 var TICKUSD = BP.tick_usd;   // one meter tick, in USD
 var PER = RATES.per || 1000000;
 var SLIDER_DEFAULT = Math.round((typeof BP.s === "number" ? BP.s : 0.5) * 100);
-var TOKENS_DEFAULT = 1000000;  // the price columns read USD per 1M tokens by default
-var estado = { model: "", slider: SLIDER_DEFAULT, tokens: TOKENS_DEFAULT };
+// the token scenario: input and output are priced at their own rates; the
+// defaults make the columns read a 4:1 agent-style scenario at 1.25M tokens
+var TOKENS_IN_DEFAULT = 1000000, TOKENS_OUT_DEFAULT = 250000;
+var estado = { model: "", slider: SLIDER_DEFAULT, tin: TOKENS_IN_DEFAULT, tout: TOKENS_OUT_DEFAULT };
 
 function $(id) { return document.getElementById(id); }
 function esc(s) {
@@ -327,7 +335,7 @@ function verdictAt(cell) {
 }
 function taskTokens(cell) {
   // the rep's median token mix: the denominator that turns a per-task price
-  // into a nominal price for any token amount (linear in tokens)
+  // into a per-1M price (linear in tokens)
   if (isNull(cell.tok_in_median) || isNull(cell.tok_out_median)) return null;
   var t = cell.tok_in_median + cell.tok_out_median;
   return t > 0 ? t : null;
@@ -342,10 +350,23 @@ function legacyPerTask(cell) {
   if (isNum(session) && session > 0) return { usd: session, derived: true };
   return null;
 }
-function priceAt(cell, perTaskUsd) {
+function legacyPer1M(cell) {
+  // the cell's measured meter read, normalized to USD per 1M tokens. The
+  // legacy meter emits one pp read per bracket (no in/out decomposition —
+  // the GPU-time rate was never published), so this price belongs to the
+  // cell's measured mix; a custom scenario only scales it with its total
+  var leg = legacyPerTask(cell);
   var t = taskTokens(cell);
-  if (!isNum(perTaskUsd) || !t || !(estado.tokens > 0)) return null;
-  return perTaskUsd / t * estado.tokens;
+  if (!leg || !t) return null;
+  return leg.usd / t * 1e6;
+}
+function newCostAt2(tin, tout, model) {
+  // the official table priced exactly at the scenario's in/out split
+  var r = rateOf(model);
+  if (!r || !(tin > 0) || !(tout > 0)) return null;
+  var s = effectiveS(model);
+  if (!r.has_cache_discount) s = 0;  // no published discount: S(x) is S0, the slider cannot move it
+  return (tin * (1 - s) * r.input + tin * s * r.cached_input + tout * r.output) / PER;
 }
 function compactTokens(n) {
   // 1000000 -> "1M", 1500000 -> "1.5M", 500000 -> "500k", 750 -> "750"
@@ -424,19 +445,24 @@ function renderTable() {
     var r = rateOf(c.model);
     var measuredBadge = measuredS(c.model) !== null ? ' <span class="badge">measured S</span>' : "";
     var s0Badge = r && !r.has_cache_discount ? ' <span class="badge">S(x) &equiv; S0</span>' : "";
-    // nominal price for the input's token count; the meter read (pp/1M) and
-    // the per-task price ride in the tooltip — nothing is lost, only hidden
+    // scenario prices: the new side prices the user's in/out exactly on the
+    // official table; the legacy side applies the cell's measured pp/1M (one
+    // bracket read, no in/out decomposition) to the scenario's total. The
+    // meter read (pp/1M) and the per-task prices ride in the tooltips
+    var leg1m = legacyPer1M(c);
     var leg = legacyPerTask(c);
-    var legPrice = priceAt(c, leg ? leg.usd : null);
+    var legPrice = isNum(leg1m) ? leg1m * (estado.tin + estado.tout) / 1e6 : null;
     var legTip = !leg ? "no measured legacy bracket"
       : "legacy per task: " + money(leg.usd) + (leg.derived ? " (session-derived)" : " (weekly)") +
         (c.pp_per_1m && isNum(c.pp_per_1m.median)
           ? " · measured " + c.pp_per_1m.median + " pp/1M × $" + Number(USDPP).toFixed(6) + "/pp"
-          : "");
+          : "") +
+        " · applied to your in+out total at the cell's measured mix";
+    var newPrice = newCostAt2(estado.tin, estado.tout, c.model);
     var newPerTask = newCostAt(c);
-    var newPrice = priceAt(c, newPerTask);
-    var newTip = "new per task: " + money(newPerTask) + " at S(x)=" +
-      Math.round(effectiveS(c.model) * 100) + "%";
+    var newTip = "priced at your in/out scenario at S(x)=" +
+      Math.round(effectiveS(c.model) * 100) + "%" +
+      (isNum(newPerTask) ? " · per task (measured mix): " + money(newPerTask) : "");
     return '<tr><td class="mono">' + esc(c.model) + measuredBadge + "</td>" +
       "<td>" + esc(c.workload) + "</td>" +
       "<td>" + esc(isNull(c.level) ? "—" : c.level) + "</td>" +
@@ -597,11 +623,11 @@ function renderDp() {
 }
 
 function renderStatus() {
+  var scene = compactTokens(estado.tin) + " in + " + compactTokens(estado.tout) + " out";
   $("estado-filtro").textContent = (estado.model || "all models") +
-    " - cache slider at " + estado.slider + "% - prices at " +
-    compactTokens(estado.tokens) + " tokens";
+    " - cache slider at " + estado.slider + "% - prices at " + scene;
   Array.prototype.forEach.call(document.querySelectorAll(".hdr-tokens"), function (el) {
-    el.textContent = compactTokens(estado.tokens);
+    el.textContent = compactTokens(estado.tin) + "+" + compactTokens(estado.tout);
   });
 }
 function renderAll() {
@@ -624,18 +650,24 @@ slider.addEventListener("input", function () {
   renderAll();
 });
 $("slider-val").textContent = SLIDER_DEFAULT + "%";
-var tokensInput = $("input-tokens");
-tokensInput.value = String(TOKENS_DEFAULT);
-tokensInput.addEventListener("input", function () {
-  var n = Math.floor(Number(tokensInput.value));
-  // empty or garbage input falls back to the default instead of pricing nothing
-  estado.tokens = isFinite(n) && n >= 1 ? n : TOKENS_DEFAULT;
-  renderAll();
-});
+function bindTokens(id, clave, porDefecto) {
+  var input = $(id);
+  input.value = String(porDefecto);
+  input.addEventListener("input", function () {
+    var n = Math.floor(Number(input.value));
+    // empty or garbage input falls back to the field's default instead of pricing nothing
+    estado[clave] = isFinite(n) && n >= 1 ? n : porDefecto;
+    renderAll();
+  });
+}
+bindTokens("input-tokens-in", "tin", TOKENS_IN_DEFAULT);
+bindTokens("input-tokens-out", "tout", TOKENS_OUT_DEFAULT);
 Array.prototype.forEach.call(document.querySelectorAll("button.preset"), function (b) {
   b.addEventListener("click", function () {
-    estado.tokens = Number(b.getAttribute("data-tokens"));
-    tokensInput.value = String(estado.tokens);
+    estado.tin = Number(b.getAttribute("data-in"));
+    estado.tout = Number(b.getAttribute("data-out"));
+    $("input-tokens-in").value = String(estado.tin);
+    $("input-tokens-out").value = String(estado.tout);
     renderAll();
   });
 });

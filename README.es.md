@@ -96,7 +96,15 @@ dashboard), `predictability/` (estimaciones bloqueadas) y `releases/`.
 
 Los datasets se sincronizan a releases de GitHub, una por corrida: `bench release --run
 <run_id>` empareja raw ↔ código (el commit que lo produjo) ↔ tabla (instantánea + sha256), y
-`bench analyze --release <tag>` consume una release sin ninguna otra entrada.
+`bench analyze --release <tag>` consume una release sin ninguna otra entrada. Los assets
+llevan los nombres canónicos cortos — `dataset.tar.gz`, `metadata.json`, `notes.md` — y el
+tarball trae una **copia legible** del crudo para auditarla: `dataset/dataset.json` (un
+documento autodescriptivo), un CSV por tabla (`dataset/requests.csv`, `dataset/batches.csv`,
+`dataset/canary.csv`, `dataset/pricing.csv`) y `dataset/dataset.xlsx` (una hoja por tabla
+más un README). Todo va sellado en el mapa sha256 del metadata, como los bytes crudos. Para
+una release publicada antes de que existiera la copia legible (p. ej. la release T2),
+regenérala localmente: `bench dataset --release <tag> [--out DIR]` la descarga, la verifica
+y la aplana con cuota cero.
 
 ### Guardarraíles
 

@@ -10,7 +10,18 @@ import os
 import pathlib
 import sys
 
-from . import analyze, calibration, concurrency, cost, gate, predict, preflight, releases, workloads
+from . import (
+    analyze,
+    calibration,
+    concurrency,
+    cost,
+    dataset_export,
+    gate,
+    predict,
+    preflight,
+    releases,
+    workloads,
+)
 from .pricing import PriceTable, TableError
 from .runner import Manifest, RunnerError, run_level
 
@@ -24,6 +35,7 @@ SUBCOMMANDS = (
     "status",
     "resume",
     "release",
+    "dataset",
 )
 
 
@@ -1045,7 +1057,53 @@ def cmd_release(args: argparse.Namespace) -> int:
     )
     commit = (meta.get("code") or {}).get("git_commit")
     print(f"  code: {commit or 'unknown commit (not a git checkout)'}")
-    print(f"  assets: {paquete.tar.name}, {paquete.metadata.name}")
+    print("  assets: dataset.tar.gz, metadata.json, notes.md")
+    return 0
+
+
+def cmd_dataset(args: argparse.Namespace) -> int:
+    """`bench dataset --release <tag>`: the readable copy of a dataset release
+    (JSON/CSV/Excel). It fetches and verifies the release against its metadata's
+    sha256 map, then flattens its raw evidence — zero quota, no API, and the
+    published release is never rewritten: this regenerates derivatives."""
+    base = _base(args)
+    try:
+        repo = args.repo or releases.infer_repo(base)
+        stage, meta = releases.fetch(base, tag=args.release, repo=repo)
+        destino = (
+            pathlib.Path(args.out).resolve()
+            if args.out
+            else base / releases.RELEASES_DIR / f"export-{meta['run_id']}"
+        )
+        archivos = [(rel, stage / rel) for rel in sorted(meta["files"])]
+        encabezado = {
+            "run_id": meta["run_id"],
+            "level": meta.get("level"),
+            "models": meta.get("models"),
+            "protocol_version": meta.get("protocol_version"),
+            "table_version": meta.get("table_version"),
+        }
+        escritos = dataset_export.export_dataset(destino, archivos, header=encabezado)
+    except (releases.ReleaseError, TableError, dataset_export.ExportError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "tag": args.release,
+                    "repo": repo,
+                    "out": str(destino),
+                    "files": [str(p) for _, p in escritos],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    print(f"dataset {args.release} -> {destino}")
+    for _, ruta in escritos:
+        print(f"  {ruta}")
     return 0
 
 
@@ -1062,6 +1120,7 @@ DESPACHO = {
     # batches without re-billing and skips aborted/in_flight ones loudly.
     "resume": cmd_run,
     "release": cmd_release,
+    "dataset": cmd_dataset,
 }
 
 
@@ -1082,14 +1141,33 @@ def build_parser() -> argparse.ArgumentParser:
             parser.add_argument(
                 "--repo", default=None, help="owner/name (default: git remote origin)"
             )
+        elif nombre == "dataset":
+            # dataset never tunes a spend or an assumption: it reads a verified
+            # release and re-flattens its raw evidence. Knobs: --release, --repo,
+            # --out only.
+            parser.add_argument(
+                "--release",
+                required=True,
+                metavar="TAG",
+                help="the dataset release tag to fetch, verify and flatten (run-<run_id>)",
+            )
+            parser.add_argument(
+                "--repo", default=None, help="owner/name (default: git remote origin)"
+            )
+            parser.add_argument(
+                "--out",
+                default=None,
+                help="output directory (default: releases/export-<run_id> under --base)",
+            )
         else:
             parser.add_argument("--level", choices=["T1", "T2", "T3"], default=None)
-        if nombre != "release":  # release never touches a model
+        if nombre not in ("release", "dataset"):  # neither touches a model
             parser.add_argument("--model", default=None)
-        parser.add_argument(
-            "--pricing-dir", default="pricing", help="tables directory (relative to --base)"
-        )
-        if nombre != "release":  # the run's manifest binds its table; no override
+        if nombre != "dataset":  # a release pairs its dataset with its own table
+            parser.add_argument(
+                "--pricing-dir", default="pricing", help="tables directory (relative to --base)"
+            )
+        if nombre not in ("release", "dataset"):  # the manifest binds the table; no override
             parser.add_argument("--table-version", default=None)
         if nombre == "probe-concurrency":
             # The probe reads none of --s/--reps/--rep/--k: a silent no-op flag
@@ -1196,7 +1274,7 @@ def build_parser() -> argparse.ArgumentParser:
             parser.add_argument("--k", type=int, default=1, help="concurrency of the burst")
         # release takes none of the above: it never tunes a spend or an
         # assumption. Its knobs are --run and --repo only.
-        if nombre != "release":  # release never reads a settle (it never brackets)
+        if nombre not in ("release", "dataset"):  # neither reads a settle (neither brackets)
             parser.add_argument(
                 "--settle-s",
                 type=float,

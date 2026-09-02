@@ -5,12 +5,16 @@ after prices change:
 
 - `bench release --run <run_id>` packages the run's raw evidence (its
   requests/batches JSONL, the manifest that binds them, the workstream evidence
-  when present, and the price-table snapshot that priced them) plus a
-  `metadata.json` stamp — kind, run, level, models, table_version + its sha256,
-  protocol_version, fixture_version, the producing git commit, and a sha256 map
-  over every packaged file — into `releases/dataset-<run_id>.tar.gz` and
-  publishes it with `gh`. A release is never rewritten: publishing over an
-  existing tag refuses (raw JSONL is immutable; so is its release), and an
+  when present, and the price-table snapshot that priced them) plus a readable
+  copy of the same evidence — `dataset/dataset.json`, one CSV per table and
+  `dataset/dataset.xlsx`, flattened by `dataset_export` and stamped into the
+  sha256 map like any other packaged file — and a `metadata.json` stamp —
+  kind, run, level, models, table_version + its sha256, protocol_version,
+  fixture_version, the producing git commit, and a sha256 map over every
+  packaged file — into `releases/dataset-<run_id>.tar.gz` and publishes it
+  with `gh` under the short canonical asset names (`dataset.tar.gz`,
+  `metadata.json`, `notes.md`). A release is never rewritten: publishing over
+  an existing tag refuses (raw JSONL is immutable; so is its release), and an
   unfinished run (batches still in_flight) or an unreadable/mismatched table
   snapshot refuses before anything is published — a burnt tag cannot be fixed.
 - `bench analyze --release <tag>` fetches the release back with `gh`,
@@ -43,6 +47,7 @@ import subprocess
 import tarfile
 import time
 
+from . import dataset_export
 from .pricing import PriceTable, TableError
 
 DATASET_KIND = "ocharness-dataset"
@@ -353,6 +358,10 @@ def _notes_text(meta: dict) -> str:
         f"- produced by ocharness at {commit}{sucio}\n"
         f"- {meta['counts']['request_lines']} request lines, "
         f"{meta['counts']['batch_lines']} batch lines{congelado}\n\n"
+        "The tarball carries a readable copy of the raw evidence: "
+        "`dataset/dataset.json`, one CSV per table (`dataset/requests.csv`, "
+        "`dataset/batches.csv`, ...) and `dataset/dataset.xlsx` (a sheet per "
+        "table plus a README).\n\n"
         "Consume offline (raw JSONL is immutable; derivatives regenerate from it):\n\n"
         f"    bench analyze --release {TAG_PREFIX}{meta['run_id']} --repo <owner/name>\n"
     )
@@ -363,6 +372,24 @@ def package(base, *, run_id: str, pricing_dir) -> Package:
     + notes. Raises ReleaseError on an unusable run or a credential hit."""
     base = pathlib.Path(base)
     archivos, manifiesto, modelos = collect_run(base, run_id, pathlib.Path(pricing_dir))
+    releases_dir = base / RELEASES_DIR
+    releases_dir.mkdir(parents=True, exist_ok=True)
+    # The readable copy of the same evidence, derived BEFORE the scrub: a
+    # flattened dataset is the raw's own bytes in another shape, so it must
+    # clear the same credential guardrail and ship sealed in the sha256 map.
+    encabezado = {
+        "run_id": run_id,
+        "level": manifiesto.get("level"),
+        "models": modelos,
+        "protocol_version": manifiesto.get("protocol_version"),
+        "table_version": manifiesto.get("table_version"),
+    }
+    try:
+        archivos += dataset_export.export_dataset(
+            releases_dir / f"dataset-{run_id}", archivos, header=encabezado
+        )
+    except dataset_export.ExportError as e:
+        raise ReleaseError(f"the readable dataset refused: {e}") from None
     _scrub(archivos)
     por_archivo = dict(archivos)
     meta = {
@@ -383,7 +410,6 @@ def package(base, *, run_id: str, pricing_dir) -> Package:
         "files": {rel: _sha256(ruta) for rel, ruta in archivos},
     }
     releases_dir = base / RELEASES_DIR
-    releases_dir.mkdir(parents=True, exist_ok=True)
     ruta_meta = releases_dir / f"metadata-{run_id}.json"
     ruta_notes = releases_dir / f"notes-{run_id}.md"
     ruta_tar = releases_dir / f"dataset-{run_id}.tar.gz"
@@ -451,23 +477,39 @@ def publish(base, paquete: Package, *, repo: str) -> None:
             "never rewritten (raw JSONL is immutable); delete it first only as an "
             "explicit operator decision"
         )
-    argv = [
-        "release",
-        "create",
-        paquete.tag,
-        str(paquete.tar),
-        str(paquete.metadata),
-        "-R",
-        repo,
-        "--title",
-        f"bench dataset {paquete.run_id}",
-        "--notes-file",
-        str(paquete.notes),
-    ]
-    commit = (paquete.doc.get("code") or {}).get("git_commit")
-    if commit and _commit_is_pushed(commit, cwd=base):
-        argv += ["--target", commit]  # the tag anchors to the producing code
-    code, _out, err = _gh(argv, cwd=base)
+    argv = ["release", "create", paquete.tag]
+    # gh uploads with the file's basename, so the short canonical asset names
+    # are staged (releases/.stage-<tag>/): dataset.tar.gz, metadata.json,
+    # notes.md. The local artefacts keep their run_id suffixes — two runs must
+    # never overwrite each other's staged copies.
+    escenario = base / RELEASES_DIR / f".stage-{paquete.tag}"
+    if escenario.exists():
+        shutil.rmtree(escenario)
+    escenario.mkdir(parents=True)
+    cortos = {
+        paquete.tar: "dataset.tar.gz",
+        paquete.metadata: "metadata.json",
+        paquete.notes: "notes.md",
+    }
+    try:
+        for origen, corto in cortos.items():
+            if origen.exists():
+                shutil.copy(origen, escenario / corto)
+        argv += [str(escenario / corto) for corto in cortos.values()]
+        argv += [
+            "-R",
+            repo,
+            "--title",
+            f"bench dataset {paquete.run_id}",
+            "--notes-file",
+            str(escenario / "notes.md"),
+        ]
+        commit = (paquete.doc.get("code") or {}).get("git_commit")
+        if commit and _commit_is_pushed(commit, cwd=base):
+            argv += ["--target", commit]  # the tag anchors to the producing code
+        code, _out, err = _gh(argv, cwd=base)
+    finally:
+        shutil.rmtree(escenario, ignore_errors=True)
     if code != 0:
         raise ReleaseError(f"gh release create failed ({code}): {err.strip()}")
 
@@ -558,7 +600,8 @@ def fetch(
     code, _out, err = _gh(["release", "download", tag, "-R", repo, "--dir", str(trabajo)], cwd=base)
     if code != 0:
         raise ReleaseError(f"gh release download {tag} failed ({code}): {err.strip()}")
-    tarballs = sorted(trabajo.glob("dataset-*.tar.gz"))
+    # dataset.tar.gz (short canonical name) or dataset-<run>.tar.gz (published).
+    tarballs = sorted(trabajo.glob("dataset*.tar.gz"))
     if len(tarballs) != 1:
         raise ReleaseError(
             f"release {tag} does not carry exactly one dataset tarball ({len(tarballs)} found)"

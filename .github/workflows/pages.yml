@@ -46,7 +46,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p 'metadata-*.json' -O metadata.json
+          # metadata.json (short canonical) or metadata-<run>.json (published).
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p 'metadata*.json' -O metadata.json
           table_version="$(jq -r .table_version metadata.json)"
           uv run bench analyze --release "$TAG" --repo "$GITHUB_REPOSITORY" \
             --table-version "$table_version"

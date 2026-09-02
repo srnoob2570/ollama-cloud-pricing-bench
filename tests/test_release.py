@@ -267,11 +267,12 @@ def test_release_publishes_a_run_end_to_end(tmp_path, fake_cli, fake_gh):
     activos = sorted(
         p.name for p in gh_assets(fake_gh, tag).iterdir() if not p.name.startswith("_")
     )
-    assert activos == [
-        f"dataset-{run_id}.tar.gz",
-        f"metadata-{run_id}.json",
+    assert activos == [  # the short canonical asset names
+        "dataset.tar.gz",
+        "metadata.json",
+        "notes.md",
     ]
-    with tarfile.open(gh_assets(fake_gh, tag) / f"dataset-{run_id}.tar.gz") as tar:
+    with tarfile.open(gh_assets(fake_gh, tag) / "dataset.tar.gz") as tar:
         miembros = sorted(tar.getnames())
     assert miembros == sorted(
         [
@@ -280,26 +281,37 @@ def test_release_publishes_a_run_end_to_end(tmp_path, fake_cli, fake_gh):
             f"runs/canary-{run_id}.jsonl",  # the canary's raw evidence ships too
             "runs/manifest-T1.json",
             "pricing/2026-08-31.json",
+            # the raw evidence, flattened for reading and auditing
+            "dataset/dataset.json",
+            "dataset/dataset.xlsx",
+            "dataset/requests.csv",
+            "dataset/batches.csv",
+            "dataset/canary.csv",
+            "dataset/pricing.csv",
             "metadata.json",
         ]
     )
     # The metadata stamps the raw<->code<->table pairing...
-    meta = json.loads(
-        (gh_assets(fake_gh, tag) / f"metadata-{run_id}.json").read_text(encoding="utf-8")
-    )
+    meta = json.loads((gh_assets(fake_gh, tag) / "metadata.json").read_text(encoding="utf-8"))
     assert meta["kind"] == "ocharness-dataset"
     assert meta["run_id"] == run_id and meta["level"] == "T1"
     assert meta["table_version"] == "2026-08-31"
     assert meta["protocol_version"] == PROTOCOL_VERSION
     assert meta["counts"] == {"request_lines": 19 * 24, "batch_lines": 19 * 3}
-    # ...and hashes every packaged file (integrity is re-checked on fetch).
-    with tarfile.open(gh_assets(fake_gh, tag) / f"dataset-{run_id}.tar.gz") as tar:
+    # ...and hashes every packaged file (integrity is re-checked on fetch) —
+    # the flattened dataset included: it ships sealed like the raw bytes.
+    with tarfile.open(gh_assets(fake_gh, tag) / "dataset.tar.gz") as tar:
         for rel, sha in meta["files"].items():
             assert len(sha) == 64
             contenido = tar.extractfile(rel).read()
             assert hashlib.sha256(contenido).hexdigest() == sha, rel
+        plano = json.loads(tar.extractfile("dataset/dataset.json").read())
+    assert len(plano["tables"]["requests"]) == 19 * 24
+    assert len(plano["tables"]["batches"]) == 19 * 3
+    assert plano["tables"]["pricing"][0]["table_version"] == "2026-08-31"
     notas = (gh_assets(fake_gh, tag) / "_notes.md").read_text(encoding="utf-8")
     assert tag in notas and "analyze --release" in notas
+    assert "dataset/dataset.json" in notas and "dataset/dataset.xlsx" in notas
 
 
 def test_release_notes_freeze_a_protocol_v2_dataset(tmp_path, fake_cli, fake_gh):
@@ -344,7 +356,7 @@ def test_release_priced_table_snapshot_matches_the_run(tmp_path, fake_cli, fake_
     run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
     # no --table-version: the manifest binds the run's table; the release pairs it
     assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)[0] == 0
-    with tarfile.open(gh_assets(fake_gh, f"run-{run_id}") / f"dataset-{run_id}.tar.gz") as tar:
+    with tarfile.open(gh_assets(fake_gh, f"run-{run_id}") / "dataset.tar.gz") as tar:
         assert "pricing/2026-08-31.json" in tar.getnames()
         assert "pricing/2026-09-01.json" not in tar.getnames()
 
@@ -679,7 +691,7 @@ def test_analyze_release_refuses_a_tampered_release(tmp_path, fake_cli, fake_gh)
     activos = gh_assets(fake_gh, f"run-{run_id}")
 
     # 1) a well-formed tarball whose CONTENT no longer matches the metadata
-    tarball = activos / f"dataset-{run_id}.tar.gz"
+    tarball = activos / "dataset.tar.gz"
     with tarfile.open(tarball) as tar:
         destino = tmp_path / "retar"
         destino.mkdir()
@@ -725,16 +737,16 @@ def test_analyze_release_refuses_a_metadata_of_another_run(tmp_path, fake_cli, f
     run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
     assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)[0] == 0
     activos = gh_assets(fake_gh, f"run-{run_id}")
-    meta = json.loads((activos / f"metadata-{run_id}.json").read_text(encoding="utf-8"))
+    meta = json.loads((activos / "metadata.json").read_text(encoding="utf-8"))
     meta["run_id"] = "run-otro"
-    (activos / f"metadata-{run_id}.json").write_text(json.dumps(meta), encoding="utf-8")
+    (activos / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
     # the metadata INSIDE the tarball must lie too: rebuild it consistently
-    with tarfile.open(activos / f"dataset-{run_id}.tar.gz") as tar:
+    with tarfile.open(activos / "dataset.tar.gz") as tar:
         destino = tmp_path / "retar2"
         destino.mkdir()
         tar.extractall(destino, filter="data")
     (destino / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
-    with tarfile.open(activos / f"dataset-{run_id}.tar.gz", "w:gz") as t:
+    with tarfile.open(activos / "dataset.tar.gz", "w:gz") as t:
         for p in sorted(destino.rglob("*")):
             if p.is_file():
                 t.add(p, arcname=p.relative_to(destino).as_posix())
@@ -879,7 +891,7 @@ def test_release_carries_the_model_calibrations_and_skips_blank_sidecars(
 
     tag = f"run-{run_id}"
     assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)[0] == 0
-    with tarfile.open(gh_assets(fake_gh, tag) / f"dataset-{run_id}.tar.gz") as tar:
+    with tarfile.open(gh_assets(fake_gh, tag) / "dataset.tar.gz") as tar:
         nombres = tar.getnames()
     assert "runs/calibration-T2-cache-x.json" in nombres  # the run's model's reading
     assert "runs/calibration-other.json" not in nombres  # nobody in this run is zeta
@@ -918,7 +930,7 @@ def test_analyze_release_refuses_added_files(tmp_path, fake_cli, fake_gh):
     )
     run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
     assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)[0] == 0
-    tarball = gh_assets(fake_gh, f"run-{run_id}") / f"dataset-{run_id}.tar.gz"
+    tarball = gh_assets(fake_gh, f"run-{run_id}") / "dataset.tar.gz"
     with tarfile.open(tarball) as tar:
         destino = tmp_path / "retar"
         destino.mkdir()
@@ -1131,3 +1143,144 @@ def test_refetch_preserves_the_analysis_bundles(tmp_path, fake_cli, fake_gh):
 
     releases.fetch(tmp_path, tag=tag, repo=REPO, table_version="2026-08-31")
     assert sellada.exists() and sellada.read_bytes() == antes
+
+
+# ---------------------------------------------------------------------------
+# the readable dataset (dataset_export): `bench dataset --release`
+# ---------------------------------------------------------------------------
+
+
+def test_dataset_command_regenerates_from_a_published_release(tmp_path, fake_cli, fake_gh):
+    """`bench dataset --release <tag>` fetches + verifies the release and
+    flattens its raw evidence into JSON/CSV/Excel — zero quota, and the
+    published release is never rewritten."""
+    from test_run import prepare
+
+    prepare(tmp_path)
+    assert (
+        run_cli(
+            tmp_path,
+            "run",
+            "--level",
+            "T1",
+            "--settle-s",
+            "2",
+            "--settle-poll-s",
+            "0.01",
+            "--reps",
+            "1",
+        )[0]
+        == 0
+    )
+    run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
+    tag = f"run-{run_id}"
+    assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)[0] == 0
+
+    codigo, salida, errores = run_cli(tmp_path, "dataset", "--release", tag, "--repo", REPO)
+    assert codigo == 0, salida or errores
+    destino = tmp_path / "releases" / f"export-{run_id}"
+    escritos = sorted(p.name for p in destino.iterdir())
+    assert escritos == [
+        "batches.csv",
+        "canary.csv",
+        "dataset.json",
+        "dataset.xlsx",
+        "pricing.csv",
+        "requests.csv",
+    ]
+    plano = json.loads((destino / "dataset.json").read_text(encoding="utf-8"))
+    assert plano["kind"] == "ocharness-dataset-readable"
+    assert plano["run_id"] == run_id and plano["table_version"] == "2026-08-31"
+    assert len(plano["tables"]["requests"]) == 19 * 24
+    # generated_from pins the sources the flattening read (the sha256 map's shape)
+    assert all(len(sha) == 64 for sha in plano["generated_from"].values())
+    # --out wins over the default export-<run_id> directory
+    afuera = tmp_path / "afuera"
+    codigo, salida, errores = run_cli(
+        tmp_path, "dataset", "--release", tag, "--repo", REPO, "--out", str(afuera)
+    )
+    assert codigo == 0, salida or errores
+    assert (afuera / "dataset.xlsx").exists()
+
+
+def test_dataset_csvs_roundtrip_the_raw_lines(tmp_path, fake_cli, fake_gh):
+    """Every raw JSONL line is one CSV row, in order; nested shapes (api,
+    medidor_*) serialize as compact JSON that re-parses to the same object."""
+    from test_run import prepare
+
+    prepare(tmp_path)
+    assert (
+        run_cli(
+            tmp_path,
+            "run",
+            "--level",
+            "T1",
+            "--settle-s",
+            "2",
+            "--settle-poll-s",
+            "0.01",
+            "--reps",
+            "1",
+        )[0]
+        == 0
+    )
+    run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
+    tag = f"run-{run_id}"
+    assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)[0] == 0
+    destino = tmp_path / "releases" / f"export-{run_id}"
+    assert run_cli(tmp_path, "dataset", "--release", tag, "--repo", REPO)[0] == 0
+
+    crudas = [
+        json.loads(linea)
+        for linea in (tmp_path / "runs" / f"requests-{run_id}.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if linea.strip()
+    ]
+    import csv as _csv
+
+    with (destino / "requests.csv").open(encoding="utf-8", newline="") as f:
+        filas = list(_csv.DictReader(f))
+    assert len(filas) == len(crudas)
+    anidadas = sum(1 for fila in filas if fila["api"].startswith("{"))
+    assert anidadas == len(crudas)  # every row carries its nested api payload
+    assert json.loads(filas[0]["api"]) == crudas[0]["api"]
+    assert json.loads(filas[0]["tool_calls"]) == crudas[0]["tool_calls"]
+
+
+def test_fetch_still_accepts_a_published_legacy_release(tmp_path, fake_cli, fake_gh):
+    """The published T2 release ships `dataset-<run_id>.tar.gz`: fetch must
+    keep accepting the legacy tarball name beside the short canonical one."""
+    from test_run import prepare
+
+    prepare(tmp_path)
+    assert (
+        run_cli(
+            tmp_path,
+            "run",
+            "--level",
+            "T1",
+            "--settle-s",
+            "2",
+            "--settle-poll-s",
+            "0.01",
+            "--reps",
+            "1",
+        )[0]
+        == 0
+    )
+    run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
+    tag = f"run-{run_id}"
+    assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)[0] == 0
+    # rename the published assets to the legacy scheme (what a pre-short-name
+    # release looks like on GitHub)
+    activos = gh_assets(fake_gh, tag)
+    (activos / "dataset.tar.gz").rename(activos / f"dataset-{run_id}.tar.gz")
+    (activos / "metadata.json").rename(activos / f"metadata-{run_id}.json")
+    (activos / "notes.md").rename(activos / f"notes-{run_id}.md")
+
+    from ocharness import releases
+
+    arbol, meta = releases.fetch(tmp_path, tag=tag, repo=REPO)
+    assert meta["run_id"] == run_id
+    assert (arbol / "runs" / f"requests-{run_id}.jsonl").exists()

@@ -94,7 +94,16 @@ work happens, run manifests, `analysis/` (derivatives, dashboard), `predictabili
 
 Datasets are synced to GitHub releases, one per run: `bench release --run <run_id>` pairs
 raw ↔ code (the producing git commit) ↔ table (snapshot + sha256), and
-`bench analyze --release <tag>` consumes a release with no other input.
+`bench analyze --release <tag>` consumes a release with no other input. Assets carry the
+short canonical names — `dataset.tar.gz`, `metadata.json`, `notes.md` — and the tarball
+ships a **readable copy** of the raw evidence for auditing: `dataset/dataset.json` (one
+self-describing document), one CSV per table (`dataset/requests.csv`,
+`dataset/batches.csv`, `dataset/canary.csv`, `dataset/pricing.csv`) and
+`dataset/dataset.xlsx` (a sheet per table plus a README). All of it is stamped into the
+metadata's sha256 map, sealed like the raw bytes. For a release published before the
+readable copy existed (e.g. the T2 release), regenerate it locally:
+`bench dataset --release <tag> [--out DIR]` fetches, verifies and flattens it with zero
+quota.
 
 ### Guardrails
 

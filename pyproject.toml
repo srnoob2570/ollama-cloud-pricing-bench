@@ -3,7 +3,7 @@ name = "ocharness"
 version = "0.1.0"
 description = "Effective-cost benchmark harness for Ollama Cloud (methodology v1)"
 requires-python = ">=3.12"
-dependencies = ["httpx>=0.27"]
+dependencies = ["httpx>=0.27", "xlsxwriter>=3.1"]
 
 [project.scripts]
 bench = "ocharness.cli:main"

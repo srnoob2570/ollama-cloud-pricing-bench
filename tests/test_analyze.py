@@ -22,6 +22,7 @@ from test_dry_run import run_cli  # noqa: F401  (the shared CLI-seam runner, kep
 from ocharness.client import PROTOCOL_VERSION
 from ocharness.concurrency import usd_per_pp
 from ocharness.analyze import SESSION_R
+from ocharness import analyze as analyze_module
 from ocharness.schema import validate_batch_line, validate_request_line
 
 # The default anchor ($100/mo) bridged to USD per weekly pp (tested primitive).
@@ -391,6 +392,17 @@ def test_dashboard_is_selfcontained_and_offline(tmp_path):
     assert "<script src" not in bajo and "<link " not in bajo and "url(" not in bajo
     assert 'id="filter-model"' in html  # the model filter
     assert 'id="slider-s"' in html  # the cache slider (the scenario control's successor)
+    assert 'id="input-tokens"' in html  # the token-quantity input (default 1M)
+    assert "data-tokens" in html  # the quick presets that set the input
+    assert 'name="theme"' in html  # the theme radios survive inside the segmented control
+    # the cells table prices nominally at N tokens: the meter-native columns
+    # left the thead (they survive in tooltips and the threshold chart)
+    assert "pp/1M</th>" not in html and "/task</th>" not in html
+    assert html.count('class="hdr-tokens') == 2  # legacy + new price headers
+    # the markup/CSS/JS live in the template file, not a Python string
+    plantilla = pathlib.Path(analyze_module.__file__).parent / "dashboard_template.html"
+    assert plantilla.exists()
+    assert "__RESUMEN__" in plantilla.read_text(encoding="utf-8")
     # the data rides inside the file (no sibling fetch): it parses back
     marcador = '<script id="analysis-data" type="application/json">'
     assert marcador in html

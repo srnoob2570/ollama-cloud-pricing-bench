@@ -129,6 +129,9 @@ summary { cursor: pointer; color: var(--ink-2); font-weight: 600; font-size: 13p
   transition: color .15s ease; }
 summary:hover { color: var(--ink); }
 svg { display: block; max-width: 100%; }
+/* the charts draw at their viewBox aspect and scale to the panel: the fixed
+   pixel width left the wide panels half empty */
+#chart-threshold svg, #chart-margins svg, #chart-dp svg { width: 100%; height: auto; }
 </style>
 </head>
 <body>
@@ -236,7 +239,8 @@ svg { display: block; max-width: 100%; }
     (left)</span>
     <span><span class="sw" style="background:var(--new)"></span>new wins (right)</span>
     <span><span class="sw" style="background:var(--tie);border-radius:50%"></span>tie</span>
-    <span>the center axis is the tie band (&gt;2 ticks or &gt;5 %); margins follow the slider</span></div>
+    <span>center axis = 0 % (a tie sits on it); bars cap at 100 % &mdash; the chevron marks a
+    margin beyond; margins follow the slider</span></div>
 </div>
 
 <details>
@@ -506,8 +510,25 @@ function renderThreshold() {
   });
   top *= 1.05;
   if (!(top > 0)) top = 1;  // an all-zero scale must not divide into NaN widths
-  var W = 720, labelW = 320, right = 90, rowH = 24, H = medidas.length * rowH + 12;
-  var plotW = W - labelW - right;
+  var W = 720, labelW = 320, right = 90, rowH = 24;
+  var plotW = W - labelW - right, baseY = medidas.length * rowH + 8, H = baseY + 44;
+  // the scale finally carries an axis: a baseline, ticks at 0 / mid / data max
+  // and faint gridlines the rows cross, so the new-price tick's position reads
+  // against numbers (the same tick pattern the dp-tokens curve uses)
+  var ejes = '<line x1="' + labelW + '" y1="' + baseY + '" x2="' + (W - right) + '" y2="' +
+    baseY + '" stroke="var(--axis)" stroke-width="1"/>';
+  var grid = "";
+  var dataMax = top / 1.05;
+  [0, dataMax / 2, dataMax].forEach(function (v) {
+    var x = labelW + v / top * plotW;
+    grid += '<line x1="' + x.toFixed(2) + '" y1="4" x2="' + x.toFixed(2) + '" y2="' + baseY +
+      '" stroke="var(--grid)" stroke-width="1"/>';
+    ejes += '<text x="' + x.toFixed(2) + '" y="' + (baseY + 16) + '" text-anchor="middle" ' +
+      'font-size="10" fill="var(--muted)" font-family="ui-monospace,Menlo,monospace">' +
+      "$" + v.toFixed(2) + "</text>";
+  });
+  ejes += '<text x="' + ((labelW + W - right) / 2).toFixed(1) + '" y="' + (H - 6) +
+    '" text-anchor="middle" font-size="10" fill="var(--muted)">$ per 1M tokens</text>';
   var rows = "";
   medidas.forEach(function (m, i) {
     var y = i * rowH + 10;
@@ -516,9 +537,15 @@ function renderThreshold() {
     // read prices as nothing, so legacyPer1M already filtered it out
     var bw = Math.max(0, m.legacyUsd / top * plotW);
     var tx = m.newUsd / top * plotW;
+    // a full-width track keeps the near-zero rows visible as "measured at
+    // zero" rather than empty, and the value reads in a fixed right column:
+    // it can never land on the new-price tick, wherever that price falls
     rows += '<text x="' + (labelW - 8) + '" y="' + (y + 10) + '" text-anchor="end" font-size="11" ' +
       'fill="var(--ink-2)" font-family="ui-monospace,Menlo,monospace">' +
       esc(c.model) + " &middot; " + esc(c.workload) + (m.derived ? " (session)" : "") + "</text>" +
+      '<rect x="' + labelW + '" y="' + y + '" width="' + plotW + '" height="14" rx="3" ' +
+      'fill="var(--grid)" fill-opacity="0.55"><title>' + esc(c.model) + " (" + esc(c.workload) +
+      "): legacy " + usdLabel(m.legacyUsd) + " per 1M tokens</title></rect>" +
       '<rect x="' + labelW + '" y="' + y + '" width="' + bw.toFixed(2) + '" height="14" rx="3" ' +
       'fill="var(--legacy)"><title>' + esc(c.model) + " (" + esc(c.workload) + "): legacy " +
       usdLabel(m.legacyUsd) + " per 1M tokens" + (m.derived ? " (session-derived weekly-equivalent)" : "") +
@@ -528,13 +555,13 @@ function renderThreshold() {
       "): new " + usdLabel(m.newUsd) + " per 1M tokens at S(x)=" +
       Math.round(effectiveS(c.model) * 100) + "% (threshold " +
       Number(thresholdAt(c)).toPrecision(6) + " pp/1M)</title></rect>" +
-      '<text x="' + (labelW + bw + 6).toFixed(2) + '" y="' + (y + 10) + '" font-size="10" ' +
-      'fill="var(--muted)" font-family="ui-monospace,Menlo,monospace">' +
+      '<text x="' + (W - 8) + '" y="' + (y + 10) + '" text-anchor="end" font-size="10" ' +
+      'fill="var(--ink-2)" font-family="ui-monospace,Menlo,monospace">' +
       usdLabel(m.legacyUsd) + "</text>";
   });
-  cont.innerHTML = '<svg viewBox="0 0 ' + W + " " + H + '" width="' + W + '" height="' + H +
+  cont.innerHTML = '<svg viewBox="0 0 ' + W + " " + H +
     '" role="img" aria-label="legacy dollars per 1M tokens against the new-plan dollars per ' +
-    '1M tokens">' + rows + "</svg>";
+    '1M tokens">' + grid + rows + ejes + "</svg>";
 }
 
 function renderMargins() {
@@ -545,15 +572,43 @@ function renderMargins() {
     return;
   }
   var verdicts = filas.map(function (c) { return { c: c, v: verdictAt(c) }; });
-  var max = 12;
-  verdicts.forEach(function (x) {
-    if (x.v.margin_pct !== null && x.v.margin_pct > max) max = x.v.margin_pct;
+  // the strongest verdict leads; ties and no-data rows read at the bottom
+  verdicts.sort(function (a, b) {
+    var ra = a.v.margin_pct === null ? 1 : 0, rb = b.v.margin_pct === null ? 1 : 0;
+    return ra - rb || (b.v.margin_pct || 0) - (a.v.margin_pct || 0);
   });
-  max *= 1.1;
-  var W = 720, labelW = 252, rowH = 26, H = verdicts.length * rowH + 20;
-  var half = (W - labelW - 16) / 2, cx = labelW + half;
-  var svg = '<line x1="' + cx + '" y1="8" x2="' + cx + '" y2="' + (H - 10) +
+  // the scale caps at 100 % — the same cap the cells table's margin bar
+  // applies — so a 1000 % outlier no longer flattens every other row; a bar
+  // past the cap ends in a chevron and keeps its true value in the label and
+  // the tooltip. Each half reserves a label gutter so the "+X %" always fits
+  // outside its bar: no text can land on a row label or cross the center
+  var CAP = 100, labelRoom = 64;
+  var W = 720, labelW = 252, rowH = 26;
+  var plot = (W - labelW - 16) / 2, half = plot - labelRoom;
+  var cx = labelW + plot, baseY = verdicts.length * rowH + 6, H = baseY + 42;
+  var svg = '<line x1="' + cx + '" y1="6" x2="' + cx + '" y2="' + baseY +
+    '" stroke="var(--axis)" stroke-width="1"/>' +
+    '<line x1="' + labelW + '" y1="' + baseY + '" x2="' + (W - 16) + '" y2="' + baseY +
     '" stroke="var(--axis)" stroke-width="1"/>';
+  // % ticks and faint gridlines on both sides: the 100 % cap reads as a cap
+  [50, CAP].forEach(function (v) {
+    [cx - v / CAP * half, cx + v / CAP * half].forEach(function (x) {
+      svg += '<line x1="' + x.toFixed(2) + '" y1="6" x2="' + x.toFixed(2) + '" y2="' + baseY +
+        '" stroke="var(--grid)" stroke-width="1"/>';
+    });
+  });
+  [0, 50, CAP].forEach(function (v) {
+    [cx - v / CAP * half, cx + v / CAP * half].forEach(function (x, side) {
+      if (v === 0 && side === 0) return;  // the center 0 gets a single label
+      svg += '<text x="' + x.toFixed(2) + '" y="' + (baseY + 16) + '" text-anchor="middle" ' +
+        'font-size="10" fill="var(--muted)" font-family="ui-monospace,Menlo,monospace">' +
+        v + (v === CAP ? " %" : "") + "</text>";
+    });
+  });
+  svg += '<text x="' + (cx - plot / 2).toFixed(1) + '" y="' + (H - 6) +
+      '" text-anchor="middle" font-size="10" fill="var(--muted)">&larr; legacy cheaper</text>' +
+    '<text x="' + (cx + plot / 2).toFixed(1) + '" y="' + (H - 6) +
+      '" text-anchor="middle" font-size="10" fill="var(--muted)">new cheaper &rarr;</text>';
   verdicts.forEach(function (x, i) {
     var y = i * rowH + 14;
     svg += '<text x="' + (labelW - 8) + '" y="' + (y + 4) + '" text-anchor="end" font-size="11" ' +
@@ -569,17 +624,31 @@ function renderMargins() {
         'the band (2 meter ticks or 5 % of the cheaper cost)</title></circle>';
       return;
     }
-    var len = x.v.margin_pct / max * half;
+    var pct = x.v.margin_pct;
+    var len = Math.min(pct, CAP) / CAP * half;
+    var over = pct > CAP;
     var isLegacy = x.v.winner === "legacy";
-    svg += '<rect x="' + (isLegacy ? cx - len : cx).toFixed(2) + '" y="' + (y - 7) +
+    var tip = esc(x.c.model) + " (" + esc(x.c.workload) + "): " + x.v.winner + " by " +
+      Number(pct).toFixed(2) + "%" + (over ? " (bar capped at 100 %)" : "");
+    var barX = (isLegacy ? cx - len : cx).toFixed(2);
+    svg += '<rect x="' + barX + '" y="' + (y - 7) +
       '" width="' + len.toFixed(2) + '" height="14" rx="3" fill="var(--' + x.v.winner +
-      ')"><title>' + esc(x.c.model) + " (" + esc(x.c.workload) + "): " + x.v.winner +
-      " by " + Number(x.v.margin_pct).toFixed(2) + "%</title></rect>" +
-      '<text x="' + (isLegacy ? cx - len - 6 : cx + len + 6).toFixed(2) + '" y="' + (y + 4) +
+      ')"><title>' + tip + "</title></rect>";
+    if (over) {
+      // the chevron at the capped end: the real margin goes beyond the scale
+      var tipX = isLegacy ? cx - len : cx + len;
+      var dir = isLegacy ? -1 : 1;
+      svg += '<path d="M ' + tipX.toFixed(2) + " " + (y - 10) + " L " + (tipX + dir * 7).toFixed(2) +
+        " " + y + " L " + tipX.toFixed(2) + " " + (y + 10) + " Z" + '" fill="var(--' + x.v.winner +
+        ')"><title>' + tip + "</title></path>";
+    }
+    // past the chevron (7 px) when the bar capped, clear of it otherwise
+    svg += '<text x="' + (isLegacy ? cx - len - (over ? 13 : 6) : cx + len + (over ? 13 : 6)).toFixed(2) +
+      '" y="' + (y + 4) +
       '" text-anchor="' + (isLegacy ? "end" : "start") + '" font-size="10" fill="var(--ink-2)" ' +
-      'font-family="ui-monospace,Menlo,monospace">' + Number(x.v.margin_pct).toFixed(1) + "%</text>";
+      'font-family="ui-monospace,Menlo,monospace">' + Number(pct).toFixed(1) + "%</text>";
   });
-  cont.innerHTML = '<svg viewBox="0 0 ' + W + " " + H + '" width="' + W + '" height="' + H +
+  cont.innerHTML = '<svg viewBox="0 0 ' + W + " " + H +
     '" role="img" aria-label="verdict margin by cell: legacy left, new right, tie dot">' +
     svg + "</svg>";
 }
@@ -633,7 +702,7 @@ function renderDp() {
       esc(isNull(p.workload) ? "pooled" : p.workload) + ": " + p.dpp_weekly + " weekly pp / " +
       p.tokens_total + " tokens</title></circle>";
   }).join("");
-  cont.innerHTML = '<svg viewBox="0 0 ' + W + " " + H + '" width="' + W + '" height="' + H +
+  cont.innerHTML = '<svg viewBox="0 0 ' + W + " " + H +
     '" role="img" aria-label="legacy weekly quota delta versus billed tokens">' + ejes + ticks +
     dots +
     "</svg>" +

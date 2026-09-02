@@ -426,7 +426,7 @@ async def _run_async(cfg: dict) -> dict:
             ruta_batches=batches_dir / f"batches-{run_id}.jsonl",
             ruta_canary=runs_dir / f"canary-{run_id}.jsonl",
         )
-        await _ensure_canary(client, ctx=contexto_canary, cfg=cfg, level=ANCHOR_LEVEL, model=model)
+        await _ensure_canary(client, ctx=contexto_canary, cfg=cfg, level=ANCHOR_LEVEL)
 
         # ---- phase 1: the probe (once per run: the cut-off is a per-key property) ----
         probe_doc = manifiesto.doc.get("probe") or {}

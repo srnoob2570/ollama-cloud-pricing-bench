@@ -466,10 +466,10 @@ def test_second_model_reuses_the_probe_without_a_flush(tmp_path, fake_cli):
     )
     code, out, err = probe_cli(tmp_path, "--model", "kimi-k3")
     assert code == 0, out or err
-    # 3 cells x 4 bracket reads (pre + count + 2 polls), NO flush read; the
-    # second model's billing canary re-runs (7 reads, 10 chats): the lane is
-    # never inherited across models - MODEL's proof says nothing about kimi-k3's.
-    assert len(reads(fake_cli)) == antes + 12 + 7
+    # 3 cells x 4 bracket reads (pre + count + 2 polls), NO flush read and NO
+    # canary re-run: the canary bills once per run on its fixed reference
+    # model (lane.CANARY_MODEL), so the second model's probe reuses it.
+    assert len(reads(fake_cli)) == antes + 12
     assert "reusing cut-off" in (out + err)  # the probe was reused, loudly
     doc = summary(tmp_path)
     assert doc["models"] == sorted([MODEL, "kimi-k3"])  # the run's doc, not one model's
@@ -558,7 +558,9 @@ def test_the_k_cells_run_under_a_proven_lane(tmp_path, fake_cli):
         if l.strip()
     ]
     assert len(canarios) == 1 and canarios[0]["alarm"] is False
-    assert canarios[0]["model"] == MODEL
+    from ocharness import lane
+
+    assert canarios[0]["model"] == lane.CANARY_MODEL  # the fixed reference model
     # The cells' requests are salted; the probe's volleys are exempt.
     lineas = read_jsonl(tmp_path, "runs", "requests-*.jsonl")
     assert all(r["nonce_sha256"] for r in lineas)  # measured cells: salted

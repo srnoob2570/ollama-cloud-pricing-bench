@@ -39,6 +39,15 @@ NONCE_SHARE = 0.015
 NONCE_WORDS_MIN = 4
 NONCE_WORDS_MAX = 400
 
+# The billing canary bills on a FIXED reference model, never on the run's
+# measured model: the meter reports quota in 0.001 ticks, so a cheap model's
+# replay volley can fall below one tick and read ratio 0.0 — indistinguishable
+# from a genuine discount (the T1 run of 2026-09-02 on deepseek-v4-flash
+# recorded exactly that). kimi-k3 is also the model the paired probe measured
+# the 11–14 % band on (``live-probes/``, commit ``1f3c564``), so the ratio is
+# only interpretable as evidence there.
+CANARY_MODEL = "kimi-k3"
+
 # The dry-run/predict estimates' tokenization allowance per nonce word: the
 # generator emits common English words, which tokenize a little above one token
 # each. The runner's overhead is the word count itself; this factor only prices

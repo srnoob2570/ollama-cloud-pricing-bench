@@ -387,7 +387,10 @@ def test_requests_use_the_matched_catalog_id(tmp_path, fake_cli):
     code, out, err = run_t1(tmp_path, "--model", "nemotron-3-nano", "--reps", "1")
     assert code == 0, out or err
     chats = [c for c in fake_cli.calls if c["path"] == "/api/chat"]
-    assert {c["body"]["model"] for c in chats} == {"nemotron-3-nano:30b"}
+    # The canary's 10 opening chats bill its fixed reference model; every
+    # measured chat carries the catalog's tagged id.
+    assert {c["body"]["model"] for c in chats[:10]} == {"kimi-k3"}
+    assert {c["body"]["model"] for c in chats[10:]} == {"nemotron-3-nano:30b"}
     requests = read_jsonl(tmp_path, "runs", "requests-*.jsonl")
     assert {r["model"] for r in requests} == {"nemotron-3-nano"}  # the study's unit
     batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")
@@ -661,6 +664,29 @@ def test_canary_runs_once_per_run_and_is_reused_on_resume(tmp_path, fake_cli):
     assert "already ran for this run" in err  # reused, not repeated
     nuevos = [c for c in fake_cli.calls[antes:] if c["path"] == "/api/chat"]
     assert nuevos == []  # zero new chats: everything was done, the canary included
+
+
+def test_canary_bills_on_the_fixed_reference_model_not_the_run_model(tmp_path, fake_cli):
+    """The canary is pinned to kimi-k3 regardless of the measured model: a cheap
+    model's replay volley can fall below the meter's 0.001-tick resolution and
+    read a false ratio of 0.0 (deepseek-v4-flash, 2026-09-02), and only on
+    kimi-k3 does the 11-14% band carry evidence."""
+    from ocharness import lane
+
+    prepare(tmp_path)
+    code, _out, err = run_t1(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")
+    assert code == 0, err
+    lineas = read_canary(tmp_path)
+    assert lineas[0]["model"] == "kimi-k3" == lane.CANARY_MODEL
+    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    assert manifiesto["canary"]["model"] == "kimi-k3"
+    # On the wire: the canary's 10 opening chats bill kimi-k3, the measured
+    # chats bill the run's model.
+    chats = [c for c in fake_cli.calls if c["path"] == "/api/chat"]
+    canary_chats = chats[:10]
+    assert {c["body"]["model"] for c in canary_chats} == {"kimi-k3"}
+    measured = chats[10:]
+    assert measured and {c["body"]["model"] for c in measured} == {"glm-5.3-flash"}
 
 
 def test_registration_settle_closes_capped_when_the_meter_never_stabilizes(tmp_path, fake_cli):

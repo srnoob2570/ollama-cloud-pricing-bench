@@ -109,8 +109,11 @@ _es_: carril sin cache
 
 **Billing canary**:
 The per-run paired check that the cache-free lane holds: 5 salted requests + 5
-identical-prefix replays; the replay must bill at ~11–14 % of the salted quota (measured
-1/7 on kimi-k3). An alarm above 0.5 aborts the run at the gate — a ratio near 1 means the
+identical-prefix replays, billed on a **fixed reference model (kimi-k3)** — never on the
+run's measured model, whose replay can fall below the meter's 0.001-tick resolution and
+read a false ratio of 0.0 (deepseek-v4-flash, 2026-09-02); the replay must bill at
+~11–14 % of the salted quota (measured 1/7 on kimi-k3, the only model the ratio reads as
+evidence). An alarm above 0.5 aborts the run at the gate — a ratio near 1 means the
 salting broke. The passive detector cross-checks every bracket's Δpp against the token
 budget. _Avoid_: healthcheck (it bills quota) · _es_: canario de facturación
 

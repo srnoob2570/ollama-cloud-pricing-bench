@@ -119,10 +119,13 @@ def canary_estimate() -> dict:
     requests = 5 + 5
     return {
         "requests": requests,
+        "model": lane.CANARY_MODEL,
         "tokens_estimate": requests * (carga.t_in + nonce_por_request + carga.t_out),
         "note": (
-            "once per run, before the first bracket: 5 salted + 5 identical-prefix "
-            "replays of the T2 long_context body; the replay must bill at the cache "
-            "discount, a ratio above 0.5 aborts the run"
+            "once per run, before the first bracket, on kimi-k3 (the paired probe's "
+            "reference model - a cheaper measured model's replay can fall below the "
+            "meter's 0.001-tick resolution): 5 salted + 5 identical-prefix replays of "
+            "the T2 long_context body; the replay must bill at the cache discount, a "
+            "ratio above 0.5 aborts the run"
         ),
     }

@@ -106,8 +106,12 @@ rate when conclusive.
   Every request persists `prompt_sha256` + `nonce_sha256`; dry-run/predict include the nonce
   tokens.
 - **Billing canary (v1.2)**: once per run, before the first bracket: 5 salted + 5
-  identical-prefix replays (T2-size body); the replay must bill at ~11–14 % of the salted
-  quota (measured 1/7 on kimi-k3); **alarm: ratio > 0.5 → abort at the gate**. Passive
+  identical-prefix replays (T2-size body), **billed on a fixed reference model (kimi-k3)** —
+  never on the run's measured model, whose replay can fall below the meter's 0.001-tick
+  resolution and read a false ratio of 0.0 (the 2026-09-02 T1 run on deepseek-v4-flash did
+  exactly that); the replay must bill at ~11–14 % of the salted quota (measured 1/7 on
+  kimi-k3, the only model the ratio reads as evidence); **alarm: ratio > 0.5 → abort at the
+  gate**. Passive
   detector: every bracket's measured Δpp is cross-checked against the §5 token budget. A
   collapse below prediction is the signature of broken salting (threshold refined with v3
   data).

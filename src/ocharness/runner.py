@@ -651,6 +651,9 @@ def _judge_units(
 # ---------------------------------------------------------------------------
 
 CANARY_WORKLOAD = "billing-canary"
+# The canary's reference model lives in lane (the lane module owns the
+# cache-free rules; the comment there carries the why).
+CANARY_MODEL = lane.CANARY_MODEL
 CANARY_SALTED = 5
 CANARY_REPLAYS = 5
 CANARY_ALARM_RATIO = 0.5  # the replay billing near 1 means the salting broke
@@ -733,31 +736,33 @@ def _exigir_volley_aceptado(volley: dict, fase: str) -> None:
         )
 
 
-async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str, model: str) -> dict:
-    """The billing canary, once per (run, model), before the first bracket.
+async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str) -> dict:
+    """The billing canary, once per run, before the first bracket — always on
+    CANARY_MODEL, never on the run's measured model.
 
     5 salted requests (fresh nonces — full price, cache misses by construction)
     + 5 identical-prefix replays (salted[0]'s nonce verbatim, the prefix a
     salted request just established). A caching endpoint bills the replay
     volley at the cache discount (~11–14 % of the salted quota on kimi-k3, the
-    paired probe's measured band); a ratio above CANARY_ALARM_RATIO means the
-    replays billed ~full price — per-request salting leaked into them, or the
-    endpoint stopped caching — and the run aborts at the gate: no bracket runs
-    under an unproven lane. The volleys must be fully accepted (a 429 or an
-    errored chat would reshape the ratio in either direction) and both settles
-    must close stable: capped evidence is recorded as inconclusive, never as a
-    verdict. The result lives in the manifest (a resume reuses it — for the
-    model it was proven on: a resume under another model re-runs the canary,
-    the lane is never inherited across models; an alarmed or failed canary
-    keeps refusing until the operator deletes the manifest — an explicit
-    decision, never a silent retry)."""
+    paired probe's measured band — the only model the ratio reads as evidence,
+    which is why the canary is pinned to it); a ratio above
+    CANARY_ALARM_RATIO means the replays billed ~full price — per-request
+    salting leaked into them, or the endpoint stopped caching — and the run
+    aborts at the gate: no bracket runs under an unproven lane. The volleys
+    must be fully accepted (a 429 or an errored chat would reshape the ratio
+    in either direction) and both settles must close stable: capped evidence
+    is recorded as inconclusive, never as a verdict. The result lives in the
+    manifest (a resume reuses it — an alarmed or failed canary keeps refusing
+    until the operator deletes the manifest — an explicit decision, never a
+    silent retry). A canary recorded on another model (a pre-pinning manifest)
+    is stale evidence: it re-runs."""
     manifiesto = ctx.manifiesto
     emit = cfg["emit"]
     previo = manifiesto.doc.get("canary")
     if (
         isinstance(previo, dict)
         and previo.get("status") in ("ok", "inconclusive")
-        and previo.get("model") == model
+        and previo.get("model") == CANARY_MODEL
     ):
         if emit:
             emit(
@@ -777,7 +782,7 @@ async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str, mod
             f"run_id; delete {manifiesto.ruta.name} to start a clean run"
         )
 
-    modelo_api = cfg.get("model_map", {}).get(model, model)
+    modelo_api = cfg.get("model_map", {}).get(CANARY_MODEL, CANARY_MODEL)
     specs_cuerpo = fixtures.build("T2", "long_context", 1)
     cuerpo = specs_cuerpo[0].prompt
     palabras = lane.nonce_words(lane.expected_tin("T2", "long_context"))
@@ -788,7 +793,7 @@ async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str, mod
     if emit:
         emit(
             f"canary: {CANARY_SALTED} salted + {CANARY_REPLAYS} identical-prefix replays "
-            f"({model}, T2-size body) - proving the cache-free lane holds"
+            f"({CANARY_MODEL}, T2-size body) - proving the cache-free lane holds"
         )
     # Crash attribution: the volleys bill real quota. A failure between or
     # inside them persists the partial evidence (the billed chats land in the
@@ -802,7 +807,7 @@ async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str, mod
             client,
             run_id=manifiesto.run_id,
             modelo_api=modelo_api,
-            model=model,
+            model=CANARY_MODEL,
             prompts=prompts_salados,
             cfg=cfg,
             fase="salted",
@@ -816,7 +821,7 @@ async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str, mod
             client,
             run_id=manifiesto.run_id,
             modelo_api=modelo_api,
-            model=model,
+            model=CANARY_MODEL,
             prompts=[prompt_replay] * CANARY_REPLAYS,
             cfg=cfg,
             fase="replay",
@@ -882,7 +887,7 @@ async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str, mod
         "canary_id": f"{manifiesto.run_id}-canary",
         "run_id": manifiesto.run_id,
         "level": level,
-        "model": model,
+        "model": CANARY_MODEL,
         "workload": CANARY_WORKLOAD,
         "body_fixture_hash": fixtures.fixture_hash(specs_cuerpo),
         "body_sha256": lane.prompt_sha256(cuerpo),
@@ -927,7 +932,7 @@ async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str, mod
         "ratio": ratio,
         "ratio_basis": base,
         "alarm": alarma,
-        "model": model,
+        "model": CANARY_MODEL,
         "at": linea["at"],
         "dpp": dpp,  # the canary's own quota spend (its volleys are bracketed too)
         "settle_exits": {"salted": salado["settle_exit"], "replay": repeticion["settle_exit"]},
@@ -952,10 +957,10 @@ async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str, mod
         raise RunnerError(
             f"billing canary: replay ratio {_fmt_ratio(ratio)} > {CANARY_ALARM_RATIO} - "
             "the cache-free lane's salting is broken (the replays billed near full "
-            "price); the run aborts at the gate with no bracket measured. If this "
-            "model's price table declares no cached-input discount, a full-price "
-            "replay may be the endpoint's honest behavior - verify before deleting "
-            "the manifest"
+            "price); the run aborts at the gate with no bracket measured. The canary "
+            "runs on kimi-k3, the model whose discount the paired probe measured - a "
+            "full-price replay there is an alarm, not honest pricing - verify before "
+            "deleting the manifest"
         )
     return manifiesto.doc["canary"]
 
@@ -1420,7 +1425,7 @@ async def _run_async(cfg: dict) -> dict:
         if cfg.get("lane") and specs:
             # The billing canary opens the run: the lane must be proven before
             # the first bracket bills anything under it.
-            await _ensure_canary(client, ctx=contexto, cfg=cfg, level=level, model=cfg["models"][0])
+            await _ensure_canary(client, ctx=contexto, cfg=cfg, level=level)
         for spec in specs:
             estado = manifiesto.status(spec.batch_id)
             if estado in ("done", "in_flight", "aborted"):

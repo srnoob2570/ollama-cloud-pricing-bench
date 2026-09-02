@@ -792,13 +792,37 @@ def test_analyze_without_raw_data_is_a_clean_error(tmp_path):
 
 
 def test_level_and_model_filters_narrow_the_cells(tmp_path):
+    """--model/--level narrow the doc's cells; the narrowed doc is a stamped
+    re-run (a filtered default-S run would shrink the persisted reference and
+    is refused - see test_reference_bundle_is_never_shrunk)."""
     pricing = with_tables(tmp_path)
     craft_dataset(tmp_path)
-    doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--model", "alpha")
+    doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--s", "0.35", "--model", "alpha")
     assert {c["model"] for c in doc["cells"]} == {"alpha"}
-    doc2 = analyze_doc(tmp_path, "--pricing-dir", pricing, "--level", "T2")
+    doc2 = analyze_doc(tmp_path, "--pricing-dir", pricing, "--s", "0.35", "--level", "T2")
     assert doc2["cells"] == []
     assert doc2["who_wins"] == []
+
+
+def test_reference_bundle_is_never_shrunk(tmp_path):
+    """A filtered default-S run refuses instead of overwriting the persisted
+    analysis/ reference with fewer cells (methodology v1.2, #46); the full
+    re-derivation (a new table version) still rewrites the reference in place."""
+    pricing = with_tables(tmp_path)
+    craft_dataset(tmp_path)
+    analyze_doc(tmp_path, "--pricing-dir", pricing)  # the full reference, written to analysis/
+    ruta = tmp_path / "analysis" / "analysis.json"
+    referencia = ruta.read_text(encoding="utf-8")
+    codigo, _sal, err = analyze_cli(tmp_path, "--pricing-dir", pricing, "--model", "alpha")
+    assert codigo == 2, err
+    assert "never shrunk" in err
+    assert ruta.read_text(encoding="utf-8") == referencia  # untouched
+    # the documented re-derivation still rewrites the reference in place
+    doc2 = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-09-01")
+    assert doc2["base_params"]["table_version"] == "2026-09-01"
+    assert json.loads(ruta.read_text(encoding="utf-8"))["base_params"]["table_version"] == (
+        "2026-09-01"
+    )
 
 
 def test_analyze_ignores_torn_and_foreign_lines(tmp_path):
@@ -948,3 +972,78 @@ def test_allocation_needs_the_requests_tokens_and_reports_without_them(tmp_path)
     assert len(doc["pooled"]) == 1
     assert doc["pooled"][0]["allocations"] is None
     assert any(c["workload"] == "qa_short" and c["model"] == "beta" for c in doc["cells"])
+
+
+# ---------------------------------------------------------------------------
+# stamped re-runs: S != the versioned default never edits the persisted pair
+# ---------------------------------------------------------------------------
+
+
+def test_custom_s_births_a_stamped_set_and_never_touches_the_reference(tmp_path, fake_cli):
+    """`analyze --s 0.35` is a stamped re-run (methodology v1.2, #46): a NEW
+    derivatives set under its parameter-stamped folder, its parameters in the
+    doc's header (methodology version included), the persisted s0/s1 set and
+    the raw untouched."""
+    pricing = with_tables(tmp_path)
+    craft_dataset(tmp_path)
+
+    # the reference set first: the persisted S0/S1 pair under analysis/
+    referencia = analyze_doc(tmp_path, "--pricing-dir", pricing)
+    assert referencia["base_params"]["methodology_version"] == "v1.2"
+    assert referencia["base_params"]["s"] == 0.5
+    assert (tmp_path / "analysis" / "analysis.json").exists()
+    antes = (tmp_path / "analysis" / "analysis.json").read_bytes()
+
+    sello = analyze_doc(tmp_path, "--pricing-dir", pricing, "--s", "0.35")
+    assert sello["base_params"]["s"] == 0.35
+    assert sello["base_params"]["methodology_version"] == "v1.2"
+    carpeta = tmp_path / "analysis-s0.35"
+    assert (carpeta / "analysis.json").exists()
+    assert (carpeta / "dashboard.html").exists()
+    # the stamped set recomputes the same cells: S0 columns identical, the
+    # S1 sensitivity moved to the custom hit rate
+    assert [c["new_cost_task_s0_usd"] for c in sello["cells"]] == [
+        c["new_cost_task_s0_usd"] for c in referencia["cells"]
+    ]
+    assert [c["new_cost_task_s1_usd"] for c in sello["cells"]] != [
+        c["new_cost_task_s1_usd"] for c in referencia["cells"]
+    ]
+    # the persisted s0/s1 set is never edited by a stamped re-run
+    assert (tmp_path / "analysis" / "analysis.json").read_bytes() == antes
+    assert not (tmp_path / "analysis-s0.35" / "analysis.json").samefile(
+        tmp_path / "analysis" / "analysis.json"
+    )
+    assert fake_cli.calls == []  # a re-run never touches the API
+
+
+def test_stamp_folder_names_follow_the_s_value(tmp_path, fake_cli):
+    """The stamp is the parameter itself: 0 -> analysis-s0, 0.9 -> analysis-s0.9;
+    an explicitly-passed default keeps the persisted analysis/ folder."""
+    pricing = with_tables(tmp_path)
+    craft_dataset(tmp_path)
+    for s, carpeta in (("0", "analysis-s0"), ("0.9", "analysis-s0.9"), ("0.5", "analysis")):
+        codigo, salida, errores = analyze_cli(tmp_path, "--pricing-dir", pricing, "--s", s)
+        assert codigo == 0, salida or errores
+        assert (tmp_path / carpeta / "analysis.json").exists(), carpeta
+    assert not (tmp_path / "analysis-s0.5").exists()  # the default is not a stamp
+
+
+def test_zero_movement_and_aborted_brackets_never_enter_a_cell(tmp_path):
+    """A bracket whose BOTH windows read exactly the pre-burst value closed over
+    stale reads (the documented 60-90 s lag outlasting the settle): the
+    'stable' exit is the lag masquerading as stability, so its dpp 0 is a
+    failed registration, never a measurement — and an aborted bracket's burst
+    broke its own contract (a dropped request inflates pp/1M). Neither enters
+    a cell's median; the raw keeps both for the operator, and the rep rows
+    carry settle_exit so a consumer can audit the exclusion."""
+    pricing = with_tables(tmp_path)
+    craft_dataset(tmp_path)
+    cero = batch("qa_short", "alpha", "bCero", rep=3, dpp_weekly=0.0)
+    cero["dpp_session"] = 0.0  # BOTH windows at the pre-burst plateau
+    abortada = batch("qa_short", "alpha", "bAbortada", rep=4, dpp_weekly=0.5)
+    abortada["notes"] = "aborted: probe 429 mid-burst"  # non-zero dpp: only the abort excludes it
+    write_raw(tmp_path, [], [cero, abortada])
+    doc = analyze_doc(tmp_path, "--pricing-dir", pricing)
+    celda = cell(doc, "alpha", "qa_short")
+    assert [r["rep"] for r in celda["reps"]] == [1, 2]  # the two extra brackets stay out
+    assert all(r["settle_exit"] == "stable" for r in celda["reps"])  # the marker rides the row

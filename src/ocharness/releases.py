@@ -596,9 +596,23 @@ def fetch(
             f"({', '.join(meta.get('models', [])) or 'none recorded'})"
         )
     destino = releases_dir / tag
+    preservados: list[tuple[str, pathlib.Path]] = []
     if destino.exists():
+        # The analysis bundles under the fetched tree are derived AFTER the
+        # fetch (`bench analyze --release <tag>` writes analysis/ and the
+        # analysis-s<x>/ stamped sets there): a re-fetch refreshes the raw
+        # dataset, never the derived bundles - the persisted reference and
+        # every stamped set survive the re-download (methodology v1.2, #46).
+        for hijo in sorted(destino.iterdir()):
+            if hijo.is_dir() and hijo.name.startswith("analysis"):
+                resguardado = trabajo / "_preserve" / hijo.name
+                resguardado.parent.mkdir(exist_ok=True)
+                shutil.move(str(hijo), str(resguardado))
+                preservados.append((hijo.name, resguardado))
         shutil.rmtree(destino)
     extraido.rename(destino)
+    for nombre, resguardado in preservados:
+        shutil.move(str(resguardado), str(destino / nombre))
     shutil.rmtree(trabajo)
     return destino, meta
 

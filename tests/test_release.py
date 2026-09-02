@@ -1051,3 +1051,83 @@ def test_status_still_accepts_the_run_flags(tmp_path):
     hand_dataset(tmp_path)
     codigo, _, errores = run_cli(tmp_path, "status", "--reps", "5", "--rep", "1", "--k", "4")
     assert codigo == 0, errores
+
+
+def test_analyze_release_custom_s_stamps_the_set(tmp_path, fake_cli, fake_gh):
+    """The release path stamps the same way: the fetched copy's raw stays
+    immutable, the custom-S analysis lands in its own stamped folder."""
+    from test_run import prepare
+
+    prepare(tmp_path)
+    assert (
+        run_cli(
+            tmp_path,
+            "run",
+            "--level",
+            "T1",
+            "--settle-s",
+            "2",
+            "--settle-poll-s",
+            "0.01",
+            "--reps",
+            "1",
+        )[0]
+        == 0
+    )
+    run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
+    tag = f"run-{run_id}"
+    assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO, "--json")[0] == 0
+
+    codigo, salida, errores = run_cli(
+        tmp_path, "analyze", "--release", tag, "--repo", REPO, "--s", "0.35", "--json"
+    )
+    assert codigo == 0, salida or errores
+    doc = json.loads(salida)
+    assert doc["base_params"]["s"] == 0.35
+    sellada = tmp_path / "releases" / tag / "analysis-s0.35"
+    assert (sellada / "analysis.json").exists()
+    assert (sellada / "dashboard.html").exists()
+    assert not (tmp_path / "releases" / tag / "analysis").exists()
+
+
+def test_refetch_preserves_the_analysis_bundles(tmp_path, fake_cli, fake_gh):
+    """A re-fetch refreshes the raw dataset, never the derived bundles: the
+    analysis/ reference and the analysis-s<x>/ stamped sets under the fetched
+    tree survive the re-download (a custom S never edits the persisted set —
+    #46 — and the fetch must not undo that guarantee either)."""
+    from test_run import prepare
+
+    prepare(tmp_path)
+    assert (
+        run_cli(
+            tmp_path,
+            "run",
+            "--level",
+            "T1",
+            "--settle-s",
+            "2",
+            "--settle-poll-s",
+            "0.01",
+            "--reps",
+            "1",
+        )[0]
+        == 0
+    )
+    run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
+    tag = f"run-{run_id}"
+    assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO, "--json")[0] == 0
+    assert (
+        run_cli(tmp_path, "analyze", "--release", tag, "--repo", REPO, "--s", "0.35", "--json")[0]
+        == 0
+    )
+    sellada = tmp_path / "releases" / tag / "analysis-s0.35" / "analysis.json"
+    antes = sellada.read_bytes()
+
+    # a re-fetch (what any later analyze --release performs first) refreshes
+    # the raw with an rmtree + re-extract: the stamped set survives it
+    # byte-for-byte (a later successful analyze legitimately regenerates the
+    # bundle after the fetch - derivatives recompute, the fetch never deletes)
+    from ocharness import releases
+
+    releases.fetch(tmp_path, tag=tag, repo=REPO, table_version="2026-08-31")
+    assert sellada.exists() and sellada.read_bytes() == antes

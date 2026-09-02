@@ -5,7 +5,8 @@ batches/*.jsonl), the versioned price table and the analysis parameters
 (--table-version, --ancla, --s). It never touches the API: a price change
 re-derives the whole bundle with zero quota spent.
 
-The bundle (written to `analysis/`):
+The bundle (written to `analysis/`; a custom S(x) — a stamped re-run — writes
+its own `analysis-s<x>/` set and never edits the persisted s0/s1 reference):
 
 - `analysis.json` — the full doc: per (model, workload) derivatives (median,
   p25-p75, p95 of the measured pp/1M and of the per-task costs, pass rate),
@@ -66,6 +67,10 @@ from .cost import new_task_cost  # the cost model's single pricing formula
 from .pricing import TableError
 
 CACHE_SWEEP_S = (0.0, 0.25, 0.5, 0.9)  # the fixed cache sweep (S0 included)
+# The methodology version this harness implements: the versioned S1 default is
+# declared here (v1.2), and every analysis set's header carries the version so
+# a future default change (v1.3) never ambiguates old artifacts (#46).
+METHODOLOGY_VERSION = "v1.2"
 # The persisted S0/S1 pair's S1: the versioned default hit rate (methodology
 # v1.2), declared by the methodology and mirrored by analyze's --s default.
 # A custom S(x) never re-anchors the locked estimates or the comparative MAPE
@@ -214,6 +219,10 @@ def _rep_row(batch: dict, lineas: list[dict], usd: float, session_usd: float) ->
     return {
         "rep": rep if isinstance(rep, int) else None,
         "batch_id": batch.get("batch_id"),
+        # The settle's exit rides with the row: a "capped" bracket's read
+        # predates part of its own spend, so the derivative carries the marker
+        # that lets a consumer exclude it (the raw line keeps it too).
+        "settle_exit": batch.get("settle_exit"),
         "attempted": intentadas,
         "completed": completadas,
         "tokens_in": tin,
@@ -237,7 +246,18 @@ def _cells(batches: list[dict], requests: list[dict], usd: float, session_usd: f
     """The k=1 cells grouped by (model, workload): per-rep rows plus the raw
     lines that back them (tokens, checker verdicts). Pooled brackets carry no
     single workload, so they never enter a cell — their legacy attribution is
-    the allocation section's, never a measured cell's."""
+    the allocation section's, never a measured cell's. An aborted bracket
+    neither: its burst broke its own contract (a dropped request inflates
+    pp_per_1m, a dead meter read prices nothing), so its dpp never enters a
+    cell's median — the raw line stays in the dataset for the operator. A
+    zero-movement bracket does not either: a settle that reports "stable"
+    (or burns to "capped") while BOTH windows read exactly the pre-burst value
+    is the meter's registration lag masquerading as stability — two stale
+    reads agree at the pre-burst plateau (the documented 60–90 s lag) and the
+    bracket closes with dpp 0 as if measured. Every planned bracket's token
+    budget predicts readable Δpp (>= 3.5 ticks, the #28 planning floor), so
+    zero movement in both windows is a failed registration, never a
+    measurement."""
     por_batch = _por_batch(requests)
     celdas: dict = {}
     for batch in batches:
@@ -245,6 +265,11 @@ def _cells(batches: list[dict], requests: list[dict], usd: float, session_usd: f
             continue
         if not isinstance(batch.get("model"), str) or not isinstance(batch.get("batch_id"), str):
             continue
+        if isinstance(batch.get("notes"), str) and batch["notes"].startswith("aborted"):
+            continue
+        if _es_numero(batch.get("dpp_session")) and _es_numero(batch.get("dpp_weekly")):
+            if batch["dpp_session"] == 0.0 and batch["dpp_weekly"] == 0.0:
+                continue
         clave = (batch["model"], batch["workload"])
         celda = celdas.setdefault(clave, {"level": batch.get("level"), "reps": [], "lineas": []})
         celda["reps"].append(
@@ -815,6 +840,7 @@ def build(
         "generated_at": time.time(),
         "protocol_version": vintage,  # the vintage the filter kept (a release's own)
         "base_params": {
+            "methodology_version": METHODOLOGY_VERSION,
             "table_version": tabla.table_version,
             "ancla": ancla,
             "usd_per_pp": usd,
@@ -897,13 +923,68 @@ def rates_map(tabla, doc: dict) -> dict:
     return {"per": tabla.per, "rates": tarifas}
 
 
+def bundle_dirname(doc: dict) -> str:
+    """The analysis set's folder: `analysis` holds the persisted S0/S1 reference
+    (S at the versioned default); any other S(x) is a stamped re-run — its own
+    parameter-stamped folder (`analysis-s0.35`), its parameters in the doc's
+    header (methodology version included), the reference set never touched
+    (methodology v1.2, #46). The doc is the parameter record: the stamp reads
+    the same `s` the analysis actually ran with, at 15 significant digits so
+    two distinct S values never round into one folder and silently overwrite
+    each other (the default 6-digit 'g' collided, e.g. 0.1234561 vs 0.12345649)."""
+    s = doc["base_params"]["s"]
+    if s == S1_DEFAULT:
+        return "analysis"
+    return f"analysis-s{format(float(s), '.15g')}"
+
+
+def _refutar_referencia(base: pathlib.Path, doc: dict) -> None:
+    """Refuses a write that would SHRINK the persisted reference bundle
+    (methodology v1.2, #46).
+
+    `analysis/` holds the full-slate reference at the versioned default S. A
+    re-parameterized default-S run (a new table version, a new anchor) is the
+    documented re-derivation and rewrites it in place; a FILTERED one
+    (--model/--level) is a narrower doc and never the reference — writing it
+    would shrink the persisted set. The one allowed overwrite is a doc whose
+    cells are the reference's own or a superset (new brackets since the last
+    run grow the plan)."""
+    previa = base / "analysis" / "analysis.json"
+    if not previa.exists():
+        return
+    try:
+        previo = json.loads(previa.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return  # an unreadable prior bundle is the operator's to clean up, not ours to guard
+    claves_previas = {
+        (c.get("model"), c.get("workload")) for c in previo.get("cells", []) if isinstance(c, dict)
+    }
+    claves = {
+        (c.get("model"), c.get("workload")) for c in doc.get("cells", []) if isinstance(c, dict)
+    }
+    if claves < claves_previas:
+        raise AnalyzeError(
+            f"analysis/ holds the persisted reference with {len(claves_previas)} cells; this "
+            f"default-S run would write {len(claves)} over it (a filtered --model/--level "
+            "re-run) - the reference set is never shrunk in place; pass --s <x> for a "
+            "stamped re-run"
+        )
+
+
 def write_bundle(
     base: pathlib.Path, doc: dict, emit=print, *, rates: dict | None = None
 ) -> pathlib.Path:
-    """Writes the analysis bundle under `base/analysis/`; returns the folder.
-    `rates` (from `rates_map`) rides only inside the dashboard: the slider's
-    live recomputation needs them, analysis.json does not."""
-    carpeta = pathlib.Path(base) / "analysis"
+    """Writes the analysis bundle under `base/analysis/` — or, when the doc's S
+    differs from the versioned default, under the stamped re-run's own folder
+    (`analysis-s0.35`): the persisted s0/s1 set is never edited by a custom S
+    (methodology v1.2, #46), nor shrunk by a default-S re-run that filters the
+    slate (--model/--level). Returns the folder. `rates` (from
+    `rates_map`) rides only inside the dashboard: the slider's live
+    recomputation needs them, analysis.json does not."""
+    destino = bundle_dirname(doc)
+    if destino == "analysis":
+        _refutar_referencia(base, doc)
+    carpeta = pathlib.Path(base) / destino
     carpeta.mkdir(parents=True, exist_ok=True)
     (carpeta / "analysis.json").write_text(
         json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8"

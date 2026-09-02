@@ -935,7 +935,11 @@ def _analyze_release(args: argparse.Namespace) -> int:
     except analyze.AnalyzeError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
-    carpeta = analyze.write_bundle(stage, doc, emit=_emit, rates=analyze.rates_map(tabla, doc))
+    try:
+        carpeta = analyze.write_bundle(stage, doc, emit=_emit, rates=analyze.rates_map(tabla, doc))
+    except analyze.AnalyzeError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
     if args.json:
         print(json.dumps(doc, ensure_ascii=False, indent=2))
         return 0
@@ -976,12 +980,16 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     except analyze.AnalyzeError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
-    carpeta = analyze.write_bundle(
-        _base(args),
-        doc,
-        emit=lambda m: print(m, file=sys.stderr, flush=True),
-        rates=analyze.rates_map(tabla, doc),
-    )
+    try:
+        carpeta = analyze.write_bundle(
+            _base(args),
+            doc,
+            emit=lambda m: print(m, file=sys.stderr, flush=True),
+            rates=analyze.rates_map(tabla, doc),
+        )
+    except analyze.AnalyzeError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
     if args.json:
         print(json.dumps(doc, ensure_ascii=False, indent=2))
         return 0

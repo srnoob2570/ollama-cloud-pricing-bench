@@ -7,7 +7,7 @@
 <meta name="description" content="Measured cost analysis of Ollama Cloud plans: per-workload verdicts, break-even thresholds and cache-hit sensitivity, recomputed live in the browser.">
 <meta property="og:type" content="article">
 <meta property="og:title" content="Ollama Cloud cost analysis: legacy or new?">
-<meta property="og:description" content="Which plan actually costs less, measured on real workloads — verdicts, thresholds and cache sensitivity in paid dollars.">
+<meta property="og:description" content="Which plan actually costs less, measured on real workloads: verdicts, thresholds and cache sensitivity in paid dollars.">
 <meta name="theme-color" content="#f8f7f2" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#12110e" media="(prefers-color-scheme: dark)">
 <style>
@@ -205,16 +205,16 @@ svg { display: block; max-width: 100%; }
 </div>
 
 <div class="panel">
-  <label for="slider-s"><b>Cache hit-rate S(x)</b> &mdash; presentation layer only:
+  <label for="slider-s"><b>Cache hit-rate S(x)</b>, presentation layer only:
     <input type="range" id="slider-s" min="0" max="100" value="50" step="1">
     <b id="slider-val" class="mono">50%</b></label>
-  <p class="note" id="slider-note">The slider and the token scenario (in/out) recompute in live JS
-    the new-plan costs, the critical threshold and the verdict margins from the embedded
-    per-cell tokens, rates and anchor &mdash;
-    nothing persisted changes (raw immutable; derivatives regenerate only with versioned parameters).
-    Models with a conclusive measured hit-rate keep it (marked &laquo;measured S&raquo;) and the slider
-    cannot move them; models without a published discount are unmoved: S(x) &equiv; S0 for them. A
-    custom value that overrides measurements belongs to a stamped re-run (--s), never to this
+  <p class="note" id="slider-note">The slider and the token scenario inputs recompute the new-plan
+    costs, the critical threshold and the verdict margins in live JS, from the embedded
+    per-cell tokens, rates and anchor. Nothing persisted changes. The raw is immutable and
+    derivatives regenerate only with versioned parameters.
+    Models with a conclusive measured hit-rate keep it, marked &laquo;measured S&raquo;, and the slider
+    cannot move them; models without a published discount are unmoved, S(x) &equiv; S0 for them. A
+    custom value that overrides measurements belongs to a stamped re-run with --s, never to this
     dashboard.</p>
 </div>
 
@@ -230,41 +230,43 @@ svg { display: block; max-width: 100%; }
     <tbody id="tabla-cuerpo"></tbody>
   </table>
   <p class="note" style="margin-top:8px">Verdicts compare what the same monthly budget buys on
-    each system: the new plan sells credits at a per-tier multiplier over money paid
+    each system. The new plan sells credits at a per-tier multiplier over money paid
     (<span class="mono" id="credit-ratio-note"></span> at this doc's tier: Max $100 &rarr; $300
     credits), so a new-side figure of $X in credits really costs $X&thinsp;&divide;&thinsp;<span class="mono credit-ratio-num"></span> paid. The margin is
-    stated in paid dollars &mdash; example: a task that burns $<span class="mono credit-ratio-num"></span>.00 of new-plan credits costs
-    $1.00 paid. The two price columns are nominal dollars for the
-    token scenario set in the &laquo;tokens in&raquo; / &laquo;tokens out&raquo; inputs
-    (default 1M in / 250k out). The new column prices the scenario exactly on the official
-    table (input, cached input and output at their own rates) and follows the S(x) slider.
-    The legacy meter emits a single pp read per bracket with no in/out decomposition (the
-    GPU-time rate was never published), so the legacy column applies the cell's measured
-    pp/1M to the scenario's in+out total &mdash; hover for the underlying meter read and
-    the per-task prices; a sub-tick weekly read falls back to the session-derived
-    equivalent, marked &laquo;session&raquo;. The verdict chips compare each cell's measured
-    per-task prices &mdash; the measured legacy read against the new plan priced live at the
-    cell's own measured token mix and the slider's S(x) &mdash; so they follow the slider
-    (for assumed-S models), never the scenario inputs. The meter-native view
-    lives in the threshold chart below. Every verdict shows its margin (the chip's
-    +X&nbsp;%): how much
-    more expensive the loser is, (loser &minus; winner) &divide; winner — it can exceed 100 %
+    stated in paid dollars. Example: a task that burns $<span class="mono credit-ratio-num"></span>.00 of new-plan credits costs
+    $1.00 paid.</p>
+  <p class="note" style="margin-top:8px">The two price columns are nominal dollars for the
+    token scenario set in the &laquo;tokens in&raquo; / &laquo;tokens out&raquo; inputs,
+    1M in / 250k out by default. The new column prices the scenario exactly on the official
+    table, where input, cached input and output each carry their own rate, and follows the
+    S(x) slider. The legacy meter emits a single pp read per bracket with no in/out
+    decomposition because the GPU-time rate was never published, so the legacy column applies
+    the cell's measured pp/1M to the scenario's in+out total. Hover for the underlying meter
+    read and the per-task prices. A sub-tick weekly read falls back to the session-derived
+    equivalent, marked &laquo;session&raquo;.</p>
+  <p class="note" style="margin-top:8px">The verdict chips compare each cell's measured
+    per-task prices, the measured legacy read against the new plan priced live at the
+    cell's own measured token mix and the slider's S(x), so they follow the slider
+    for assumed-S models and never the scenario inputs. The meter-native view
+    lives in the threshold chart below. Every verdict shows its margin, the chip's
+    +X&nbsp;%: how much
+    more expensive the loser is, (loser &minus; winner) &divide; winner. It can exceed 100 %
     when the loser costs more than twice the winner. A verdict exists only when the margin
-    clears the tie band (&gt;2 meter ticks or &gt;5 % of the cheaper cost); inside it the cell
+    clears the tie band, &gt;2 meter ticks or &gt;5 % of the cheaper cost. Inside it the cell
     is a tie.</p>
 </div>
 
 <h2>Break-even per million tokens: legacy $ vs new-plan $</h2>
 <div class="panel">
   <div id="chart-threshold"></div>
-  <div class="legend"><span><span class="sw" style="background:var(--legacy)"></span>legacy $/1M
-    (measured meter read at the anchor; a sub-tick weekly read shows its session-derived
-    equivalent, marked)</span>
+  <div class="legend"><span><span class="sw" style="background:var(--legacy)"></span>legacy $/1M,
+    the measured meter read at the anchor; a sub-tick weekly read shows its session-derived
+    equivalent, marked</span>
     <span><span class="sw" style="background:var(--new);width:3px"></span>new paid $/1M at the
-    slider's S(x), each cell's own measured mix &mdash; credits at face value &divide;
+    slider's S(x), each cell's own measured mix, credits at face value &divide;
     <span class="mono credit-ratio-num"></span></span>
-    <span>legacy left of new &rArr; legacy is cheaper (the same comparison as the pp/1M
-    threshold, translated at the anchor in paid dollars)</span></div>
+    <span>legacy left of new &rArr; legacy is cheaper, the same comparison as the pp/1M
+    threshold translated at the anchor into paid dollars</span></div>
 </div>
 
 <h2>How much do you save by picking the winner?</h2>
@@ -274,9 +276,9 @@ svg { display: block; max-width: 100%; }
     (left)</span>
     <span><span class="sw" style="background:var(--new)"></span>new wins (right)</span>
     <span><span class="sw" style="background:var(--tie);border-radius:50%"></span>tie</span>
-    <span>center axis = 0 % (a tie sits on it); bars cap at 100 % &mdash; the chevron marks a
-    margin beyond; margins follow the slider (assumed-S models only)</span>
-    <span>margins are in paid dollars: the new plan's credits count at face value &divide;
+    <span>center axis = 0 %, a tie sits on it; bars cap at 100 % and the chevron marks a
+    margin beyond; margins follow the slider for assumed-S models</span>
+    <span>margins are in paid dollars, so the new plan's credits count at face value &divide;
     <span class="mono credit-ratio-num"></span></span></div>
 </div>
 
@@ -396,7 +398,7 @@ function taskTokens(cell) {
 }
 function legacyPerTask(cell) {
   // the weekly window is the unit of account; a sub-tick weekly read (0.0)
-  // prices with its session-derived weekly-equivalent, marked — the same
+  // prices with its session-derived weekly-equivalent, marked, the same
   // fallback the verdict uses. No readable bracket either: no data.
   var weekly = cell.legacy_cost_task_usd ? cell.legacy_cost_task_usd.median : null;
   if (isNum(weekly) && weekly > 0) return { usd: weekly, derived: false };
@@ -406,7 +408,7 @@ function legacyPerTask(cell) {
 }
 function legacyPer1M(cell) {
   // the cell's measured meter read, normalized to USD per 1M tokens. The
-  // legacy meter emits one pp read per bracket (no in/out decomposition —
+  // legacy meter emits one pp read per bracket (no in/out decomposition,
   // the GPU-time rate was never published), so this price belongs to the
   // cell's measured mix; a custom scenario only scales it with its total
   var leg = legacyPerTask(cell);
@@ -446,7 +448,7 @@ function marginBar(v) {
 
 function medianOf(vals) {
   // statistics.median's convention: the middle value, or the mean of the two
-  // middles for an even count — the same median the persisted doc uses
+  // middles for an even count, the same median the persisted doc uses
   if (!vals.length) return null;
   var a = vals.slice().sort(function (x, y) { return x - y; });
   var m = Math.floor(a.length / 2);
@@ -536,7 +538,7 @@ function renderThreshold() {
   // the pp/1M threshold comparison, translated at the anchor into hard
   // dollars per 1M tokens: legacy $/1M (the measured meter read, with the
   // session fallback the table uses) against the new-plan $/1M priced on the
-  // cell's own mix — the same rule as the persisted threshold, readable unit
+  // cell's own mix, the same rule as the persisted threshold, in a readable unit
   var cont = $("chart-threshold");
   var medidas = cellsFiltered().filter(function (c) {
     return legacyPer1M(c) !== null && thresholdAt(c) !== null;
@@ -626,8 +628,8 @@ function renderMargins() {
     var ra = a.v.margin_pct === null ? 1 : 0, rb = b.v.margin_pct === null ? 1 : 0;
     return ra - rb || (b.v.margin_pct || 0) - (a.v.margin_pct || 0);
   });
-  // the scale caps at 100 % — the same cap the cells table's margin bar
-  // applies — so a 1000 % outlier no longer flattens every other row; a bar
+  // the scale caps at 100 %, the same cap the cells table's margin bar
+  // applies, so a 1000 % outlier no longer flattens every other row; a bar
   // past the cap ends in a chevron and keeps its true value in the label and
   // the tooltip. Each half reserves a label gutter so the "+X %" always fits
   // outside its bar: no text can land on a row label or cross the center
@@ -755,8 +757,8 @@ function renderDp() {
     '" role="img" aria-label="legacy weekly quota delta versus billed tokens">' + ejes + ticks +
     dots +
     "</svg>" +
-    '<p class="note">one dot per measured bracket: legacy weekly &Delta;pp vs billed tokens ' +
-    "(the legacy side never moves with the slider)</p>";
+    '<p class="note">one dot per measured bracket, legacy weekly &Delta;pp against billed ' +
+    "tokens; the legacy side never moves with the slider</p>";
 }
 
 function renderStatus() {

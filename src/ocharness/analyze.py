@@ -98,7 +98,7 @@ SWEEP_SCENARIO = "s0"
 # tick ratio, live-verified at 6.22 (expected range 5-7) -> ~$0.037/session pp.
 SESSION_R = 6.22
 SESSION_CAVEAT = (
-    "session figures are the derived secondary signal, unanchored — never an "
+    "session figures are the derived secondary signal, unanchored and never an "
     "independent anchor: session $/pp = weekly $/pp / R (R = session:weekly "
     f"ticks, live verification {SESSION_R:g}, expected range 5-7); the weekly "
     "window remains the study's unit of account and its only anchor"
@@ -1164,8 +1164,8 @@ def _who_wins_html(doc: dict) -> str:
         filas,
     )
     return tabla + (
-        '<p class="note">counts of measured models whose winner is each system '
-        "(a margin beyond 2 meter ticks or 5 %); unmeasured models count as "
+        '<p class="note">counts of measured models whose winner is each system, '
+        "with a margin beyond 2 meter ticks or 5 %; unmeasured models count as "
         "unmeasured, never as a win.</p>"
     )
 

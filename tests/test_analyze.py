@@ -499,7 +499,7 @@ def test_dashboard_v2_slider_recomputes_from_embedded_rates(tmp_path):
     assert 'min="0"' in deslizador and 'max="100"' in deslizador and 'value="50"' in deslizador
     # presentation-layer only: the note says so
     assert "presentation" in html.lower()
-    assert "nothing persisted changes" in html
+    assert "Nothing persisted changes" in html
 
 
 def test_dashboard_v2_marks_measured_s_and_notes_the_s0_models(tmp_path):

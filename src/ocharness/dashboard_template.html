@@ -198,11 +198,15 @@ svg { display: block; max-width: 100%; }
       <th>model</th><th>workload</th><th>level</th>
       <th class="num">legacy $ / <span class="hdr-tokens mono">1M+250k</span> tok</th>
       <th class="num">new $ / <span class="hdr-tokens mono">1M+250k</span> tok</th>
-      <th class="num">pass rate</th><th>verdict</th><th>margin</th>
+      <th class="num">pass rate</th><th>verdict</th><th>margin (paid $)</th>
     </tr></thead>
     <tbody id="tabla-cuerpo"></tbody>
   </table>
-  <p class="note" style="margin-top:8px">The two price columns are nominal dollars for the
+  <p class="note" style="margin-top:8px">Verdicts compare what the same monthly budget buys on
+    each system: the new plan sells $3 of credits per $1 paid (Max: $100 &rarr; $300 credits),
+    so a new-side figure of $X in credits really costs $X&thinsp;/&thinsp;3 paid. The margin is
+    stated in paid dollars &mdash; example: a task that burns $3.00 of new-plan credits costs
+    $1.00 paid. The two price columns are nominal dollars for the
     token scenario set in the &laquo;tokens in&raquo; / &laquo;tokens out&raquo; inputs
     (default 1M in / 250k out). The new column prices the scenario exactly on the official
     table (input, cached input and output at their own rates) and follows the S(x) slider.
@@ -226,10 +230,10 @@ svg { display: block; max-width: 100%; }
   <div class="legend"><span><span class="sw" style="background:var(--legacy)"></span>legacy $/1M
     (measured meter read at the anchor; a sub-tick weekly read shows its session-derived
     equivalent, marked)</span>
-    <span><span class="sw" style="background:var(--new);width:3px"></span>new $/1M at the slider's
-    S(x), each cell's own measured mix</span>
+    <span><span class="sw" style="background:var(--new);width:3px"></span>new paid $/1M at the
+    slider's S(x), each cell's own measured mix &mdash; credits at ⅓ of face value</span>
     <span>legacy left of new &rArr; legacy is cheaper (the same comparison as the pp/1M
-    threshold, translated at the anchor)</span></div>
+    threshold, translated at the anchor in paid dollars)</span></div>
 </div>
 
 <h2>How much do you save by picking the winner?</h2>
@@ -240,7 +244,8 @@ svg { display: block; max-width: 100%; }
     <span><span class="sw" style="background:var(--new)"></span>new wins (right)</span>
     <span><span class="sw" style="background:var(--tie);border-radius:50%"></span>tie</span>
     <span>center axis = 0 % (a tie sits on it); bars cap at 100 % &mdash; the chevron marks a
-    margin beyond; margins follow the slider</span></div>
+    margin beyond; margins follow the slider</span>
+    <span>margins are in paid dollars: the new plan's credits count at ⅓ of face value</span></div>
 </div>
 
 <details>
@@ -268,6 +273,10 @@ var RATES = JSON.parse(document.getElementById("rates-data").textContent);
 var BP = DATA.base_params;
 var USDPP = BP.usd_per_pp;   // the anchor: USD per weekly pp
 var TICKUSD = BP.tick_usd;   // one meter tick, in USD
+// the new plan's per-tier credit multiplier (Max: $100 -> $300 credits): the
+// verdicts, margins and threshold compare PAID dollars, so the new side's
+// nominal credit cost divides by this (the persisted doc's credit_ratio)
+var CREDITRATIO = isNum(BP.credit_ratio) ? BP.credit_ratio : 3.0;
 var PER = RATES.per || 1000000;
 var SLIDER_DEFAULT = Math.round((typeof BP.s === "number" ? BP.s : 0.5) * 100);
 // the token scenario: input and output are priced at their own rates; the
@@ -317,15 +326,19 @@ function thresholdAt(cell) {
   var tokens = isNull(cell.tok_in_median) || isNull(cell.tok_out_median)
     ? null : cell.tok_in_median + cell.tok_out_median;
   if (!isNum(cost) || !tokens) return null;
-  return cost / (tokens / 1e6) / USDPP;
+  // paid dollars: the new side's credits divide by the credit multiplier
+  return cost / (tokens / 1e6) / (USDPP * CREDITRATIO);
 }
-function verdictOf(legacy, nuevo, tickUsd, legacySession) {
-  // the same rule as the persisted verdicts: the tie band is the MINIMUM of
-  // 2 ticks and 5 % of the cheaper cost; margin_pct = (loser - winner) / winner.
+function verdictOf(legacy, nuevo, tickUsd, legacySession, creditRatio) {
+  // the same rule as the persisted verdicts: the new side re-denominates to
+  // paid dollars (credits divide by the plan's credit multiplier) BEFORE the
+  // comparison, so the tie band is the MINIMUM of 2 ticks and 5 % of the
+  // cheaper PAID cost; margin_pct = (loser - winner) / winner.
   // A sub-tick winner (weekly reads 0.0) prices with its session-derived
   // weekly-equivalent; with no session reading either, the loser's own cost
   // (a free winner saves the whole bill: exactly 100 %)
   if (isNull(legacy) || isNull(nuevo)) return { winner: "no data", margin_pct: null };
+  nuevo = nuevo / (creditRatio || 1);
   var band = Math.min(2 * tickUsd, 0.05 * Math.min(legacy, nuevo));
   if (Math.abs(legacy - nuevo) <= band) return { winner: "tie", margin_pct: null };
   if (legacy < nuevo) {
@@ -337,7 +350,7 @@ function verdictOf(legacy, nuevo, tickUsd, legacySession) {
 function verdictAt(cell) {
   var legacy = cell.legacy_cost_task_usd ? cell.legacy_cost_task_usd.median : null;
   var legacySession = cell.legacy_cost_task_usd_session ? cell.legacy_cost_task_usd_session.median : null;
-  return verdictOf(legacy, newCostAt(cell), TICKUSD, legacySession);
+  return verdictOf(legacy, newCostAt(cell), TICKUSD, legacySession, CREDITRATIO);
 }
 function taskTokens(cell) {
   // the rep's median token mix: the denominator that turns a per-task price
@@ -552,7 +565,7 @@ function renderThreshold() {
       " · measured " + c.pp_per_1m.median + " pp/1M</title></rect>" +
       '<rect x="' + (labelW + tx - 1.5).toFixed(2) + '" y="' + (y - 3) + '" width="3" height="20" ' +
       'rx="1.5" fill="var(--new)"><title>' + esc(c.model) + " (" + esc(c.workload) +
-      "): new " + usdLabel(m.newUsd) + " per 1M tokens at S(x)=" +
+      "): new " + usdLabel(m.newUsd) + " PAID per 1M tokens at S(x)=" +
       Math.round(effectiveS(c.model) * 100) + "% (threshold " +
       Number(thresholdAt(c)).toPrecision(6) + " pp/1M)</title></rect>" +
       '<text x="' + (W - 8) + '" y="' + (y + 10) + '" text-anchor="end" font-size="10" ' +

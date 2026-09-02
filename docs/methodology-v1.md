@@ -1,6 +1,6 @@
 # Methodology v1: Ollama Cloud effective cost, legacy GPU-time vs new token-based
 
-**Version 1.2 · 2026-09-01 · status: specified, ready for execution** (a phase after this
+**Version 1.3 · 2026-09-02 · status: specified, ready for execution** (a phase after this
 wayfinder map). This document integrates the decisions of every closed ticket of the
 [map](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/1), of the Harness
 v1.1 map ([#27](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/27): medibilidad,
@@ -30,6 +30,14 @@ versionado (50 %) declarado aquí; el par S0/S1 sigue siendo la referencia persi
 anclado al par); S ≠ default se congela solo como re-runs estampados · el dashboard muestra
 el S efectivo por modelo · el re-run T1/T2 bajo v3 con carriles sin cache es requisito
 de v1.2 pendiente de la compuerta del owner (§11).
+
+**v1.3 changelog** (credit ratio, post-hoc): veredicto, margen y umbral pp/1M comparan en
+**dólares pagados**: el lado nuevo vende créditos con multiplicador por tier (Pro ×3,
+Max ×3, Team ×2; el ancla es el tier Max ⇒ `--credit-ratio` default 3), su coste nominal
+en créditos se divide por el ratio antes de comparar; las cifras de coste por tarea se
+quedan a valor nominal; ratio 1 reproduce la comparación 1:1 de v1.2. Corrección puramente
+post-hoc: no re-mide nada, pero mueve veredictos y márgenes (el re-run v3 pendiente de
+compuerta la incorpora).
 
 **Hard guardrails**: 🚫 do not migrate the legacy Max account (the only live GPU-time key;
 migration is voluntary and irreversible) · 💰 pre-approved spend covers only the meter
@@ -61,6 +69,9 @@ verification (already done); every real run goes through the gate (§11).
 - **New**: per-plan dollar credits (Free starter · Pro $20→$60/mo · Max $100→$300/mo ·
   Team $500→$1000/mo) consumed by tokens at the official input/cached/output table × 19
   models. Migration is voluntary and irreversible; new signups already enter the new system.
+  The credits sell at a **per-tier multiplier over the money paid** (Pro ×3, Max ×3,
+  Team ×2): one credit dollar is not one paid dollar, and every cross-system comparison
+  re-denominates by it (see the verdict margin row in §3).
 - Market comparables: full table in `docs/research/comparables-open-weights.md` (near-literal
   passthrough of upstream rates; the margin lives in the credit ratio; GPU-time no longer
   exists in any shared API in the market).
@@ -72,11 +83,12 @@ verification (already done); every real run goes through the gate (§11).
 | **Legacy unit** | pp (quota point) of the **weekly** window (7 days), `limits.weekly.usage`, 0.001 tick |
 | **New unit** | $ per token (input/cached/output × versioned per-model table) |
 | **Anchor** | `P_LEGADO=$100/mo` → **$0.2302 per weekly pp** (÷4.345 ÷100); tick ≈ $0.0230 |
+| **Credit ratio** | the new plan's credits per paid dollar, per tier: **×3 at the study's anchor tier (Max: $100→$300 credits)**, Pro ×3, Team ×2. Every comparison point (verdict, margin, pp/1M threshold) is stated in **paid dollars**: the new side's nominal credit cost divides by the ratio (`--credit-ratio`, default 3; 1 reproduces the v1.2 1:1 credit comparison). The per-task cost figures stay at credit face value |
 | **Session anchor (derived)** | session $/pp = weekly $/pp ÷ R, R = session:weekly ticks ≈ 5–7 (live verification: 6.22) → **≈ $0.037 per session pp** (session tick ≈ $0.0037). A **derived secondary value**, never an independent anchor |
 | **Separate constraints** | 5 h session and the rolling 4-week `activity` window = saturation, not the anchor |
 | **Extrapolation** | `t_in×r_in + t_cached×r_cached + t_out×r_out` under **S0 = 0 %** (floor) and **S1 = the versioned default (50 %)**; any other **S(x)** enters only as a stamped re-run; S(x)≡S0 for the 5 models with cached=input |
 | **Useful unit** | primary = cost per **completed task** (checker passes); attempted and $/1M as secondary |
-| **Verdict margin** | (loser − winner) ÷ winner, as a percentage of the winner's cost (can exceed 100 % when the loser costs more than twice the winner); a **sub-tick winner** (weekly reads 0.0) prices with its session-derived weekly-equivalent — under the R mapping the session dollar figure IS that estimate — falling back to the loser's cost (exactly 100 %) with no session reading; the verdict is `{winner, margin_pct}`; a tie inside the tie band (>2 ticks or >5 % of the cheaper cost); an **allocated reading is never verdicted** |
+| **Verdict margin** | (loser − winner) ÷ winner, as a percentage of the winner's cost (can exceed 100 % when the loser costs more than twice the winner), **in paid dollars**: the new side's credits divide by the credit ratio before the comparison (v1.3), so the tie band applies to the re-denominated gap and the pp/1M threshold rises by the same factor; a **sub-tick winner** (weekly reads 0.0) prices with its session-derived weekly-equivalent — under the R mapping the session dollar figure IS that estimate — falling back to the loser's cost (exactly 100 %) with no session reading; the verdict is `{winner, margin_pct}`; a tie inside the tie band (>2 ticks or >5 % of the cheaper cost); an **allocated reading is never verdicted** |
 | **Uncertainty** | new side: n=5, median, p25–p75+p95 over per-request tokens; legacy side: the meter's tick (±1 tick of phase error per reading) at the level the legacy was measured (direct bracket or pooled bracket); a real difference = clears the tie band at that level; brackets are planned with expected Δpp ≥ 3.5 ticks |
 
 Cache: the legacy side measures **cache-free work** (the cache-free lane forces misses, so

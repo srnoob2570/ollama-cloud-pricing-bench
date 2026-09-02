@@ -131,7 +131,9 @@ def test_analyze_persists_full_precision_derivatives(tmp_path, monkeypatch):
     tarifa = PriceTable.load(tmp_path / "pricing").rate("alpha")
     s0 = new_task_cost(1000, 500, tarifa, s=0.0, per=1_000_000)
     assert a["new_cost_task_s0_usd"] == s0
-    assert a["threshold_pp_per_1m"]["s0"] == s0 / (1500 / 1e6) / U
+    # the threshold compares paid dollars: the new side's credits divide by
+    # the default credit_ratio (3)
+    assert a["threshold_pp_per_1m"]["s0"] == s0 / (1500 / 1e6) / (U * 3)
 
 
 def test_status_quota_sum_equals_the_raw_payloads_chain(tmp_path, fake_cli):

@@ -58,6 +58,13 @@ $100/mo in this study's account, no annual variant) amortized per week (÷ 4.345
 by 100 pp, so every Δ% of quota is expressed in plan dollars. It makes the two billing
 systems comparable for the same task. _Avoid_: conversión, tipo de cambio · _es_: ancla
 
+**Credit ratio**:
+The new plan's credits of face value per **paid** dollar, a property of the tier
+(Pro ×3, Max ×3, Team ×2). The study's anchor is the Max tier, so comparisons use ×3
+(`--credit-ratio`): a new-side figure of $X in credits costs $X / 3 paid, and the
+verdict, margin and pp/1M threshold are stated in paid dollars while the per-task cost
+figures stay at face value. _Avoid_: multiplicador (sin el tier), tipo de cambio · _es_: ratio de crédito
+
 **Measured usage**:
 Delta of the ollama.com usage meter (API-key endpoint) between two moments; the primary
 observation of legacy consumption. Measured with **bracketed batches** (never per request).

@@ -171,15 +171,20 @@ def write_raw(base: pathlib.Path, requests: list[dict], batches: list[dict]) -> 
 def craft_dataset(base: pathlib.Path) -> None:
     """Three measured cells + one unmeasured, with hand-computable numbers.
 
+    Verdicts compare PAID dollars (methodology v1.3): the new side's credits
+    divide by credit_ratio = 3 (the CLI's default).
+
     - alpha/qa_short: 2 reps x 2 requests (1000 in / 500 out), dpp 0.2 each
       -> pp/1M = 0.2 / 0.003 = 66.6667; legacy $/task = 0.2*U/2 = 0.023015;
-      new S0 = 0.0012, S1(s=.5) = 0.00105; threshold S0 = 0.9/U = 3.9103.
+      new S0 = 0.0012 credits ($0.0004 paid), S1(s=.5) = 0.00105;
+      threshold S0 = 0.8/(3U).
     - beta/throughput: 1 request of 2M in / 0 out, dpp 0.2
-      -> pp/1M = 0.1; legacy $/task = 0.2*U; new S0 = $2.0 -> LEGACY wins.
+      -> pp/1M = 0.1; legacy $/task = 0.2*U; new S0 = $2.0 credits
+      ($0.6667 paid) -> LEGACY wins.
     - beta/qa_short: 1 request of 500k in / 750k out, dpp 9.6
       -> pp/1M = 9.6 / 1.25 = 7.68; legacy $/task = 9.6*U = 2.20944 vs new S0
-      = $2.0 -> NEW wins by a real margin, and the winner FLIPS to legacy at
-      rates x1.2 (new $2.4) and at ancla x0.7 (legacy $1.5466).
+      = $0.6667 paid -> NEW wins by a real margin; the paid gap is far too
+      wide for the sweeps to flip it (they would need x<0.3 rates or anchor).
     - gamma/qa_short: requests but an unreadable bracket (dpp null) -> no data.
     """
     requests: list[dict] = []
@@ -306,24 +311,25 @@ def test_threshold_and_costs_match_manual_math(tmp_path):
     # new-plan per task from the MEASURED median tokens (1000 in / 500 out)
     assert near(a["new_cost_task_s0_usd"], (1000 * 0.6 + 500 * 1.2) / 1e6, 9)
     assert near(a["new_cost_task_s1_usd"], (500 * 0.6 + 500 * 0.3 + 500 * 1.2) / 1e6, 9)
-    # threshold pp/1M from the cell's own measured mix (0.8 and 0.7 $/1M)
-    assert near(a["threshold_pp_per_1m"]["s0"], 0.80 / U, 4)
-    assert near(a["threshold_pp_per_1m"]["s1"], 0.70 / U, 4)
+    # threshold pp/1M from the cell's own measured mix (0.8 and 0.7 $/1M paid
+    # — credits divide by the CLI's default credit_ratio = 3)
+    assert near(a["threshold_pp_per_1m"]["s0"], 0.80 / (3 * U), 4)
+    assert near(a["threshold_pp_per_1m"]["s1"], 0.70 / (3 * U), 4)
     assert a["verdict"]["s0"]["winner"] == "new" and a["verdict"]["s1"]["winner"] == "new"
 
     b = cell(doc, "beta", "throughput")
     assert near(b["legacy_cost_task_usd"]["median"], 0.2 * U, 9)
     assert b["pp_per_1m"]["median"] == 0.2 * 1e6 / 2_000_000
     assert near(b["new_cost_task_s0_usd"], 2.0, 9)
-    assert near(b["threshold_pp_per_1m"]["s0"], 2.0 / 2.0 / U, 4)
+    assert near(b["threshold_pp_per_1m"]["s0"], 2.0 / 2.0 / (3 * U), 4)
     assert b["verdict"]["s0"]["winner"] == "legacy" and b["verdict"]["s1"]["winner"] == "legacy"
 
     c = cell(doc, "beta", "qa_short")
     assert c["pp_per_1m"]["median"] == 9.6 * 1e6 / 1_250_000
     assert near(c["legacy_cost_task_usd"]["median"], 9.6 * U, 9)
     assert near(c["new_cost_task_s0_usd"], 2.0, 9)
-    # threshold from the measured mix: $2.0 per 1.25M tokens = 1.6 $/1M
-    assert near(c["threshold_pp_per_1m"]["s0"], 2.0 / 1.25 / U, 4)
+    # threshold from the measured mix: $2.0 credits per 1.25M tokens = 1.6 $/1M
+    assert near(c["threshold_pp_per_1m"]["s0"], 2.0 / 1.25 / (3 * U), 4)
     assert c["verdict"]["s0"]["winner"] == "new"
 
 
@@ -467,7 +473,7 @@ def test_dashboard_v2_verdict_band_leads_and_margins_ride_everywhere(tmp_path):
     # the recommendation band leads: it precedes the cells table in the file
     assert html.index('id="reco"') < html.index('id="tabla-cuerpo"')
     # the cells table carries a margin column; the diverging chart exists
-    assert ">margin</th>" in html
+    assert ">margin (paid $)</th>" in html
     assert 'id="chart-margins"' in html
     assert 'id="chart-threshold"' in html
     # the verdict chips and the diverging bars both draw from margin_pct
@@ -527,19 +533,21 @@ def test_dashboard_v2_copy_is_english(tmp_path):
 
 def test_every_measured_verdict_carries_its_margin_pct(tmp_path):
     """margin_pct = (loser - winner) / winner, as a percentage of the winner's
-    cost — how much more expensive the loser is, riding the verdict object.
+    PAID cost — how much more expensive the loser is, riding the verdict
+    object. The new side's credits divide by credit_ratio = 3 first.
 
-    Hand math (cell C): legacy $9.6*U vs new S0 $2.0 -> new wins by
-    (9.6U - 2.0) / 2.0. Cell B: legacy $0.2U vs new $2.0 -> legacy wins by
-    (2.0 - 0.2U) / 0.2U. gamma has no legacy reading: no data, no margin."""
+    Hand math (cell C): legacy $9.6*U vs new S0 $2/3 paid -> new wins by
+    (9.6U - 2/3) / (2/3). Cell B: legacy $0.2U vs new $2/3 paid -> legacy wins
+    by (2/3 - 0.2U) / 0.2U. gamma has no legacy reading: no data, no margin."""
     pricing = with_tables(tmp_path)
     craft_dataset(tmp_path)
     doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
 
     c = cell(doc, "beta", "qa_short")
-    assert c["verdict"]["s0"] == {"winner": "new", "margin_pct": (9.6 * U - 2.0) / 2.0 * 100}
+    esperado_c = (9.6 * U - 2.0 / 3) / (2.0 / 3) * 100
+    assert c["verdict"]["s0"] == {"winner": "new", "margin_pct": esperado_c}
     b = cell(doc, "beta", "throughput")
-    assert near(b["verdict"]["s0"]["margin_pct"], (2.0 - 0.2 * U) / (0.2 * U) * 100, 9)
+    assert near(b["verdict"]["s0"]["margin_pct"], (2.0 / 3 - 0.2 * U) / (0.2 * U) * 100, 9)
     assert b["verdict"]["s0"]["winner"] == "legacy"
     g = cell(doc, "gamma", "qa_short")
     assert g["verdict"]["s0"] == {"winner": "no data", "margin_pct": None}
@@ -547,8 +555,9 @@ def test_every_measured_verdict_carries_its_margin_pct(tmp_path):
 
 def test_a_tie_verdict_carries_no_margin(tmp_path):
     """Inside the tie band (min of 2 ticks and 5 % of the cheaper cost) the
-    verdict is a tie with no margin to report. Hand math: legacy dpp 2.04/U
-    sits $0.04 above the new S0 $2.0 — under the $0.046 two-tick band."""
+    verdict is a tie with no margin to report. Hand math (credit_ratio 1, the
+    1:1 credit comparison): legacy dpp 2.04/U sits $0.04 above the new S0
+    $2.0 — under the $0.046 two-tick band."""
     pricing = with_tables(tmp_path)
     requests = [req("throughput", "beta", "bTie", tok_in=2_000_000, tok_out=0)]
     write_raw(
@@ -556,18 +565,67 @@ def test_a_tie_verdict_carries_no_margin(tmp_path):
         requests,
         [batch("throughput", "beta", "bTie", dpp_weekly=2.04 / U)],
     )
-    doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
+    doc = analyze_doc(
+        tmp_path,
+        "--pricing-dir",
+        pricing,
+        "--table-version",
+        "2026-08-31",
+        "--credit-ratio",
+        "1",
+    )
     t = cell(doc, "beta", "throughput")
     assert t["verdict"]["s0"] == {"winner": "tie", "margin_pct": None}
+
+
+def test_credit_ratio_re_denominates_the_comparison(tmp_path):
+    """Methodology v1.3: verdicts, margins and the pp/1M threshold compare
+    PAID dollars — the new side's credits divide by --credit-ratio (default 3,
+    the anchor's Max tier $100 -> $300 credits) — while the persisted per-task
+    cost figures stay at face value and the legacy session fallback never
+    re-denominates. --credit-ratio 1 reproduces the legacy 1:1 comparison."""
+    pricing = with_tables(tmp_path)
+    craft_dataset(tmp_path)
+    doc3 = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
+    doc1 = analyze_doc(
+        tmp_path,
+        "--pricing-dir",
+        pricing,
+        "--table-version",
+        "2026-08-31",
+        "--credit-ratio",
+        "1",
+    )
+    assert doc3["base_params"]["credit_ratio"] == 3.0
+    assert doc1["base_params"]["credit_ratio"] == 1.0
+
+    a3, a1 = cell(doc3, "alpha", "qa_short"), cell(doc1, "alpha", "qa_short")
+    # the threshold scales EXACTLY by the ratio: legacy tolerates 3x more
+    # pp/1M before the discounted credits undercut it
+    assert near(a3["threshold_pp_per_1m"]["s0"], a1["threshold_pp_per_1m"]["s0"] / 3, 9)
+    # ...and ratio 1 reproduces the 1:1 credit comparison of methodology v1.2
+    assert near(a1["threshold_pp_per_1m"]["s0"], 0.80 / U, 4)  # the v1.2 value
+
+    b3, b1 = cell(doc3, "beta", "throughput"), cell(doc1, "beta", "throughput")
+    # the per-task cost figures stay at face value under either ratio
+    assert near(b3["new_cost_task_s0_usd"], 2.0, 9)
+    assert near(b1["new_cost_task_s0_usd"], 2.0, 9)
+    # the margin prices the winner in paid dollars: (2/3 - 0.2U) / 0.2U under
+    # ratio 3, exactly one third of the v1.2 1:1 margin
+    assert near(b3["verdict"]["s0"]["margin_pct"], (2.0 / 3 - 0.2 * U) / (0.2 * U) * 100, 9)
+    assert near(b1["verdict"]["s0"]["margin_pct"], (2.0 - 0.2 * U) / (0.2 * U) * 100, 9)
+    # the two margins are genuinely different numbers
+    assert not near(b3["verdict"]["s0"]["margin_pct"], b1["verdict"]["s0"]["margin_pct"], 2)
 
 
 def test_a_sub_tick_winner_prices_with_its_session_equivalent(tmp_path):
     """A weekly reading of 0.0 is sub-tick, not free: the cost tends to zero
     per task but accumulates, so the margin prices the winner with its
     session-derived weekly-equivalent (under the R mapping — session $/pp =
-    weekly $/pp / R — the session dollar figure IS that estimate). Hand math:
-    legacy weekly $0.0 vs new S0 $2.0 -> legacy wins; margin =
-    2.0 / (0.2 * U / SESSION_R) * 100 — unbounded, far above 100 %."""
+    weekly $/pp / R — the session dollar figure IS that estimate). The
+    fallback prices the LEGACY winner, so it never re-denominates. Hand math:
+    legacy weekly $0.0 vs new S0 $2/3 paid -> legacy wins; margin =
+    (2/3) / (0.2 * U / SESSION_R) * 100 — unbounded, far above 100 %."""
     pricing = with_tables(tmp_path)
     b = batch("throughput", "beta", "bSub")
     b["dpp_weekly"] = 0.0
@@ -577,7 +635,8 @@ def test_a_sub_tick_winner_prices_with_its_session_equivalent(tmp_path):
     doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
     t = cell(doc, "beta", "throughput")
     assert t["verdict"]["s0"]["winner"] == "legacy"
-    assert near(t["verdict"]["s0"]["margin_pct"], 2.0 / (0.2 * U / SESSION_R) * 100, 9)
+    esperado = (2.0 / 3) / (0.2 * U / SESSION_R) * 100
+    assert near(t["verdict"]["s0"]["margin_pct"], esperado, 9)
 
 
 def test_allocated_readings_carry_costs_marked_and_never_verdicted(tmp_path):
@@ -696,13 +755,16 @@ def test_both_windows_ship_per_bracket_and_the_session_ships_unanchored(tmp_path
 def test_sweep_rates_plus20_flips_the_borderline_cell(tmp_path):
     pricing = with_tables(tmp_path)
     craft_dataset(tmp_path)
+    # a borderline cell for the PAID comparison: legacy $0.75 sits between the
+    # new side's paid $0.6667 (x1.0) and $0.8 (x1.2) — real margins both ways,
+    # so +20 % rates push the new side past the legacy side
+    requests = [req("tool_calling", "beta", "bFlip", tok_in=2_000_000, tok_out=0)]
+    write_raw(tmp_path, requests, [batch("tool_calling", "beta", "bFlip", dpp_weekly=0.75 / U)])
     doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
     barrido = doc["sensitivity"]["rates"]
     assert barrido["factors"] == [0.8, 1.2]
     vueltas = {(f["model"], f["workload"]): f["verdict"] for f in barrido["flips"]["1.2"]}
-    # cell C: legacy $2.2094 sits between new $2.0 and new x1.2 = $2.4, both by
-    # a real margin -> +20% rates push the new side past the legacy side
-    assert vueltas[("beta", "qa_short")]["winner"] == "legacy"
+    assert vueltas[("beta", "tool_calling")]["winner"] == "legacy"
     assert len(barrido["flips"]["1.2"]) == 1
     assert barrido["flips"]["0.8"] == []  # cheaper rates flip nothing here
 
@@ -726,18 +788,26 @@ def test_sweep_cache_scenarios_recompute_only_discounted_models(tmp_path):
 def test_sweep_anchor_scales_legacy_side_and_flips(tmp_path):
     pricing = with_tables(tmp_path)
     craft_dataset(tmp_path)
+    # a borderline cell for the PAID comparison: legacy $0.8 beats the new
+    # side's paid $0.6667 at the anchor, but -30% drops it to $0.56 and the
+    # winner flips to legacy (real margins both ways, past the two-tick band)
+    requests = [req("tool_calling", "beta", "bAncla", tok_in=2_000_000, tok_out=0)]
+    write_raw(tmp_path, requests, [batch("tool_calling", "beta", "bAncla", dpp_weekly=0.8 / U)])
     doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
     barrido = doc["sensitivity"]["ancla"]
     assert barrido["factors"] == [0.7, 1.0, 1.3]
-    # cell C: legacy $9.6*U vs new $2.0 -> new wins at ancla=100; at -30% the
-    # legacy side drops to $1.5466 and the winner flips to legacy
-    c07 = sweep_cell(barrido, "0.7", "beta", "qa_short")
-    assert near(c07["legacy_cost_task_usd"], 9.6 * U * 0.7, 9)
+    c07 = sweep_cell(barrido, "0.7", "beta", "tool_calling")
+    assert near(c07["legacy_cost_task_usd"], 0.8 * 0.7, 9)
     assert c07["verdict"]["winner"] == "legacy"
     vueltas = {(f["model"], f["workload"]) for f in barrido["flips"]["0.7"]}
-    assert vueltas == {("beta", "qa_short")}
+    assert vueltas == {("beta", "tool_calling")}
     # the measured pp/1M never moves with the anchor (it is meter-native)
-    assert sweep_cell(barrido, "1.3", "beta", "qa_short")["pp_per_1m"] == 9.6 * 1e6 / 1_250_000
+    assert (
+        sweep_cell(barrido, "1.3", "beta", "tool_calling")["pp_per_1m"]
+        == (0.8 / U) * 1e6 / 2_000_000
+    )
+    # cell C's paid gap is far too wide for a ±30 % anchor to close: it stays new
+    assert sweep_cell(barrido, "0.7", "beta", "qa_short")["verdict"]["winner"] == "new"
 
 
 def test_sweep_k_axis_reads_the_concurrency_cells(tmp_path):
@@ -1022,14 +1092,14 @@ def test_custom_s_births_a_stamped_set_and_never_touches_the_reference(tmp_path,
 
     # the reference set first: the persisted S0/S1 pair under analysis/
     referencia = analyze_doc(tmp_path, "--pricing-dir", pricing)
-    assert referencia["base_params"]["methodology_version"] == "v1.2"
+    assert referencia["base_params"]["methodology_version"] == analyze_module.METHODOLOGY_VERSION
     assert referencia["base_params"]["s"] == 0.5
     assert (tmp_path / "analysis" / "analysis.json").exists()
     antes = (tmp_path / "analysis" / "analysis.json").read_bytes()
 
     sello = analyze_doc(tmp_path, "--pricing-dir", pricing, "--s", "0.35")
     assert sello["base_params"]["s"] == 0.35
-    assert sello["base_params"]["methodology_version"] == "v1.2"
+    assert sello["base_params"]["methodology_version"] == analyze_module.METHODOLOGY_VERSION
     carpeta = tmp_path / "analysis-s0.35"
     assert (carpeta / "analysis.json").exists()
     assert (carpeta / "dashboard.html").exists()

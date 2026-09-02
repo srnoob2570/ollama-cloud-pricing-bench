@@ -931,6 +931,7 @@ def _analyze_release(args: argparse.Namespace) -> int:
             level=args.level,
             model=args.model,
             protocol_version=meta.get("protocol_version"),
+            credit_ratio=args.credit_ratio,
         )
     except analyze.AnalyzeError as e:
         print(f"error: {e}", file=sys.stderr)
@@ -961,6 +962,12 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     if not math.isfinite(args.ancla) or args.ancla <= 0:
         print(f"error: --ancla must be a finite number > 0; got {args.ancla!r}", file=sys.stderr)
         return 2
+    if not math.isfinite(args.credit_ratio) or args.credit_ratio <= 0:
+        print(
+            f"error: --credit-ratio must be a finite number > 0; got {args.credit_ratio!r}",
+            file=sys.stderr,
+        )
+        return 2
     if args.release is not None:
         return _analyze_release(args)
     try:
@@ -976,6 +983,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             s=args.s,
             level=args.level,
             model=args.model,
+            credit_ratio=args.credit_ratio,
         )
     except analyze.AnalyzeError as e:
         print(f"error: {e}", file=sys.stderr)
@@ -1116,11 +1124,22 @@ def build_parser() -> argparse.ArgumentParser:
             )
         elif nombre == "analyze":
             # analyze's own knobs: --ancla (the anchor its legacy dollars
-            # divide by) and --s (the S1 assumption it extrapolates with).
-            # No --reps/--rep/--k: those tune SPENDING, and a silent no-op
-            # here would read as a re-measured density instead of a re-priced
-            # bundle.
+            # divide by), --s (the S1 assumption it extrapolates with) and
+            # --credit-ratio (the new plan's per-tier credit multiplier its
+            # verdicts re-denominate by). No --reps/--rep/--k: those tune
+            # SPENDING, and a silent no-op here would read as a re-measured
+            # density instead of a re-priced bundle.
             parser.add_argument("--ancla", type=float, default=100.0, help="P_LEGADO USD/month")
+            parser.add_argument(
+                "--credit-ratio",
+                type=float,
+                default=3.0,
+                help=(
+                    "new-plan credits per paid dollar at the comparisons "
+                    "(verdicts, margins, pp/1M threshold); 1 reproduces the "
+                    "legacy 1:1 credit comparison"
+                ),
+            )
             parser.add_argument(
                 "--s",
                 type=float,

@@ -80,7 +80,7 @@ CACHE_SWEEP_S = (0.0, 0.25, 0.5, 0.9)  # the fixed cache sweep (S0 included)
 # The methodology version this harness implements: the versioned S1 default is
 # declared here (v1.2), and every analysis set's header carries the version so
 # a future default change (v1.3) never ambiguates old artifacts (#46).
-METHODOLOGY_VERSION = "v1.2"
+METHODOLOGY_VERSION = "v1.3"
 # The persisted S0/S1 pair's S1: the versioned default hit rate (methodology
 # v1.2), declared by the methodology and mirrored by analyze's --s default.
 # A custom S(x) never re-anchors the locked estimates or the comparative MAPE
@@ -149,12 +149,21 @@ def verdict_of(
     nuevo: float | None,
     tick_usd: float,
     legacy_session: float | None = None,
+    credit_ratio: float = 1.0,
 ) -> dict:
     """Who wins this cell, and by how much: `{winner, margin_pct}`, where
     margin_pct = (loser − winner) / winner — how much more expensive the loser
     is, as a percentage of the winner's cost (the methodology's verdict
     margin). Unbounded above: it exceeds 100 % whenever the loser costs more
     than twice the winner.
+
+    Both sides are compared in PAID dollars (methodology v1.3): the new plan
+    sells credits at a per-tier multiplier (Max $100 → $300 credits), so the
+    new side's nominal credit cost is re-denominated by `credit_ratio`
+    (credits of face value per paid dollar; 3.0 for the study's Max-tier
+    anchor, 1.0 keeps the legacy 1:1 comparison). The legacy side is already
+    paid dollars — the anchor amortizes the plan's monthly price — and the
+    session fallback prices the LEGACY winner, so neither moves.
 
     A sub-tick winner is not a free winner: when the winner's weekly reading
     is 0.0 the weekly meter cannot resolve it (the cost tends to zero per task
@@ -174,6 +183,7 @@ def verdict_of(
     """
     if legacy is None or nuevo is None:
         return {"winner": "no data", "margin_pct": None}
+    nuevo = nuevo / credit_ratio
     margen = min(2 * tick_usd, 0.05 * min(legacy, nuevo))
     if abs(legacy - nuevo) <= margen:
         return {"winner": "tie", "margin_pct": None}
@@ -316,6 +326,7 @@ def _cell_doc(
     usd: float,
     tick_usd: float,
     s_efectivo,
+    credit_ratio: float = 1.0,
 ) -> dict:
     """One (model, workload) derivative: distributions, extrapolation, verdict."""
     reps = sorted(celda["reps"], key=lambda r: r["rep"] if isinstance(r["rep"], int) else 0)
@@ -344,7 +355,10 @@ def _cell_doc(
 
     # The threshold prices the cell's OWN measured mix on the new table and
     # bridges it to the meter's unit: an unmeasured cell gets none, and none
-    # is ever borrowed from another model's measurement.
+    # is ever borrowed from another model's measurement. The comparison is in
+    # paid dollars (methodology v1.3): the new side's credits divide by
+    # credit_ratio, so the legacy quota tolerates credit_ratio times more
+    # pp/1M before the new plan becomes cheaper.
     tokens_medios = tin_med + tout_med if tin_med is not None and tout_med is not None else None
 
     legacy_cuantiles = _cuantiles(
@@ -364,8 +378,8 @@ def _cell_doc(
     umbral = None
     if s0 is not None and tokens_medios and legacy_med is not None:
         umbral = {
-            "s0": s0 / (tokens_medios / 1e6) / usd,
-            "s1": s1 / (tokens_medios / 1e6) / usd if s1 is not None else None,
+            "s0": s0 / (tokens_medios / 1e6) / (usd * credit_ratio),
+            "s1": (s1 / (tokens_medios / 1e6) / (usd * credit_ratio) if s1 is not None else None),
         }
     return {
         "model": model,
@@ -400,8 +414,12 @@ def _cell_doc(
         "s_effective": {"s": s_efectivo.s, "source": s_efectivo.source},
         "threshold_pp_per_1m": umbral,
         "verdict": {
-            "s0": verdict_of(legacy_med, s0, tick_usd, legacy_session=legacy_s_med),
-            "s1": verdict_of(legacy_med, s1, tick_usd, legacy_session=legacy_s_med),
+            "s0": verdict_of(
+                legacy_med, s0, tick_usd, legacy_session=legacy_s_med, credit_ratio=credit_ratio
+            ),
+            "s1": verdict_of(
+                legacy_med, s1, tick_usd, legacy_session=legacy_s_med, credit_ratio=credit_ratio
+            ),
         },
     }
 
@@ -462,7 +480,7 @@ def _curva_dp_tokens(batches: list[dict], requests: list[dict]) -> list[dict]:
     return sorted(puntos, key=lambda p: (p["workload"] or "", p["model"] or "", p["tokens_total"]))
 
 
-def _sweep_rates(celdas: list[dict], tick_usd: float) -> dict:
+def _sweep_rates(celdas: list[dict], tick_usd: float, credit_ratio: float = 1.0) -> dict:
     """Rates +/-20 %: the new-plan side scales with the table, the legacy side
     is meter-native and cannot move. Flips read against the S0 verdict."""
     barrido = {"factors": list(RATE_FACTORS), "cells": {}, "flips": {}}
@@ -482,6 +500,7 @@ def _sweep_rates(celdas: list[dict], tick_usd: float) -> dict:
                     if c.get("legacy_cost_task_usd_session")
                     else None
                 ),
+                credit_ratio=credit_ratio,
             )
             celdas_f.append(
                 {
@@ -509,7 +528,7 @@ def _sweep_rates(celdas: list[dict], tick_usd: float) -> dict:
     return barrido
 
 
-def _sweep_cache(celdas: list[dict], tabla, tick_usd: float) -> dict:
+def _sweep_cache(celdas: list[dict], tabla, tick_usd: float, credit_ratio: float = 1.0) -> dict:
     """Cache hit-rate in {0, 25, 50, 90} %: only models the table discounts move."""
     barrido = {"s_values": list(CACHE_SWEEP_S), "cells": {}, "flips": {}}
     for s in CACHE_SWEEP_S:
@@ -538,6 +557,7 @@ def _sweep_cache(celdas: list[dict], tabla, tick_usd: float) -> dict:
                     if c.get("legacy_cost_task_usd_session")
                     else None
                 ),
+                credit_ratio=credit_ratio,
             )
             celdas_s.append(
                 {
@@ -561,7 +581,7 @@ def _sweep_cache(celdas: list[dict], tabla, tick_usd: float) -> dict:
     return barrido
 
 
-def _sweep_ancla(celdas: list[dict], tick_usd: float) -> dict:
+def _sweep_ancla(celdas: list[dict], tick_usd: float, credit_ratio: float = 1.0) -> dict:
     """P_LEGADO +/-30 %: every legacy dollar moves with the anchor, measured
     pp/1M cannot. Flips read against the baseline verdict."""
     barrido = {"factors": list(ANCLA_FACTORS), "cells": {}, "flips": {}}
@@ -581,6 +601,7 @@ def _sweep_ancla(celdas: list[dict], tick_usd: float) -> dict:
                     if c.get("legacy_cost_task_usd_session")
                     else None
                 ),
+                credit_ratio=credit_ratio,
             )
             celdas_f.append(
                 {
@@ -813,9 +834,16 @@ def build(
     model: str | None = None,
     protocol_version: str | None = None,
     cells_only: bool = False,
+    credit_ratio: float = 3.0,
 ) -> dict:
     """The analysis doc, computed from raw alone. Raises AnalyzeError when the
     base holds no raw dataset at all.
+
+    `credit_ratio` re-denominates the new-plan side at every comparison point
+    (verdicts, margins, pp/1M threshold) into paid dollars: the new plan sells
+    credits at a per-tier multiplier (Max $100 → $300, the study's anchor tier)
+    so the ratio is 3.0 by default; 1.0 keeps the legacy 1:1 credit comparison.
+    The persisted per-task cost figures stay at credit face value either way.
 
     `protocol_version` pins the vintage the filter keeps (default: this
     harness's own). A fetched dataset release is analyzed with ITS OWN protocol
@@ -877,6 +905,7 @@ def build(
             usd=usd,
             tick_usd=tick_usd,
             s_efectivo=resueltos[modelo],
+            credit_ratio=credit_ratio,
         )
         for (modelo, workload) in sorted(agrupadas)
         if model is None or modelo == model
@@ -904,6 +933,7 @@ def build(
             "ancla": ancla,
             "usd_per_pp": usd,
             "s": s,
+            "credit_ratio": credit_ratio,
             "tick_pp": TICK_PP,
             "tick_usd": tick_usd,
             # the session window's derived $/pp (secondary, unanchored — the
@@ -929,7 +959,11 @@ def build(
             "(k=1 cells are the derivatives' baseline; k>1 cells and the "
             "calibration/probe workstreams stay out of the cells). The threshold "
             "pp/1M prices each cell's OWN measured token mix on the table: an "
-            "unmeasured cell reports no data and never borrows a threshold. A "
+            "unmeasured cell reports no data and never borrows a threshold. "
+            "Verdicts, margins and the threshold compare PAID dollars: the new "
+            f"plan sells credits at a per-tier multiplier, so its nominal credit "
+            f"cost divides by credit_ratio={credit_ratio:g} (the anchor's Max tier: "
+            "$100 -> $300 credits); the per-task cost figures stay at face value. A "
             "verdict is {winner, margin_pct}, the margin (loser - winner)/winner: "
             "a real margin is >2 meter ticks or >5 % of the cheaper cost; a "
             "sub-tick winner (weekly reads 0.0) prices with its session-derived "
@@ -949,9 +983,9 @@ def build(
         doc["who_wins"] = _who_wins(celdas)
         doc["dp_tokens_curve"] = _curva_dp_tokens(batches, requests)
         doc["sensitivity"] = {
-            "rates": _sweep_rates(celdas, tick_usd),
-            "cache": _sweep_cache(celdas, tabla, tick_usd),
-            "ancla": _sweep_ancla(celdas, tick_usd),
+            "rates": _sweep_rates(celdas, tick_usd, credit_ratio=credit_ratio),
+            "cache": _sweep_cache(celdas, tabla, tick_usd, credit_ratio=credit_ratio),
+            "ancla": _sweep_ancla(celdas, tick_usd, credit_ratio=credit_ratio),
             "k_axis": _sweep_k(batches, requests, usd, session_usd),
         }
     return doc

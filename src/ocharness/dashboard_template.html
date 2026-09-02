@@ -217,14 +217,16 @@ svg { display: block; max-width: 100%; }
     is a tie.</p>
 </div>
 
-<h2>Critical threshold (pp/1M): measured vs new-plan price</h2>
+<h2>Break-even per million tokens: legacy $ vs new-plan $</h2>
 <div class="panel">
   <div id="chart-threshold"></div>
-  <div class="legend"><span><span class="sw" style="background:var(--legacy)"></span>measured pp/1M
-    (median, k=1 cells)</span>
-    <span><span class="sw" style="background:var(--new);width:3px"></span>threshold at the slider's
-    S(x)</span>
-    <span>measured left of the threshold &rArr; legacy is cheaper</span></div>
+  <div class="legend"><span><span class="sw" style="background:var(--legacy)"></span>legacy $/1M
+    (measured meter read at the anchor; a sub-tick weekly read shows its session-derived
+    equivalent, marked)</span>
+    <span><span class="sw" style="background:var(--new);width:3px"></span>new $/1M at the slider's
+    S(x), each cell's own measured mix</span>
+    <span>legacy left of new &rArr; legacy is cheaper (the same comparison as the pp/1M
+    threshold, translated at the anchor)</span></div>
 </div>
 
 <h2>How much do you save by picking the winner?</h2>
@@ -476,46 +478,63 @@ function renderTable() {
   $("tabla-cuerpo").innerHTML = filas;
 }
 
+function usdLabel(x) { return "$" + Number(x).toPrecision(3); }
 function renderThreshold() {
+  // the pp/1M threshold comparison, translated at the anchor into hard
+  // dollars per 1M tokens: legacy $/1M (the measured meter read, with the
+  // session fallback the table uses) against the new-plan $/1M priced on the
+  // cell's own mix — the same rule as the persisted threshold, readable unit
   var cont = $("chart-threshold");
   var medidas = cellsFiltered().filter(function (c) {
-    return c.pp_per_1m && thresholdAt(c) !== null;
-  }).sort(function (a, b) { return b.pp_per_1m.median - a.pp_per_1m.median; });
+    return legacyPer1M(c) !== null && thresholdAt(c) !== null;
+  }).map(function (c) {
+    var leg = legacyPerTask(c);
+    return {
+      c: c,
+      legacyUsd: legacyPer1M(c),
+      derived: leg && leg.derived,
+      newUsd: thresholdAt(c) * USDPP
+    };
+  }).sort(function (a, b) { return b.legacyUsd - a.legacyUsd; });
   if (!medidas.length) {
     cont.innerHTML = '<p class="note">no measured cell under this filter</p>';
     return;
   }
   var top = 0;
-  medidas.forEach(function (c) {
-    top = Math.max(top, c.pp_per_1m.median, thresholdAt(c));
+  medidas.forEach(function (m) {
+    top = Math.max(top, m.legacyUsd, m.newUsd);
   });
   top *= 1.05;
   if (!(top > 0)) top = 1;  // an all-zero scale must not divide into NaN widths
-  var W = 720, labelW = 252, right = 90, rowH = 24, H = medidas.length * rowH + 12;
+  var W = 720, labelW = 320, right = 90, rowH = 24, H = medidas.length * rowH + 12;
   var plotW = W - labelW - right;
   var rows = "";
-  medidas.forEach(function (c, i) {
+  medidas.forEach(function (m, i) {
     var y = i * rowH + 10;
-    // the meter can recalculate a bracket downward (negative median): clamp,
-    // the row keeps its label and threshold, the bar just never goes negative
-    var bw = Math.max(0, c.pp_per_1m.median / top * plotW);
-    var tx = thresholdAt(c) / top * plotW;
+    var c = m.c;
+    // the meter can recalculate a bracket downward (negative median): such a
+    // read prices as nothing, so legacyPer1M already filtered it out
+    var bw = Math.max(0, m.legacyUsd / top * plotW);
+    var tx = m.newUsd / top * plotW;
     rows += '<text x="' + (labelW - 8) + '" y="' + (y + 10) + '" text-anchor="end" font-size="11" ' +
       'fill="var(--ink-2)" font-family="ui-monospace,Menlo,monospace">' +
-      esc(c.model) + " &middot; " + esc(c.workload) + "</text>" +
+      esc(c.model) + " &middot; " + esc(c.workload) + (m.derived ? " (session)" : "") + "</text>" +
       '<rect x="' + labelW + '" y="' + y + '" width="' + bw.toFixed(2) + '" height="14" rx="3" ' +
-      'fill="var(--legacy)"><title>' + esc(c.model) + " (" + esc(c.workload) + "): measured " +
-      c.pp_per_1m.median + " pp/1M</title></rect>" +
+      'fill="var(--legacy)"><title>' + esc(c.model) + " (" + esc(c.workload) + "): legacy " +
+      usdLabel(m.legacyUsd) + " per 1M tokens" + (m.derived ? " (session-derived weekly-equivalent)" : "") +
+      " · measured " + c.pp_per_1m.median + " pp/1M</title></rect>" +
       '<rect x="' + (labelW + tx - 1.5).toFixed(2) + '" y="' + (y - 3) + '" width="3" height="20" ' +
       'rx="1.5" fill="var(--new)"><title>' + esc(c.model) + " (" + esc(c.workload) +
-      "): threshold " + Number(thresholdAt(c)).toPrecision(6) + " pp/1M at S(x)=" +
-      Math.round(effectiveS(c.model) * 100) + "%</title></rect>" +
+      "): new " + usdLabel(m.newUsd) + " per 1M tokens at S(x)=" +
+      Math.round(effectiveS(c.model) * 100) + "% (threshold " +
+      Number(thresholdAt(c)).toPrecision(6) + " pp/1M)</title></rect>" +
       '<text x="' + (labelW + bw + 6).toFixed(2) + '" y="' + (y + 10) + '" font-size="10" ' +
       'fill="var(--muted)" font-family="ui-monospace,Menlo,monospace">' +
-      Number(c.pp_per_1m.median).toPrecision(4) + "</text>";
+      usdLabel(m.legacyUsd) + "</text>";
   });
   cont.innerHTML = '<svg viewBox="0 0 ' + W + " " + H + '" width="' + W + '" height="' + H +
-    '" role="img" aria-label="measured pp per 1M against the new-plan threshold">' + rows + "</svg>";
+    '" role="img" aria-label="legacy dollars per 1M tokens against the new-plan dollars per ' +
+    '1M tokens">' + rows + "</svg>";
 }
 
 function renderMargins() {

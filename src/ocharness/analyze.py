@@ -1000,12 +1000,12 @@ def build(
             "weekly-equivalent, falling back to the loser's own cost (exactly "
             "100 %) with no session reading either; the "
             "per-rep quantiles carry the full uncertainty. Both windows ship per "
-            f"bracket: weekly is the primary (the anchor); the session is the "
-            f"secondary signal, {SESSION_CAVEAT[0].lower() + SESSION_CAVEAT[1:]}. "
+            f"bracket: weekly is the primary (the anchor); "
+            f"{SESSION_CAVEAT[0].lower() + SESSION_CAVEAT[1:]}. "
             "Pooled "
             "brackets (workload null) are never cells: their per-workload legacy "
-            "sits in 'pooled' as token-share allocations, marked allocated and "
-            "never verdicted, and who-wins counts only measured verdicts."
+            "is allocated in 'pooled' as token shares, marked allocated and never "
+            "verdicted; who-wins counts only measured verdicts."
         ),
     }
     if not cells_only:
@@ -1153,7 +1153,7 @@ def _who_wins_html(doc: dict) -> str:
             ]
         )
     if not filas:
-        return '<p class="nota">no measured cell under this filter</p>'
+        return '<p class="note">no measured cell under this filter</p>'
     tabla = _tabla_html(
         [
             "workload (user profile)",
@@ -1164,7 +1164,7 @@ def _who_wins_html(doc: dict) -> str:
         filas,
     )
     return tabla + (
-        '<p class="nota">counts of measured models whose winner is each system '
+        '<p class="note">counts of measured models whose winner is each system '
         "(a margin beyond 2 meter ticks or 5 %); unmeasured models count as "
         "unmeasured, never as a win.</p>"
     )
@@ -1205,17 +1205,17 @@ def _calibracion_html(doc: dict) -> str:
             else ""
         )
         lineas.append(f"{modelo}: S={resuelto['s'] * 100:.0f}% ({fuente}{detalle})")
-    cuerpo = "".join(f"<p class='nota'>{html.escape(t)}</p>" for t in lineas)
+    cuerpo = "".join(f"<p class='note'>{html.escape(t)}</p>" for t in lineas)
     descuentos = doc.get("paper_discounts") or []
     aviso = (
-        "<p class='nota'>unmaterialized paper discounts: "
+        "<p class='note'>unmaterialized paper discounts: "
         + ", ".join(html.escape(d) for d in descuentos)
         + "</p>"
         if descuentos
         else ""
     )
     return (
-        cuerpo or "<p class='nota'>no calibration data: every S1 is the assumed hit rate</p>"
+        cuerpo or "<p class='note'>no calibration data: every S1 is the assumed hit rate</p>"
     ) + aviso
 
 

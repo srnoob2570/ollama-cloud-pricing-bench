@@ -4,56 +4,78 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ollama Cloud cost analysis: legacy or new?</title>
+<meta name="description" content="Measured cost analysis of Ollama Cloud plans: per-workload verdicts, break-even thresholds and cache-hit sensitivity, recomputed live in the browser.">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Ollama Cloud cost analysis: legacy or new?">
+<meta property="og:description" content="Which plan actually costs less, measured on real workloads — verdicts, thresholds and cache sensitivity in paid dollars.">
+<meta name="theme-color" content="#f8f7f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#12110e" media="(prefers-color-scheme: dark)">
 <style>
 /* three-state theme tokens: system is the default (no attribute), light and
    dark are selectable. Chart colors NEVER appear here outside these tokens. */
 :root {
   color-scheme: light;
-  --plane: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
-  --grid: #e1e0d9; --axis: #c3c2b7; --ring: rgba(11,11,11,.10);
-  --hover: rgba(11,11,11,.04); --panel-shadow: 0 1px 3px rgba(11,11,11,.05);
+  --plane: #f8f7f2; --surface: #fdfdfb; --ink: #1a1916; --ink-2: #4b4943; --muted: #7c7a71;
+  --grid: #e7e5db; --axis: #c8c6b8; --ring: rgba(69,59,44,.12);
+  --hover: rgba(69,59,44,.045);
+  /* shadows tinted with the palette's warm hue, not neutral black */
+  --panel-shadow: 0 1px 2px rgba(69,59,44,.06), 0 10px 28px -12px rgba(69,59,44,.14);
   --legacy: #2a78d6; --new: #eb6834;            /* series: legacy / new (validated) */
   --legacy-soft: rgba(42,120,214,.14); --new-soft: rgba(235,104,52,.14);
-  --tie: #898781;
+  --tie: #7c7a71;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --plane: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
-    --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,.10);
-    --hover: rgba(255,255,255,.05); --panel-shadow: 0 1px 3px rgba(0,0,0,.45);
+    --plane: #12110e; --surface: #1c1b17; --ink: #f2f0e9; --ink-2: #c0beb2; --muted: #8d8b80;
+    --grid: #2b2a24; --axis: #3a382f; --ring: rgba(242,240,233,.13);
+    --hover: rgba(242,240,233,.05);
+    --panel-shadow: 0 1px 2px rgba(0,0,0,.5), 0 10px 28px -12px rgba(0,0,0,.55);
     --legacy: #3987e5; --new: #d95926;
     --legacy-soft: rgba(57,135,229,.18); --new-soft: rgba(217,89,38,.18);
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --plane: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
-  --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,.10);
-  --hover: rgba(255,255,255,.05); --panel-shadow: 0 1px 3px rgba(0,0,0,.45);
+  --plane: #12110e; --surface: #1c1b17; --ink: #f2f0e9; --ink-2: #c0beb2; --muted: #8d8b80;
+  --grid: #2b2a24; --axis: #3a382f; --ring: rgba(242,240,233,.13);
+  --hover: rgba(242,240,233,.05);
+  --panel-shadow: 0 1px 2px rgba(0,0,0,.5), 0 10px 28px -12px rgba(0,0,0,.55);
   --legacy: #3987e5; --new: #d95926;
   --legacy-soft: rgba(57,135,229,.18); --new-soft: rgba(217,89,38,.18);
 }
 * { box-sizing: border-box; }
-body { margin: 0; padding: 28px 24px 48px; background: var(--plane); color: var(--ink);
-  font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+html { scroll-behavior: smooth; }
+body { margin: 0; padding: clamp(28px, 6vh, 56px) 24px 64px; background: var(--plane);
+  color: var(--ink);
+  font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; }
+::selection { background: var(--new-soft); }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}
 /* one radius scale: panels 12px, controls 8px, badges 6px, chips full-pill */
 .wrap { max-width: 1200px; margin: 0 auto; }
 .skip { position: absolute; left: -9999px; }
 .skip:focus { left: 16px; top: 12px; background: var(--surface); color: var(--ink);
   border: 1px solid var(--ring); border-radius: 8px; padding: 6px 10px; z-index: 5; }
 :focus-visible { outline: 2px solid var(--legacy); outline-offset: 2px; }
-h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: -.02em; font-weight: 700;
-  text-wrap: balance; }
+h1 { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: clamp(27px, 4.2vw, 36px); margin: 0 0 6px; letter-spacing: -.02em;
+  font-weight: 700; line-height: 1.12; text-wrap: balance; }
 h2 { font-size: 15px; letter-spacing: -.01em; color: var(--ink);
-  margin: 30px 0 12px; font-weight: 600; }
-.sub { color: var(--muted); font-size: 12.5px; }
-.mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+  margin: 36px 0 14px; font-weight: 600; text-wrap: balance; }
+.sub { color: var(--muted); font-size: 13.5px; }
+/* IBM Plex Mono renders only for whoever has it installed; the stack degrades
+   to the OS mono otherwise, so charts and table always share one family */
+.mono { font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums; }
 .badge { display: inline-block; font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
   border: 1px solid var(--ring); border-radius: 6px; padding: 1px 6px; color: var(--ink-2);
   background: var(--surface); margin-left: 6px; vertical-align: 1px; }
 .panel { background: var(--surface); border: 1px solid var(--ring); border-radius: 12px;
-  padding: 16px 18px; margin: 0 0 14px; box-shadow: var(--panel-shadow); }
+  padding: 18px 20px; margin: 0 0 16px; box-shadow: var(--panel-shadow); }
 /* controls: label-above-control (11px caps, ink-2 for AA contrast, not muted),
    one radius for every control (8px), hover/focus/active states on each */
 .controls { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-end; margin: 14px 0 4px; }
@@ -96,7 +118,8 @@ tbody tr { transition: background .15s ease; }
 tbody tr:hover { background: var(--hover); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 2px 9px;
-  border-radius: 999px; font-weight: 600; white-space: nowrap; }
+  border-radius: 999px; font-weight: 600; white-space: nowrap;
+  font-variant-numeric: tabular-nums; }
 .chip .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .chip.legacy { color: var(--legacy); background: var(--legacy-soft); }
 .chip.legacy .dot { background: var(--legacy); }
@@ -111,8 +134,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .mbar .fill.legacy { left: 0; background: var(--legacy); }
 .mbar .fill.new { right: 0; background: var(--new); }
 .mbar b { font-weight: 600; min-width: 48px; text-align: right; }
-.big { font-size: 28px; font-weight: 700; letter-spacing: -.02em; margin: 4px 0 2px;
-  text-wrap: balance; }
+.big { font-size: 28px; font-weight: 700; letter-spacing: -.02em;
+  line-height: 1.15; margin: 4px 0 4px; text-wrap: balance; }
 .h-legacy { color: var(--legacy); } .h-new { color: var(--new); }
 .pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .pill { background: var(--surface); border: 1px solid var(--ring); border-radius: 8px;
@@ -124,6 +147,10 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
   margin-right: 5px; vertical-align: -1px; }
 .note { font-size: 12px; color: var(--muted); }
+/* long methodological prose: full panel width, comfortable leading and no
+   orphan-straggler lines */
+.panel > p.note, main > p.note, .legend + p.note { line-height: 1.65;
+  text-wrap: pretty; }
 details { border-top: 1px solid var(--grid); padding-top: 10px; margin-top: 10px; }
 summary { cursor: pointer; color: var(--ink-2); font-weight: 600; font-size: 13px;
   transition: color .15s ease; }
@@ -215,8 +242,10 @@ svg { display: block; max-width: 100%; }
     GPU-time rate was never published), so the legacy column applies the cell's measured
     pp/1M to the scenario's in+out total &mdash; hover for the underlying meter read and
     the per-task prices; a sub-tick weekly read falls back to the session-derived
-    equivalent, marked &laquo;session&raquo;. The verdict chips are the measured per-task
-    comparison of each cell and do not follow the scenario inputs. The meter-native view
+    equivalent, marked &laquo;session&raquo;. The verdict chips compare each cell's measured
+    per-task prices &mdash; the measured legacy read against the new plan priced live at the
+    cell's own measured token mix and the slider's S(x) &mdash; so they follow the slider
+    (for assumed-S models), never the scenario inputs. The meter-native view
     lives in the threshold chart below. Every verdict shows its margin (the chip's
     +X&nbsp;%): how much
     more expensive the loser is, (loser &minus; winner) &divide; winner — it can exceed 100 %
@@ -246,7 +275,7 @@ svg { display: block; max-width: 100%; }
     <span><span class="sw" style="background:var(--new)"></span>new wins (right)</span>
     <span><span class="sw" style="background:var(--tie);border-radius:50%"></span>tie</span>
     <span>center axis = 0 % (a tie sits on it); bars cap at 100 % &mdash; the chevron marks a
-    margin beyond; margins follow the slider</span>
+    margin beyond; margins follow the slider (assumed-S models only)</span>
     <span>margins are in paid dollars: the new plan's credits count at face value &divide;
     <span class="mono credit-ratio-num"></span></span></div>
 </div>
@@ -460,7 +489,8 @@ function renderReco() {
   $("reco-headline").innerHTML = headline;
   $("reco-pills").innerHTML = pills || '<p class="note">no measured cell under this filter</p>';
   $("reco-sub").textContent =
-    "The margin is the saving from picking the winner. Anchor: $" + BP.ancla + "/mo = " +
+    "The margin is how much more expensive the loser is; picking the winner avoids " +
+    "paying that premium. Anchor: $" + BP.ancla + "/mo = " +
     Number(USDPP).toFixed(6) + " USD per weekly pp (tick $" + Number(TICKUSD).toFixed(6) + ").";
 }
 
@@ -543,7 +573,7 @@ function renderThreshold() {
     grid += '<line x1="' + x.toFixed(2) + '" y1="4" x2="' + x.toFixed(2) + '" y2="' + baseY +
       '" stroke="var(--grid)" stroke-width="1"/>';
     ejes += '<text x="' + x.toFixed(2) + '" y="' + (baseY + 16) + '" text-anchor="middle" ' +
-      'font-size="10" fill="var(--muted)" font-family="ui-monospace,Menlo,monospace">' +
+      'font-size="10" fill="var(--muted)" font-family="&quot;IBM Plex Mono&quot;,ui-monospace,Menlo,monospace">' +
       "$" + v.toFixed(2) + "</text>";
   });
   ejes += '<text x="' + ((labelW + W - right) / 2).toFixed(1) + '" y="' + (H - 6) +
@@ -560,7 +590,7 @@ function renderThreshold() {
     // zero" rather than empty, and the value reads in a fixed right column:
     // it can never land on the new-price tick, wherever that price falls
     rows += '<text x="' + (labelW - 8) + '" y="' + (y + 10) + '" text-anchor="end" font-size="11" ' +
-      'fill="var(--ink-2)" font-family="ui-monospace,Menlo,monospace">' +
+      'fill="var(--ink-2)" font-family="&quot;IBM Plex Mono&quot;,ui-monospace,Menlo,monospace">' +
       esc(c.model) + " &middot; " + esc(c.workload) + (m.derived ? " (session)" : "") + "</text>" +
       '<rect x="' + labelW + '" y="' + y + '" width="' + plotW + '" height="14" rx="3" ' +
       'fill="var(--grid)" fill-opacity="0.55"><title>' + esc(c.model) + " (" + esc(c.workload) +
@@ -575,7 +605,7 @@ function renderThreshold() {
       Math.round(effectiveS(c.model) * 100) + "% (threshold " +
       Number(thresholdAt(c)).toPrecision(6) + " pp/1M)</title></rect>" +
       '<text x="' + (W - 8) + '" y="' + (y + 10) + '" text-anchor="end" font-size="10" ' +
-      'fill="var(--ink-2)" font-family="ui-monospace,Menlo,monospace">' +
+      'fill="var(--ink-2)" font-family="&quot;IBM Plex Mono&quot;,ui-monospace,Menlo,monospace">' +
       usdLabel(m.legacyUsd) + "</text>";
   });
   cont.innerHTML = '<svg viewBox="0 0 ' + W + " " + H +
@@ -620,7 +650,7 @@ function renderMargins() {
     [cx - v / CAP * half, cx + v / CAP * half].forEach(function (x, side) {
       if (v === 0 && side === 0) return;  // the center 0 gets a single label
       svg += '<text x="' + x.toFixed(2) + '" y="' + (baseY + 16) + '" text-anchor="middle" ' +
-        'font-size="10" fill="var(--muted)" font-family="ui-monospace,Menlo,monospace">' +
+        'font-size="10" fill="var(--muted)" font-family="&quot;IBM Plex Mono&quot;,ui-monospace,Menlo,monospace">' +
         v + (v === CAP ? " %" : "") + "</text>";
     });
   });
@@ -631,7 +661,7 @@ function renderMargins() {
   verdicts.forEach(function (x, i) {
     var y = i * rowH + 14;
     svg += '<text x="' + (labelW - 8) + '" y="' + (y + 4) + '" text-anchor="end" font-size="11" ' +
-      'fill="var(--ink-2)" font-family="ui-monospace,Menlo,monospace">' +
+      'fill="var(--ink-2)" font-family="&quot;IBM Plex Mono&quot;,ui-monospace,Menlo,monospace">' +
       esc(x.c.model) + " &middot; " + esc(x.c.workload) + "</text>";
     if (x.v.winner === "no data") {
       svg += '<text x="' + cx + '" y="' + (y + 4) + '" text-anchor="middle" font-size="10" ' +
@@ -665,7 +695,7 @@ function renderMargins() {
     svg += '<text x="' + (isLegacy ? cx - len - (over ? 13 : 6) : cx + len + (over ? 13 : 6)).toFixed(2) +
       '" y="' + (y + 4) +
       '" text-anchor="' + (isLegacy ? "end" : "start") + '" font-size="10" fill="var(--ink-2)" ' +
-      'font-family="ui-monospace,Menlo,monospace">' + Number(pct).toFixed(1) + "%</text>";
+      'font-family="&quot;IBM Plex Mono&quot;,ui-monospace,Menlo,monospace">' + Number(pct).toFixed(1) + "%</text>";
   });
   cont.innerHTML = '<svg viewBox="0 0 ' + W + " " + H +
     '" role="img" aria-label="verdict margin by cell: legacy left, new right, tie dot">' +
@@ -700,13 +730,13 @@ function renderDp() {
   [0, dataMaxX / 2, dataMaxX].forEach(function (v) {
     var x = padL + v / maxX * (W - padL - padR);
     ticks += '<text x="' + x.toFixed(1) + '" y="' + (H - padB + 14) + '" text-anchor="middle" ' +
-      'font-size="10" fill="var(--muted)" font-family="ui-monospace,Menlo,monospace">' +
+      'font-size="10" fill="var(--muted)" font-family="&quot;IBM Plex Mono&quot;,ui-monospace,Menlo,monospace">' +
       kfmt(v) + "</text>";
   });
   [0, dataMaxY / 2, dataMaxY].forEach(function (v) {
     var y = H - padB - v / maxY * (H - padB - padT);
     ticks += '<text x="' + (padL - 6) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end" ' +
-      'font-size="10" fill="var(--muted)" font-family="ui-monospace,Menlo,monospace">' +
+      'font-size="10" fill="var(--muted)" font-family="&quot;IBM Plex Mono&quot;,ui-monospace,Menlo,monospace">' +
       kfmt(v) + "</text>";
   });
   ejes += '<text x="' + padL + '" y="10" font-size="10" fill="var(--muted)">legacy weekly ' +

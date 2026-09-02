@@ -183,7 +183,9 @@ def _rep_row(batch: dict, lineas: list[dict], usd: float) -> dict:
 
 def _cells(batches: list[dict], requests: list[dict], usd: float) -> dict:
     """The k=1 cells grouped by (model, workload): per-rep rows plus the raw
-    lines that back them (tokens, checker verdicts)."""
+    lines that back them (tokens, checker verdicts). Pooled brackets carry no
+    single workload, so they never enter a cell — their legacy attribution is
+    the allocation section's, never a measured cell's."""
     por_batch = _por_batch(requests)
     celdas: dict = {}
     for batch in batches:
@@ -520,6 +522,77 @@ def _read_dataset(directorio: pathlib.Path, patron: str) -> list[dict]:
     return lineas
 
 
+# ---------------------------------------------------------------------------
+# the pooled brackets' post-hoc allocation (methodology v1.1 §5)
+# ---------------------------------------------------------------------------
+
+
+def allocate_pooled(batch: dict, lineas: list[dict]) -> dict[str, dict] | None:
+    """One pooled bracket's per-workload legacy attribution, post-hoc by token
+    share: the pool's measured Δpp × the workload's share of the pool's request
+    tokens. No weight is stored anywhere — the shares derive here, at analysis
+    time, from the request lines' own token counts, so any re-run re-derives
+    them and a meter or fixture change can never desync a stored weight from
+    the raw evidence (there is none). An allocated reading is marked allocated
+    and never verdicted (the glossary's rule); the verdict-level consumption is
+    the verdict-margin work's.
+
+    Null-safe: None when the line is not a pooled bracket, when no request
+    reports both token counts, or when the pool total is zero; a workload with
+    no readable token reports takes no share (the denominator is the reported
+    tokens only). The allocation keeps the exact floats — the precision policy
+    rounds nothing that is persisted.
+    """
+    pool = batch.get("pool")
+    if not isinstance(pool, dict) or not isinstance(pool.get("workloads"), list):
+        return None
+    tokens_de: dict[str, int] = {}
+    for r in lineas:
+        workload = r.get("workload")
+        tin, tout = r.get("tok_in"), r.get("tok_out")
+        if workload in pool["workloads"] and _es_numero(tin) and _es_numero(tout):
+            tokens_de[workload] = tokens_de.get(workload, 0) + int(tin) + int(tout)
+    total = sum(tokens_de.values())
+    if total <= 0:
+        return None
+    dpp_s, dpp_w = batch.get("dpp_session"), batch.get("dpp_weekly")
+    asignacion: dict[str, dict] = {}
+    for workload in pool["workloads"]:
+        share = tokens_de.get(workload, 0) / total
+        asignacion[workload] = {
+            "tokens_total": tokens_de.get(workload, 0),
+            "share": share,
+            "dpp_session": dpp_s * share if _es_numero(dpp_s) else None,
+            "dpp_weekly": dpp_w * share if _es_numero(dpp_w) else None,
+        }
+    return asignacion
+
+
+def _pooled_section(batches: list[dict], requests: list[dict]) -> list[dict]:
+    """The pooled brackets' allocation rows: the raw bracket, its pool, and the
+    per-workload allocation each of its workloads derives post-hoc."""
+    por_batch = _por_batch(requests)
+    filas = []
+    for batch in batches:
+        pool = batch.get("pool")
+        if not isinstance(pool, dict):
+            continue
+        filas.append(
+            {
+                "batch_id": batch.get("batch_id"),
+                "run_id": batch.get("run_id"),
+                "level": batch.get("level"),
+                "model": batch.get("model"),
+                "workloads": pool.get("workloads"),
+                "reps": pool.get("reps"),
+                "dpp_session": batch.get("dpp_session"),
+                "dpp_weekly": batch.get("dpp_weekly"),
+                "allocations": allocate_pooled(batch, por_batch.get(batch.get("batch_id"), [])),
+            }
+        )
+    return filas
+
+
 def build(
     base: pathlib.Path,
     *,
@@ -625,6 +698,7 @@ def build(
         },
         "s_per_model": {m: dataclasses.asdict(resueltos[m]) for m in modelos},
         "cells": celdas,
+        "pooled": _pooled_section(batches, requests),
         "who_wins": _who_wins(celdas),
         "dp_tokens_curve": _curva_dp_tokens(batches, requests),
         "sensitivity": {
@@ -641,7 +715,10 @@ def build(
             "pp/1M prices each cell's OWN measured token mix on the table: an "
             "unmeasured cell reports no data and never borrows a threshold. A "
             "verdict needs a real margin: >2 meter ticks or >5 % of the cheaper "
-            "cost; the per-rep quantiles carry the full uncertainty."
+            "cost; the per-rep quantiles carry the full uncertainty. Pooled "
+            "brackets (workload null) are never cells: their per-workload legacy "
+            "sits in 'pooled' as token-share allocations, marked allocated and "
+            "never verdicted."
         ),
     }
 

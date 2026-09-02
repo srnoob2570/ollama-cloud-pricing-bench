@@ -1,6 +1,9 @@
 """The bracketed-batch runner (methodology v1 §4, protocol v3).
 
-Per batch = one (workload, model, rep, k) cell:
+Per batch = one bracketed batch: a (workload, model, rep, k) cell measured per
+rep on T1/T3, or a bracket POOL on T2 — the strong four per-cell (every rep of
+the cell in one bracket) and the weak trio pooled per model (`workload` null,
+`pool` naming the workloads; methodology v1.1 §5):
 
 1. raw meter read (full payload kept);
 2. the batch's N requests — streaming, k-concurrent via semaphore, **no warmup,
@@ -44,7 +47,7 @@ import pathlib
 import time
 import uuid
 
-from . import agent, checkers, fixtures, lane, schema
+from . import agent, checkers, fixtures, lane, schema, workloads as workloads_mod
 from .client import PROTOCOL_VERSION, OllamaCloud
 from .fixtures import FIXTURE_VERSION
 
@@ -65,6 +68,13 @@ TICK_PP = 0.1
 # not read as a collapse on 0.09999999999999998.
 TICK_BAND = 1e-9
 
+# The bracket composition the plan derives (methodology v1.1 §5). A manifest
+# binds its composition: a pre-hybrid manifest's batch ids cover per-rep
+# brackets, and resuming it under the hybrid plan would read a 5-rep pooled
+# bracket as "done" on a rep-1 id collision — re-billing nothing and measuring
+# less than the plan says. Composition drift refuses like any other drift.
+COMPOSITION_VERSION = "hybrid-v1.1"
+
 
 class RunnerError(Exception):
     """The protocol aborted (meter failure, dropped request, or run-state drift)."""
@@ -74,12 +84,22 @@ class RunnerError(Exception):
 class BatchSpec:
     level: str
     batch_id: str
-    workload: str
+    workload: str | None  # the per-cell workload; None on a pooled bracket
     model: str
-    rep: int
+    rep: int  # the bracket's first repetition (its batch_id anchor)
     k: int
-    n: int  # requests in the batch (the workload's requests per repetition)
+    n: int  # requests in the batch (every unit's requests added up)
     fixture_hash: str
+    # The bracket's units — (workload, rep, requests) triples in send order.
+    # A per-cell bracket carries one workload across its repetitions; a pooled
+    # bracket walks the pool workload by workload. Empty on the workstreams
+    # that build their own single-unit spec (calibration, concurrency probe).
+    units: tuple[tuple[str, int, int], ...] = ()
+    # Repetitions the bracket pools (the cell's n on a per-cell bracket; the
+    # pool's per-workload count on a pooled one). 1 on a single-rep bracket.
+    reps: int = 1
+    # The workloads a pooled bracket covers (empty on a per-cell bracket).
+    pool: tuple[str, ...] = ()
     plan_note: str = ""  # informational provenance carried on the batch line (no abort)
     # Sleep before each request, index-aligned (empty = no spacing). The cache
     # calibration's spaced replays time their sends from the prefix's last
@@ -99,6 +119,9 @@ class BatchOutcome:
 
 
 def batch_id(run_id: str, level: str, workload: str, model: str, rep: int, k: int) -> str:
+    """Deterministic from (run, level, workload, model, rep, k). A pooled
+    bracket's workload slot carries its pool joined with '+' — the pool is the
+    bracket's identity, and no workload name contains a '+'."""
     material = f"{run_id}|{level}|{workload}|{model}|{rep}|{k}".encode()
     return hashlib.sha256(material).hexdigest()[:16]
 
@@ -113,8 +136,70 @@ def plan(
     rep_filter: int | None,
     k: int,
 ) -> list[BatchSpec]:
-    """All batches of the run, round-robin across the slate: workload -> rep -> model."""
+    """All batches of the run — the hybrid bracket composition (methodology
+    v1.1 §5). T1 and T3 compose one single-rep bracket per (workload, model,
+    rep), round-robin across the slate: workload -> rep -> model. T2 composes
+    the hybrid: the strong four per-cell — one bracket per (workload, model)
+    pooling ALL the cell's repetitions, the legacy measured; the weak trio
+    pooled per model — one bracket covering the trio's workloads and reps
+    (`workload` null, `pool` naming them), its legacy attributed per workload
+    post-hoc by token share, never a stored weight. `--rep` narrows every
+    bracket's repetition range to that one rep; `--reps` is the cell's n."""
     specs: list[BatchSpec] = []
+    if level == "T2":
+        rango = [rep_filter] if rep_filter else range(1, reps + 1)
+        fuertes = [w for w in workloads if w.name in workloads_mod.STRONG_T2]
+        debiles = [w for w in workloads if w.name in workloads_mod.WEAK_T2]
+        # The strong four: per-cell brackets, every rep of the cell inside one.
+        for w in fuertes:
+            hash_fixture = fixtures.fixture_hash(fixtures.build(level, w.name, w.requests))
+            for model in models:
+                specs.append(
+                    BatchSpec(
+                        level=level,
+                        batch_id=batch_id(run_id, level, w.name, model, rango[0], k),
+                        workload=w.name,
+                        model=model,
+                        rep=rango[0],
+                        k=k,
+                        n=w.requests * len(rango),
+                        fixture_hash=hash_fixture,
+                        units=tuple((w.name, rep, w.requests) for rep in rango),
+                        reps=len(rango),
+                        plan_note=(
+                            f"per-cell bracket: {len(rango)} rep(s) of the cell in one "
+                            "bracket, legacy measured"
+                        ),
+                    )
+                )
+        # The weak trio: pooled per model, the legacy allocated post-hoc.
+        pool_specs = tuple(
+            spec for w in debiles for spec in fixtures.build(level, w.name, w.requests)
+        )
+        hash_pool = fixtures.fixture_hash(pool_specs)
+        for model in models:
+            specs.append(
+                BatchSpec(
+                    level=level,
+                    batch_id=batch_id(
+                        run_id, level, "+".join(w.name for w in debiles), model, rango[0], k
+                    ),
+                    workload=None,
+                    model=model,
+                    rep=rango[0],
+                    k=k,
+                    n=sum(w.requests for w in debiles) * len(rango),
+                    fixture_hash=hash_pool,
+                    units=tuple((w.name, rep, w.requests) for w in debiles for rep in rango),
+                    reps=len(rango),
+                    pool=tuple(w.name for w in debiles),
+                    plan_note=(
+                        "pooled bracket: per-workload legacy derives post-hoc by token "
+                        "share (allocated, never verdicted)"
+                    ),
+                )
+            )
+        return specs
     for w in workloads:
         specs_requeridos = fixtures.build(level, w.name, w.requests)
         hash_fixture = fixtures.fixture_hash(specs_requeridos)
@@ -180,6 +265,7 @@ class Manifest:
         table_version: str,
         k: int | None,  # None: the workstream's cells carry their own k per batch
         planned: int,
+        reps: int | None = None,  # the composition's density (None: the workstreams')
         catalog: dict | None = None,
     ) -> Manifest:
         doc = {
@@ -188,11 +274,18 @@ class Manifest:
             "table_version": table_version,
             "protocol_version": PROTOCOL_VERSION,
             "fixture_version": FIXTURE_VERSION,
+            "composition": COMPOSITION_VERSION,
             "k": k,
             "started_at": time.time(),
             "planned": planned,
             "batches": {},
         }
+        if reps is not None:
+            # The density the composition was planned at: the pooled brackets'
+            # batch ids anchor on the first rep only, so a resume at another
+            # --reps would collide with them (a wide resume would read every
+            # narrow bracket done). Drift refuses like any other.
+            doc["reps"] = reps
         if catalog is not None:  # /v1/models snapshots, one per attempt (provenance)
             doc["catalog"] = [{"captured_at": time.time(), **catalog}]
         m = cls(ruta, doc)
@@ -252,6 +345,7 @@ def open_workstream_manifest(
         table_version=cfg["table_version"],
         k=cfg.get("k"),
         planned=planned,
+        reps=cfg.get("reps"),
         catalog=cfg.get("catalog"),
     )
     if existente:
@@ -362,23 +456,27 @@ async def _registration_settle(
 
 
 def _salter(cfg: dict, spec: BatchSpec):
-    """The cell's per-request nonce callable (index -> nonce text), or None when
-    the workstream is exempt from the cache-free lane."""
+    """The bracket's per-request nonce callable ((workload, rep, index) -> nonce
+    text), or None when the workstream is exempt from the cache-free lane. The
+    coordinates key per unit — a pooled bracket's requests span workloads and
+    reps, and every one must salt from its own cell coordinates."""
     lane_cfg = cfg.get("lane")
     if not lane_cfg:
         return None
     seed_ = lane_cfg["nonce_seed"]
-    palabras = lane.nonce_words(lane.expected_tin(spec.level, spec.workload))
+    palabras_de: dict[str, int] = {}
 
-    def _nonce(indice, turno=None):
+    def _nonce(workload: str, rep: int, indice, turno=None):
         # The nonce's coordinates include k: two cells of the same (workload,
         # model, rep) at different k must never share a prefix — the glossary's
         # comparability clause reads on fixture tokens, and a shared salt would
         # let one cell's burst warm the next cell's cache.
-        coords = [spec.level, spec.workload, spec.model, spec.rep, spec.k, indice]
+        coords = [spec.level, workload, spec.model, rep, spec.k, indice]
         if turno is not None:
             coords.append(turno)
-        return lane.nonce_text(seed_, lane.nonce_index(*coords), palabras)
+        if workload not in palabras_de:
+            palabras_de[workload] = lane.nonce_words(lane.expected_tin(spec.level, workload))
+        return lane.nonce_text(seed_, lane.nonce_index(*coords), palabras_de[workload])
 
     return _nonce
 
@@ -462,6 +560,9 @@ def _request_line(
     run_id: str,
     level: str,
     index: int,
+    workload: str,
+    rep: int,
+    fixture_hash: str,
     seed_value: int,
     table_version: str,
     checker: str | None,
@@ -481,10 +582,10 @@ def _request_line(
         "batch_id": spec.batch_id,
         "run_id": run_id,
         "level": level,
-        "workload": spec.workload,
+        "workload": workload,
         "model": spec.model,
         "seed": seed_value,
-        "rep": spec.rep,
+        "rep": rep,
         "k": spec.k,
         "t_start": rec["t_start"],
         "t_first_chunk": rec["t_first_chunk"],
@@ -507,7 +608,7 @@ def _request_line(
         "out_text_hash": (
             hashlib.sha256(rec["content"].encode("utf-8")).hexdigest() if rec["content"] else None
         ),
-        "fixture_hash": spec.fixture_hash,
+        "fixture_hash": fixture_hash,
         "table_version": table_version,
         "protocol_version": PROTOCOL_VERSION,
     }
@@ -516,6 +617,33 @@ def _request_line(
 def _append_jsonl(ruta: pathlib.Path, line: dict) -> None:
     with ruta.open("a", encoding="utf-8") as f:
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+
+def _judge_units(
+    specs_requeridos: tuple,
+    registros: list[dict],
+    unidades: tuple[tuple[str, int, int], ...],
+) -> list[str | None]:
+    """One verdict per request of the batch, each workload judged with its own
+    checker: a pooled bracket grades its workloads separately (every verdict
+    lands back on its own request line), a per-cell bracket judges its single
+    workload whole — the whole batch is that one workload's slice, byte-identical
+    to the pre-pool path. `unidades` carries the units' (workload, rep, request
+    count) in send order, exactly as the burst laid them out."""
+    indices_de: dict[str, list[int]] = {}
+    pos = 0
+    for workload, _rep, peticiones in unidades:
+        indices_de.setdefault(workload, []).extend(range(pos, pos + peticiones))
+        pos += peticiones
+    juzgados: list[tuple[int, str | None]] = []
+    for workload, indices in indices_de.items():
+        veredictos = checkers.judge(
+            workload,
+            [specs_requeridos[i].prompt for i in indices],
+            [registros[i] for i in indices],
+        )
+        juzgados.extend(zip(indices, veredictos, strict=True))
+    return [v for _i, v in sorted(juzgados, key=lambda par: par[0])]
 
 
 # ---------------------------------------------------------------------------
@@ -837,31 +965,40 @@ async def _burst(
     modelo_api: str,
     *,
     salt=None,
+    coords: list[tuple[str, int, int]] | None = None,
 ) -> list[dict]:
     """The batch's N requests, k-concurrent; no warmup, no auto-retry.
 
-    `specs` are the workload's request specs (prompt + tool schemas); each
-    request re-derives its seed from the cell coordinates. `modelo_api` is the
+    `specs` are the batch's request specs in send order (prompt + tool
+    schemas); each request re-derives its seed from the cell coordinates.
+    `coords` — one (workload, rep, index-within-unit) triple per request,
+    aligned with `specs` — parameterizes seeds and nonces across the bracket's
+    units (a per-cell bracket's reps, a pooled one's workloads); the default
+    treats the batch as one single (workload, rep) unit. `modelo_api` is the
     id actually sent (the preflight's catalog match — the live catalog tags ids
     the price table lists untagged); the dataset records the slate id, the
-    manifest's catalog history carries the mapping. `salt` (index -> nonce text)
-    is the cache-free lane's salter: when given, every request's prompt carries
-    its nonce as the first tokens and the record persists both hashes.
+    manifest's catalog history carries the mapping. `salt` ((workload, rep,
+    index) -> nonce text) is the cache-free lane's salter: when given, every
+    request's prompt carries its nonce as the first tokens and the record
+    persists both hashes.
     """
+    if coords is None:
+        coords = [(spec.workload, spec.rep, i) for i in range(spec.n)]
     semaforo = asyncio.Semaphore(spec.k)
 
-    async def _one(i: int) -> dict:
-        seed_value = fixtures.seed(spec.workload, spec.model, spec.rep, i)
+    async def _one(pos: int) -> dict:
+        workload, rep, indice = coords[pos]
+        seed_value = fixtures.seed(workload, spec.model, rep, indice)
         async with semaforo:
-            if i < len(spec.gap_s) and spec.gap_s[i]:
-                await asyncio.sleep(spec.gap_s[i])
-            nonce = salt(i) if salt else None
-            prompt = lane.salted_prompt(specs[i].prompt, nonce) if nonce else specs[i].prompt
+            if pos < len(spec.gap_s) and spec.gap_s[pos]:
+                await asyncio.sleep(spec.gap_s[pos])
+            nonce = salt(workload, rep, indice) if salt else None
+            prompt = lane.salted_prompt(specs[pos].prompt, nonce) if nonce else specs[pos].prompt
             rec = await client.chat(
                 model=modelo_api,
                 prompt=prompt,
                 seed=seed_value,
-                tools=list(specs[i].tools) or None,
+                tools=list(specs[pos].tools) or None,
             )
             # The line always pins the exact prompt billed; the nonce hash is
             # null only on exempt (unsalted) traffic.
@@ -870,7 +1007,7 @@ async def _burst(
                 rec["nonce_sha256"] = lane.nonce_sha256(nonce)
             return rec
 
-    return list(await asyncio.gather(*(_one(i) for i in range(spec.n))))
+    return list(await asyncio.gather(*(_one(pos) for pos in range(spec.n))))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -888,6 +1025,11 @@ class BatchContext:
 def _notes(*partes: str) -> str:
     """The batch line's notes: the non-empty parts, abort causes first."""
     return "; ".join(p for p in partes if p)
+
+
+def _label(spec: BatchSpec) -> str:
+    """The bracket's progress label: workload/model, or pool[...]/model."""
+    return f"{spec.workload or 'pool[' + '+'.join(spec.pool) + ']'}/{spec.model}"
 
 
 def _passive_detector(registros: list[dict], dpp_weekly: float | None) -> dict:
@@ -952,7 +1094,13 @@ async def _execute_batch(
     cfg = ctx.cfg
     manifiesto = ctx.manifiesto
     level = spec.level
-    manifiesto.set(spec.batch_id, "in_flight", workload=spec.workload, model=spec.model)
+    manifiesto.set(
+        spec.batch_id,
+        "in_flight",
+        workload=spec.workload,
+        model=spec.model,
+        pool=list(spec.pool) or None,
+    )
 
     try:
         status, pre = await client.usage()
@@ -962,6 +1110,7 @@ async def _execute_batch(
             "aborted",
             workload=spec.workload,
             model=spec.model,
+            pool=list(spec.pool) or None,
             note=f"aborted: meter read failed ({type(e).__name__}: {e}) before the batch",
         )
         raise RunnerError(
@@ -974,45 +1123,71 @@ async def _execute_batch(
     modelo_api = cfg.get("model_map", {}).get(spec.model, spec.model)
     nota_checker = ""
     sal = _salter(cfg, spec)
+    # The bracket's units: (workload, rep, requests) in send order. Specs the
+    # workstreams build themselves (calibration, probe) carry no units — their
+    # batch is one single (workload, rep) unit of n requests.
+    unidades = spec.units or ((spec.workload, spec.rep, spec.n),)
     try:
-        specs_requeridos = fixtures.build(level, spec.workload, spec.n)
+        specs_unidades = [
+            (workload, rep, fixtures.build(level, workload, peticiones))
+            for workload, rep, peticiones in unidades
+        ]
+        specs_requeridos = tuple(spec for _w, _r, u in specs_unidades for spec in u)
+        # Per-request coordinates for seeds and nonces: (workload, rep, index
+        # within the unit) in send order — the same derivation a per-rep
+        # bracket would use, so pooling never re-rolls a prompt.
+        coords = [(workload, rep, i) for workload, rep, u in specs_unidades for i in range(len(u))]
+        # Each request line pins its own workload's fixture hash (the
+        # workload's one-run fixture, composition-independent); the batch line
+        # pins spec.fixture_hash (the workload's, or the pool's one-rep
+        # sequence for a pooled bracket).
+        hashes = {workload: fixtures.fixture_hash(u) for workload, _rep, u in specs_unidades}
         if level == "T3":
             # T3's burst IS the agent loop: each task consults the model
             # step by step over its own working copy, and every step is
             # one billed chat request — salted per turn under the lane.
+            sal_t3 = (
+                (lambda indice, turno=None, _u=(spec.workload, spec.rep): sal(*_u, indice, turno))
+                if sal
+                else None
+            )
             registros = await agent.run_tasks(
                 client,
                 spec,
                 specs_requeridos,
                 modelo_api,
                 sandbox_root=ctx.base / "sandbox" / manifiesto.run_id,
-                salt=sal,
+                salt=sal_t3,
             )
             ok = sum(1 for r in registros for p in r["steps"] if p["http"] == 200)
             intentados = sum(len(r["steps"]) for r in registros)
         else:
-            registros = await _burst(client, spec, specs_requeridos, modelo_api, salt=sal)
+            registros = await _burst(
+                client, spec, specs_requeridos, modelo_api, salt=sal, coords=coords
+            )
             ok = sum(1 for r in registros if r["http"] == 200)
             intentados = spec.n
         try:
-            veredictos = checkers.judge(
-                spec.workload, [s.prompt for s in specs_requeridos], registros
-            )
+            veredictos = _judge_units(specs_requeridos, registros, unidades)
         except checkers.CheckersError as e:
             # Checker drift is a harness bug, not a model outcome: the billed
             # requests are still logged (null verdicts) and the batch aborts.
             nota_checker = f"aborted: checker failure - {type(e).__name__}: {e}"
             if cfg["emit"]:
-                cfg["emit"](f"batch {spec.batch_id} ({spec.workload}/{spec.model}): {nota_checker}")
+                cfg["emit"](f"batch {spec.batch_id} ({_label(spec)}): {nota_checker}")
             veredictos = [None] * len(registros)
         for idx, rec in enumerate(registros):
+            workload, rep, indice = coords[idx]
             linea = _request_line(
                 rec,
                 spec,
                 run_id=manifiesto.run_id,
                 level=level,
                 index=idx,
-                seed_value=fixtures.seed(spec.workload, spec.model, spec.rep, idx),
+                workload=workload,
+                rep=rep,
+                fixture_hash=hashes[workload],
+                seed_value=fixtures.seed(workload, spec.model, rep, indice),
                 table_version=cfg["table_version"],
                 checker=veredictos[idx],
             )
@@ -1021,9 +1196,14 @@ async def _execute_batch(
     except Exception as e:  # noqa: BLE001 - any failure aborts the batch, loudly
         nota = f"aborted: {type(e).__name__}: {e}"
         manifiesto.set(
-            spec.batch_id, "aborted", workload=spec.workload, model=spec.model, note=nota
+            spec.batch_id,
+            "aborted",
+            workload=spec.workload,
+            model=spec.model,
+            pool=list(spec.pool) or None,
+            note=nota,
         )
-        raise RunnerError(f"batch {spec.batch_id} ({spec.workload}/{spec.model}): {nota}") from None
+        raise RunnerError(f"batch {spec.batch_id} ({_label(spec)}): {nota}") from None
     if ok == 0:
         # A fully rejected burst bills nothing but measures nothing either:
         # recorded as aborted (the request lines above carry the evidence),
@@ -1038,9 +1218,10 @@ async def _execute_batch(
             workload=spec.workload,
             model=spec.model,
             rep=spec.rep,
+            pool=list(spec.pool) or None,
             note=nota,
         )
-        raise RunnerError(f"batch {spec.batch_id} ({spec.workload}/{spec.model}): {nota}")
+        raise RunnerError(f"batch {spec.batch_id} ({_label(spec)}): {nota}")
     t_burst_end = time.time()
 
     # Per-model count check, issued immediately after the burst (<= ~2 s):
@@ -1094,12 +1275,13 @@ async def _execute_batch(
                 workload=spec.workload,
                 model=spec.model,
                 rep=spec.rep,
+                pool=list(spec.pool) or None,
                 dpp_session=None,
                 dpp_weekly=None,
                 requests_ok=ok,
                 note=nota,
             )
-            raise RunnerError(f"batch {spec.batch_id} ({spec.workload}/{spec.model}): {nota}")
+            raise RunnerError(f"batch {spec.batch_id} ({_label(spec)}): {nota}")
     else:
         # Close the bracket even on abort: the burst's real consumption belongs
         # to THIS batch, not to the next run's pre-read. The registration loop
@@ -1164,6 +1346,7 @@ async def _execute_batch(
         workload=spec.workload,
         model=spec.model,
         rep=spec.rep,
+        pool=list(spec.pool) or None,
         dpp_session=dpp_sesion,
         dpp_weekly=_dpp(pre, post, "weekly"),
         requests_ok=ok,
@@ -1171,7 +1354,7 @@ async def _execute_batch(
         detector=detectoro,
     )
     if estado_final == "aborted":
-        raise RunnerError(f"batch {spec.batch_id} ({spec.workload}/{spec.model}): {notas}")
+        raise RunnerError(f"batch {spec.batch_id} ({_label(spec)}): {notas}")
     return BatchOutcome(
         ok=ok,
         intentados=intentados,
@@ -1240,14 +1423,14 @@ async def _run_async(cfg: dict) -> dict:
                     en_vuelo += 1
                     if cfg["emit"]:
                         cfg["emit"](
-                            f"resume: batch {spec.batch_id} ({spec.workload}/{spec.model}) is "
+                            f"resume: batch {spec.batch_id} ({_label(spec)}) is "
                             "in_flight from an interrupted run - skipped, never silently retried"
                         )
                 elif estado == "aborted":
                     abortados_previos += 1
                     if cfg["emit"]:
                         cfg["emit"](
-                            f"resume: batch {spec.batch_id} ({spec.workload}/{spec.model}) aborted "
+                            f"resume: batch {spec.batch_id} ({_label(spec)}) aborted "
                             "in an earlier attempt - skipped; its spend is already in the dataset"
                         )
                 continue
@@ -1256,7 +1439,7 @@ async def _run_async(cfg: dict) -> dict:
             escritas += spec.n
             if cfg["emit"]:
                 cfg["emit"](
-                    f"[{hechos + omitidos}/{len(specs)}] {spec.workload}/{spec.model} "
+                    f"[{hechos + omitidos}/{len(specs)}] {_label(spec)} "
                     f"rep{spec.rep} k{spec.k}: {resultado.ok}/{resultado.intentados} ok, "
                     f"dpp_session={resultado.dpp_session}"
                 )
@@ -1277,7 +1460,8 @@ async def _run_async(cfg: dict) -> dict:
 
 
 def _check_drift(existente: Manifest, cfg: dict) -> None:
-    """A manifest binds its run: table, protocol, fixture scheme, and k may not drift."""
+    """A manifest binds its run: table, protocol, fixture scheme, composition
+    and k may not drift."""
     if existente.doc.get("table_version") != cfg["table_version"]:
         raise RunnerError(
             f"manifest {existente.ruta.name} belongs to table "
@@ -1300,11 +1484,41 @@ def _check_drift(existente: Manifest, cfg: dict) -> None:
             f"{FIXTURE_VERSION!r} - the batch hashes are not comparable - keep the "
             "datasets apart"
         )
+    if existente.doc.get("composition", "per-rep") != COMPOSITION_VERSION:
+        # The bracket composition changed: the manifest's batch ids name
+        # per-rep brackets, and the hybrid plan would read its 5-rep pooled
+        # brackets as done on rep-1 id collisions (a cell billed once, measured
+        # under a different bracket shape) - a resume never mixes compositions.
+        raise RunnerError(
+            f"manifest {existente.ruta.name} was written with composition "
+            f"{existente.doc.get('composition', 'per-rep (pre-hybrid)')!r}; this harness "
+            f"plans {COMPOSITION_VERSION!r} (methodology v1.1 §5's hybrid: the strong "
+            "four per-cell, the weak trio pooled per model) - resuming would mix "
+            "incomparable batch ids - keep the datasets apart"
+        )
     k_cfg = cfg.get("k")
     if k_cfg is not None and existente.doc.get("k") != k_cfg:
         raise RunnerError(
             f"manifest {existente.ruta.name} records k={existente.doc.get('k')!r} but this "
             f"run would use k={k_cfg!r} - mixing k inside one run_id would duplicate cells"
+        )
+    reps_cfg = cfg.get("reps")
+    if (
+        reps_cfg is not None
+        and existente.doc.get("composition") == COMPOSITION_VERSION
+        and existente.doc.get("reps") != reps_cfg
+    ):
+        # Hybrid manifests only: their pooled brackets' batch ids anchor on the
+        # first rep alone, so a resume at another density would read the earlier
+        # brackets done (a wide resume would measure nothing new) or collide
+        # with them. The per-rep compositions (T1/T3) never collide — their
+        # wider resume still grows the plan the union allows.
+        raise RunnerError(
+            f"manifest {existente.ruta.name} was planned at --reps "
+            f"{existente.doc.get('reps')!r} but this run would use --reps {reps_cfg!r} - "
+            "the pooled brackets' batch ids do not separate densities, and a resume at "
+            "another one would misread the run state - finish or archive that run "
+            "(delete its manifest) before running another density"
         )
 
 
@@ -1363,11 +1577,16 @@ def _batch_line(
         "batch_id": spec.batch_id,
         "run_id": manifiesto.run_id,
         "level": spec.level,
-        "workload": spec.workload,
+        "workload": spec.workload,  # null on a pooled bracket (the pool names them)
         "model": spec.model,
         "fixture_hash": spec.fixture_hash,
         "k": spec.k,
         "n": spec.n,
+        "reps": spec.reps,  # the repetitions the bracket pools (1 on a single-rep one)
+        # A pooled bracket names its workloads and repetition count: the legacy
+        # attribution per workload derives post-hoc from the request lines'
+        # tokens — never a stored weight. Null on a per-cell bracket.
+        "pool": {"workloads": list(spec.pool), "reps": spec.reps} if spec.pool else None,
         "settle_s": settle_s,
         # Protocol v3's registration settle: the loop's mode, poll count, exit
         # reason and per-window registration times (seconds after the loop's

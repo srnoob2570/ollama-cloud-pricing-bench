@@ -211,7 +211,17 @@ def line_hash(line: dict) -> str:
 
 def cell_evidence(base, workload: str, model: str) -> tuple[int, int]:
     """(request lines, batch lines) the raw dataset already holds for the cell —
-    any protocol vintage: the real exists or it does not, whatever wrote it."""
+    any protocol vintage: the real exists or it does not, whatever wrote it.
+
+    Pooled evidence counts (methodology v1.1 §5): the weak-trio cells' requests
+    live inside pooled brackets whose batch lines carry workload null, but their
+    REQUEST lines name the cell — so once a T2 hybrid run has measured the pool,
+    the cell's real exists and a blind estimate refuses (an estimate made after
+    the pool's data existed would be dishonest); the informed phase opens on it.
+    The pooled real is an allocated reading, never a verdict — the report scores
+    those cells as unmeasured until the verdict-level work consumes the
+    allocation, and the v1.1 re-scoping redraws the grid onto the measurable
+    set, where every cell is measured per-cell."""
     base = pathlib.Path(base)
     peticiones = sum(
         1

@@ -12,9 +12,11 @@ import itertools
 import json
 import re
 
+import pytest
+
 from test_dry_run import run_cli, with_pricing
 
-from ocharness import fixtures_t2
+from ocharness import fixtures, fixtures_t2
 from ocharness.fixtures import build, fixture_hash
 from ocharness.schema import validate_batch_line, validate_request_line
 from ocharness.workloads import T2 as T2_WORKLOADS
@@ -208,7 +210,11 @@ def test_full_t2_slate_produces_the_structural_dataset(tmp_path, fake_cli):
     assert code == 0, out or err
     requests = read_requests(tmp_path)
     batches = read_batches(tmp_path)
-    assert len(batches) == 7 * 6 and len(requests) == 6 * 38
+    # The hybrid composition (methodology v1.1 §5): 24 per-cell brackets (the
+    # strong four x 6 models) + 6 pooled (the weak trio, one per model).
+    per_celda = [b for b in batches if b["workload"] is not None]
+    agrupados = [b for b in batches if b["workload"] is None]
+    assert len(per_celda) == 24 and len(agrupados) == 6 and len(requests) == 6 * 38
     por_workload: dict[str, set] = {}
     for r in requests:
         validate_request_line(r)
@@ -227,36 +233,170 @@ def test_full_t2_slate_produces_the_structural_dataset(tmp_path, fake_cli):
         }
     )
     assert all(veredictos == {"pass"} for veredictos in por_workload.values())
-    # Seed-regenerable fixtures: same hash across the slate, one per workload.
+    # Seed-regenerable fixtures, unchanged by the composition: the per-cell
+    # brackets hash their workload's one-run fixture; the pooled brackets hash
+    # the pool's one-rep sequence (the trio's fixtures, in pool order).
+    peticiones_de = {w.name: w.requests for w in T2_WORKLOADS}
     for b in batches:
         validate_batch_line(b)
-        assert b["fixture_hash"] == fixture_hash(build("T2", b["workload"], b["n"]))
+        if b["workload"] is not None:
+            esperado = fixture_hash(build("T2", b["workload"], peticiones_de[b["workload"]]))
+        else:
+            esperado = fixture_hash(
+                tuple(s for w in b["pool"]["workloads"] for s in build("T2", w, peticiones_de[w]))
+            )
+        assert b["fixture_hash"] == esperado, b["batch_id"]
     for w in T2_NAMES:
-        hashes = {b["fixture_hash"] for b in batches if b["workload"] == w}
-        assert len(hashes) == 1
-    assert len({b["fixture_hash"] for b in batches}) == 7
+        hashes = {r["fixture_hash"] for r in requests if r["workload"] == w}
+        assert hashes == {fixture_hash(build("T2", w, peticiones_de[w]))}
     # No warmup, no retry: the fake saw exactly the planned chats and meter reads.
     chats = [c for c in fake_cli.calls if c["path"] == "/api/chat"]
     reads = [c for c in fake_cli.calls if c["path"] == "/api/usage"]
     # No warmup, no retry: exactly the planned chats (plus the canary's 10 that
     # open the run) and meter reads (per bracket: pre + count check + 2 polls).
-    assert len(chats) == 6 * 38 + 10 and len(reads) == 42 * 4 + 7
+    assert len(chats) == 6 * 38 + 10 and len(reads) == 30 * 4 + 7
     assert all(c["auth"] for c in chats + reads)
 
 
 def test_t2_default_reps_build_the_full_grid(tmp_path, fake_cli):
-    """The default n=5 run shapes the dataset 7 workloads x 6 models x 5 reps."""
+    """The default n=5 run: 5 brackets for one model — 4 per-cell (each pooling
+    the cell's 5 reps) + 1 pooled — with the reps living in the request rows."""
     pricing = with_pricing(tmp_path)
     assert run_cli(tmp_path, "dry-run", "--level", "T2", "--pricing-dir", pricing)[0] == 0
     assert run_t2(tmp_path, "--model", "glm-5.3-flash")[0] == 0
     batches = read_batches(tmp_path)
-    assert len(batches) == 7 * 5
-    assert len({b["batch_id"] for b in batches}) == 35  # deterministic and unique per rep
+    per_celda = [b for b in batches if b["workload"] is not None]
+    agrupados = [b for b in batches if b["workload"] is None]
+    assert len(per_celda) == 4 and len(agrupados) == 1
+    assert len({b["batch_id"] for b in batches}) == 5  # deterministic and unique
+    for b in per_celda:
+        assert b["reps"] == 5 and b["pool"] is None
+    assert agrupados[0]["reps"] == 5
+    assert agrupados[0]["pool"] == {
+        "workloads": ["multi_turn", "tool_calling", "reasoning"],
+        "reps": 5,
+    }
     requests = read_requests(tmp_path)
-    assert len(requests) == 38 * 5
+    assert len(requests) == 38 * 5  # 23 per-cell + 15 pooled, x 5 reps
     for w in T2_NAMES:
         reps = {r["rep"] for r in requests if r["workload"] == w}
         assert reps == {1, 2, 3, 4, 5}
+
+
+def test_t2_full_slate_plans_24_per_cell_plus_6_pooled_at_n5(tmp_path, fake_cli):
+    """Ticket #39's shape: the hybrid composition plans 30 brackets at n=5 —
+    the strong four per-cell (each bracket pooling its cell's 5 reps) and the
+    weak trio pooled per model — with the request count growing, never the
+    bracket count."""
+    pricing = with_pricing(tmp_path)
+    assert run_cli(tmp_path, "dry-run", "--level", "T2", "--pricing-dir", pricing)[0] == 0
+    assert run_t2(tmp_path)[0] == 0
+    batches = read_batches(tmp_path)
+    per_celda = [b for b in batches if b["workload"] is not None]
+    agrupados = [b for b in batches if b["workload"] is None]
+    assert len(per_celda) == 24 and len(agrupados) == 6
+    peticiones_de = {w.name: w.requests for w in T2_WORKLOADS}
+    for b in per_celda:
+        assert b["reps"] == 5
+        assert b["n"] == peticiones_de[b["workload"]] * 5
+    for b in agrupados:
+        assert b["workload"] is None
+        assert b["pool"]["reps"] == 5
+        assert b["n"] == sum(peticiones_de[w] for w in b["pool"]["workloads"]) * 5
+    requests = read_requests(tmp_path)
+    assert len(requests) == 6 * 38 * 5  # the reps live in the request rows
+    assert len({b["batch_id"] for b in batches}) == 30
+
+
+def test_pooled_requests_carry_their_own_workload_evidence(tmp_path, fake_cli):
+    """Inside a pooled bracket every request line names its own workload and
+    rep, and its nonce derives from the documented cell coordinates — the same
+    derivation a per-rep bracket of that workload would produce (pooling never
+    re-rolls a prompt)."""
+    fake_cli.reply_for = correct_transcript
+    fake_cli.tool_calls_for = declared_calls
+    prepare(tmp_path)
+    assert run_t2(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")[0] == 0
+    from ocharness import lane
+
+    batches = read_batches(tmp_path)
+    agrupados = [b for b in batches if b["workload"] is None]
+    assert len(agrupados) == 1
+    pool_id = agrupados[0]["batch_id"]
+    lineas = [r for r in read_requests(tmp_path) if r["batch_id"] == pool_id]
+    assert {r["workload"] for r in lineas} == {"multi_turn", "tool_calling", "reasoning"}
+    vistos: dict[tuple[str, int], int] = {}
+    por_workload: dict[str, set] = {}
+    for r in lineas:
+        por_workload.setdefault(r["workload"], set()).add(r["rep"])
+    assert por_workload == {"multi_turn": {1}, "tool_calling": {1}, "reasoning": {1}}
+    for r in lineas:
+        # The lines are written in send order, so each request's position within
+        # its (workload, rep) unit is the index the coordinates key on.
+        clave = (r["workload"], r["rep"])
+        indice = vistos.get(clave, 0)
+        vistos[clave] = indice + 1
+        palabras = lane.nonce_words(lane.expected_tin("T2", r["workload"]))
+        nonce = lane.nonce_text(
+            lane.nonce_seed(agrupados[0]["run_id"]),
+            lane.nonce_index("T2", r["workload"], "glm-5.3-flash", r["rep"], 1, indice),
+            palabras,
+        )
+        assert r["nonce_sha256"] == lane.nonce_sha256(nonce), r["req_id"]
+        # The seed is the same derivation the per-rep brackets use.
+        assert r["seed"] == fixtures.seed(r["workload"], "glm-5.3-flash", r["rep"], indice)
+
+
+def test_fixture_hashes_are_composition_independent(tmp_path, fake_cli):
+    """Pool the reps into one bracket and the fixture hash does not move: the
+    hash pins the workload's one-run fixture, never the bracket's composition."""
+    fake_cli.reply_for = correct_transcript
+    fake_cli.tool_calls_for = declared_calls
+    pricing = with_pricing(tmp_path)
+    hashes: dict[str, set] = {}
+    for reps in ("1", "3"):
+        base = tmp_path / f"reps{reps}"
+        assert (
+            run_cli(
+                base,
+                "dry-run",
+                "--level",
+                "T2",
+                "--reps",
+                reps,
+                "--pricing-dir",
+                pricing,
+                "--json",
+            )[0]
+            == 0
+        )
+        assert (
+            run_cli(
+                base,
+                "run",
+                "--level",
+                "T2",
+                "--reps",
+                reps,
+                "--model",
+                "glm-5.3-flash",
+                "--pricing-dir",
+                pricing,
+                "--settle-s",
+                "2",
+                "--settle-poll-s",
+                "0.01",
+            )[0]
+            == 0
+        )
+        files = list((base / "batches").glob("batches-*.jsonl"))
+        for l in files[0].read_text(encoding="utf-8").splitlines():
+            b = json.loads(l)
+            if b["workload"] is not None:
+                hashes.setdefault(b["workload"], set()).add(b["fixture_hash"])
+    peticiones_de = {w.name: w.requests for w in T2_WORKLOADS}
+    for w, valores in hashes.items():
+        assert valores == {fixture_hash(build("T2", w, peticiones_de[w]))}
 
 
 def test_tool_calling_grades_the_call_sequence_and_the_arguments(tmp_path, fake_cli):
@@ -267,11 +407,11 @@ def test_tool_calling_grades_the_call_sequence_and_the_arguments(tmp_path, fake_
     assert run_t2(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")[0] == 0
     lineas = [r for r in read_requests(tmp_path) if r["workload"] == "tool_calling"]
     assert len(lineas) == 6
-    por_indice = {r["req_id"].rsplit("-", 1)[1]: r for r in lineas}
+    # tool_calling now lives in the pooled bracket: its requests appear in send
+    # order, which within the rep's unit IS the fixture order.
     scenarios = fixtures_t2.specs("tool_calling", 6)  # prompt i == request index i
-    cuerpo = lambda p: p.split("\n\n", 1)[1]  # noqa: E731 - the lane's nonce stripped
     for i, (prompt, _tools) in enumerate(scenarios):
-        linea = por_indice[f"{i:04d}"]
+        linea = lineas[i]
         nombres = [tc["function"]["name"] for tc in linea["tool_calls"]]
         esperados = list(fixtures_t2.tool_scenario(prompt)["sequence"])
         if fixtures_t2.tool_scenario(prompt)["id"] == "TR-1":
@@ -370,3 +510,84 @@ def _wrong_unit_transcript(prompt: str) -> str:
             else f"The unit tagged [R-{label}] is inspected every {datums[otro]['days']} days."
         )
     return " ".join(frases)
+
+
+def test_pooled_batch_lines_validate_their_pool_shape():
+    """The dataset contract (ticket #39): pooled lines carry workload null +
+    pool {workloads, reps}; a bracket without a workload must name its pool;
+    the counts are positive ints."""
+    from ocharness.schema import SchemaError, validate_batch_line
+
+    def lote(**cambios):
+        base = {
+            "batch_id": "b" * 16,
+            "run_id": "run",
+            "level": "T2",
+            "workload": None,
+            "model": "glm-5.3-flash",
+            "fixture_hash": "f" * 64,
+            "k": 1,
+            "n": 15,
+            "reps": 2,
+            "pool": {"workloads": ["multi_turn", "tool_calling", "reasoning"], "reps": 2},
+            "settle_s": 60.0,
+            "settle_mode": "registration",
+            "settle_reads": 2,
+            "registered_session_s": 0.0,
+            "registered_weekly_s": 0.0,
+            "settle_exit": "stable",
+            "count_check_s": 0.5,
+            "wall_clock_s": 10.0,
+            "medidor_pre": {"limits": {"session": {"usage": 0.5}, "weekly": {"usage": 0.5}}},
+            "medidor_post": {"limits": {"session": {"usage": 0.5}, "weekly": {"usage": 0.6}}},
+            "dpp_session": 0.1,
+            "dpp_weekly": 0.1,
+            "request_counts": {"pre": {}, "count_check": {}, "post": {}},
+            "table_version": "2026-08-31",
+            "protocol_version": "3",
+            "notes": "",
+        }
+        base.update(cambios)
+        return base
+
+    validate_batch_line(lote())  # the pooled shape is valid
+    validate_batch_line(lote(workload="qa_short", pool=None, reps=1))  # per-cell is too
+
+    mala = lote(workload="multi_turn")  # a pooled bracket names no workload
+    with pytest.raises(SchemaError, match="workload"):
+        validate_batch_line(mala)
+    with pytest.raises(SchemaError):  # a bracket without a workload must name its pool
+        validate_batch_line(lote(pool=None))
+    with pytest.raises(SchemaError):  # an empty pool names nothing
+        validate_batch_line(lote(pool={"workloads": [], "reps": 2}))
+    with pytest.raises(SchemaError):  # the pool's reps are positive
+        validate_batch_line(lote(pool={"workloads": ["multi_turn"], "reps": 0}))
+    with pytest.raises(SchemaError):  # so are the bracket's
+        validate_batch_line(lote(reps=0))
+
+
+def test_t2_refuses_rep_narrowing_and_reps_drift(tmp_path, fake_cli):
+    """The hybrid composition pools every rep of a cell into one bracket, so
+    per-rep narrowing has no bracket to run, and a resume at another --reps
+    would collide with the pooled brackets' batch ids (they anchor on the first
+    rep alone). Both refuse loudly, before any request."""
+    pricing = prepare(tmp_path)
+    assert (
+        run_cli(tmp_path, "dry-run", "--level", "T2", "--reps", "5", "--pricing-dir", pricing)[0]
+        == 0
+    )
+    code, _out, err = run_t2(tmp_path, "--model", "glm-5.3-flash", "--rep", "2", "--reps", "5")
+    assert code == 2
+    assert "--rep" in err  # refused before any request: no per-rep bracket exists
+    assert (
+        run_cli(tmp_path, "dry-run", "--level", "T2", "--reps", "1", "--pricing-dir", pricing)[0]
+        == 0
+    )
+    assert run_t2(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")[0] == 0
+    assert (
+        run_cli(tmp_path, "dry-run", "--level", "T2", "--reps", "3", "--pricing-dir", pricing)[0]
+        == 0
+    )
+    code, _out, err = run_t2(tmp_path, "--model", "glm-5.3-flash", "--reps", "3")
+    assert code == 1
+    assert "--reps" in err  # the manifest binds the density the pool was planned at

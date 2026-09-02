@@ -79,6 +79,15 @@ def _validate_run(args: argparse.Namespace, tabla: PriceTable) -> str | None:
         return error
     if args.rep is not None and not (1 <= args.rep <= args.reps):
         return f"--rep must be in [1, --reps={args.reps}]; got {args.rep!r}"
+    if args.level == "T2" and args.rep is not None:
+        # The hybrid composition (methodology v1.1 §5) pools every rep of a
+        # cell into one bracket: there is no per-rep bracket to narrow to, and
+        # a --rep plan would re-bill that rep's requests under new batch ids.
+        return (
+            "--rep has no per-rep bracket to run on T2: the hybrid composition pools "
+            "every rep of a cell into one bracket (the strong four per-cell, the weak "
+            "trio pooled per model) - run the full density (drop --rep)"
+        )
     modelos = workloads.slate(args.level, tabla)
     if args.model is not None and args.model not in modelos:
         return f"--model {args.model!r} is not in the {args.level} slate ({len(modelos)} models)"
@@ -305,6 +314,7 @@ def _status_doc(nivel: str, manifiesto: Manifest) -> dict:
                 "batch_id": batch_id,
                 "status": estado,
                 "workload": entrada.get("workload"),
+                "pool": entrada.get("pool"),
                 "model": entrada.get("model"),
                 "rep": entrada.get("rep"),
                 "dpp_session": dpp_s,
@@ -374,7 +384,10 @@ def _print_status(doc: dict) -> None:
         for b in doc["batches"]:
             if b["status"] in ("done",):
                 continue
-            coordenada = f"{b['workload'] or '?'}/{b['model'] or '?'}"
+            carga = b["workload"] or (
+                "pool[" + "+".join(b["pool"]) + "]" if isinstance(b.get("pool"), list) else "?"
+            )
+            coordenada = f"{carga}/{b['model'] or '?'}"
             if b.get("rep"):
                 coordenada += f" rep{b['rep']}"
             print(f"    {b['status']}: {coordenada} [{str(b['batch_id'])[:12]}]")

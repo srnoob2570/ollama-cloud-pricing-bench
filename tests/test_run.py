@@ -320,6 +320,24 @@ def test_manifest_refuses_k_drift_mid_run(tmp_path, fake_cli):
     assert "k=" in err
 
 
+def test_manifest_refuses_composition_drift_mid_run(tmp_path, fake_cli):
+    """A pre-hybrid manifest (per-rep brackets) never resumes under the hybrid
+    plan: the batch ids would collide — a 5-rep pooled bracket read as done on
+    a rep-1 id — billing nothing and measuring less than the plan says."""
+    pricing = prepare(tmp_path)
+    assert run_t1(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")[0] == 0
+    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    del manifiesto["composition"]  # a pre-hybrid manifest carries none
+    (tmp_path / "runs" / "manifest-T1.json").write_text(json.dumps(manifiesto), encoding="utf-8")
+    assert (
+        run_cli(tmp_path, "dry-run", "--level", "T1", "--reps", "1", "--pricing-dir", pricing)[0]
+        == 0
+    )
+    code, _out, err = run_t1(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")
+    assert code == 1
+    assert "composition" in err
+
+
 def test_truncated_stream_is_flagged_not_counted_as_clean(tmp_path, fake_cli):
     """Billed-but-token-less: a 200 without a done frame carries err, never silence."""
     fake_cli.truncate_stream = True

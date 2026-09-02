@@ -182,6 +182,8 @@ def hand_dataset(tmp_path, run_id: str = RUN, *, poison: str | None = None) -> s
         "fixture_hash": FIX,
         "k": 1,
         "n": 1,
+        "reps": 1,
+        "pool": None,
         "settle_s": 60.0,
         "settle_mode": "registration",
         "settle_reads": 2,

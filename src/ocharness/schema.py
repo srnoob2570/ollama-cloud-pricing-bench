@@ -47,11 +47,20 @@ _BATCH_SCHEMA: dict[str, tuple] = {
     "batch_id": (str,),
     "run_id": (str,),
     "level": (str,),
-    "workload": (str,),
+    # null on a pooled bracket: the pool below names the workloads it covers
+    "workload": (str, None),
     "model": (str,),
     "fixture_hash": (str,),
     "k": (int,),
     "n": (int,),
+    # The repetitions the bracket pools (methodology v1.1 §5's hybrid
+    # composition): the cell's n on a per-cell bracket, the pool's
+    # per-workload count on a pooled one; 1 on a single-rep bracket.
+    "reps": (int,),
+    # {"workloads": [..], "reps": N} on a pooled bracket — its legacy
+    # attribution per workload derives post-hoc from the request lines' tokens
+    # (never a stored weight); null on a per-cell bracket.
+    "pool": (dict, None),
     "settle_s": (float, int),  # the registration cap the bracket was granted (v3)
     "settle_mode": (str,),  # v3: the settle is the registration loop
     "settle_reads": (int,),  # meter polls issued by the registration loop
@@ -179,6 +188,29 @@ def validate_request_line(line: dict) -> None:
 
 def validate_batch_line(line: dict) -> None:
     _validate(line, _BATCH_SCHEMA, "batch")
+    if not isinstance(line["reps"], bool) and line["reps"] < 1:
+        raise SchemaError(f"batch line: field 'reps' must be >= 1 (got {line['reps']!r})")
+    pool = line["pool"]
+    if pool is None:
+        if line["workload"] is None:
+            raise SchemaError("batch line: a bracket without 'workload' must carry its 'pool'")
+        return
+    cargas = pool.get("workloads")
+    if (
+        not isinstance(cargas, list)
+        or not cargas
+        or not all(isinstance(w, str) and w for w in cargas)
+    ):
+        raise SchemaError("batch line: 'pool.workloads' must be a non-empty list of workload names")
+    if len(set(cargas)) != len(cargas):
+        raise SchemaError("batch line: 'pool.workloads' repeats a workload name")
+    reps = pool.get("reps")
+    if not isinstance(reps, int) or isinstance(reps, bool) or reps < 1:
+        raise SchemaError("batch line: 'pool.reps' must be an int >= 1")
+    if reps != line["reps"]:
+        raise SchemaError("batch line: 'pool.reps' and 'reps' disagree")
+    if line["workload"] is not None:
+        raise SchemaError("batch line: a pooled bracket carries 'workload': null")
 
 
 def validate_probe_line(line: dict) -> None:

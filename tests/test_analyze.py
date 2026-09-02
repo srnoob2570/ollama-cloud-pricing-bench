@@ -105,13 +105,15 @@ def req(
 
 
 def batch(
-    workload: str,
+    workload: str | None,
     model: str,
     batch_id: str,
     *,
     rep: int = 1,
     k: int = 1,
     n: int = 1,
+    reps: int = 1,
+    pool: dict | None = None,
     dpp_weekly: float | None = 0.2,
 ) -> dict:
     medidor_post = (
@@ -128,6 +130,8 @@ def batch(
         "fixture_hash": FIX,
         "k": k,
         "n": n,
+        "reps": reps,
+        "pool": pool,
         "settle_s": 60.0,
         "settle_mode": "registration",
         "settle_reads": 2,
@@ -626,3 +630,77 @@ def test_cache_sweep_survives_a_token_report_missing_the_output_count(tmp_path):
         tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31"
     )
     assert codigo == 0, errores
+
+
+# ---------------------------------------------------------------------------
+# the pooled brackets' post-hoc allocation (methodology v1.1 §5, ticket #39)
+# ---------------------------------------------------------------------------
+
+
+def test_pooled_brackets_allocate_legacy_by_token_share_post_hoc(tmp_path):
+    """A pooled bracket (workload null, pool naming the trio) is never a cell:
+    its per-workload legacy sits in the analysis' 'pooled' section, allocated
+    by each workload's share of the pool's request tokens — derived here, at
+    analysis time, from the raw lines (no stored weight anywhere).
+
+    Hand math: the pool measures dpp_weekly 0.5 / dpp_session 0.4; multi_turn
+    reports 2 x 1500 = 3000 tokens, reasoning 1000 -> shares 0.75 / 0.25, so
+    the allocations are 0.375 / 0.125 weekly and 0.3 / 0.1 session."""
+    pricing = with_tables(tmp_path)
+    requests = [
+        req("multi_turn", "alpha", "bP", index=0, tok_in=1000, tok_out=500),
+        req("multi_turn", "alpha", "bP", index=1, tok_in=1000, tok_out=500),
+        req("reasoning", "alpha", "bP", index=2, tok_in=800, tok_out=200),
+    ]
+    lote = batch(
+        None,
+        "alpha",
+        "bP",
+        n=3,
+        reps=2,
+        pool={"workloads": ["multi_turn", "reasoning"], "reps": 2},
+        dpp_weekly=0.5,
+    )
+    lote["dpp_session"] = 0.4
+    write_raw(tmp_path, requests, [lote])
+    doc = analyze_doc(tmp_path, "--pricing-dir", pricing)
+    # A pooled bracket never becomes a measured cell, even though its request
+    # lines name task workloads: the legacy is allocated, never verdicted.
+    assert all(c["model"] != "alpha" for c in doc["cells"])
+    filas = doc["pooled"]
+    assert len(filas) == 1
+    fila = filas[0]
+    assert fila["batch_id"] == "bP" and fila["model"] == "alpha"
+    assert fila["workloads"] == ["multi_turn", "reasoning"] and fila["reps"] == 2
+    assert fila["dpp_weekly"] == 0.5 and fila["dpp_session"] == 0.4
+    a = fila["allocations"]
+    assert a["multi_turn"]["tokens_total"] == 3000
+    assert a["reasoning"]["tokens_total"] == 1000
+    assert a["multi_turn"]["share"] == 0.75 and a["reasoning"]["share"] == 0.25
+    assert a["multi_turn"]["dpp_weekly"] == 0.375 and a["reasoning"]["dpp_weekly"] == 0.125
+    # 0.4 * 0.75 carries float residue; the exact-float policy persists it as-is.
+    assert near(a["multi_turn"]["dpp_session"], 0.3, 12)
+    assert near(a["reasoning"]["dpp_session"], 0.1, 12)
+
+
+def test_allocation_needs_the_requests_tokens_and_reports_without_them(tmp_path):
+    """The shares derive from the request lines' tokens: a pooled bracket whose
+    requests report nothing ships with null allocations (the reading is simply
+    not attributable), and a per-cell line never enters the section."""
+    pricing = with_tables(tmp_path)
+    sin_tokens = req("multi_turn", "alpha", "bSinPool", tok_in=0, tok_out=0)
+    sin_tokens.update({"tok_in": None, "tok_out": None})
+    pooled = batch(
+        None,
+        "alpha",
+        "bSinPool",
+        n=1,
+        reps=2,
+        pool={"workloads": ["multi_turn", "reasoning"], "reps": 2},
+        dpp_weekly=0.5,
+    )
+    write_raw(tmp_path, [sin_tokens], [pooled, batch("qa_short", "beta", "bCelda")])
+    doc = analyze_doc(tmp_path, "--pricing-dir", pricing)
+    assert len(doc["pooled"]) == 1
+    assert doc["pooled"][0]["allocations"] is None
+    assert any(c["workload"] == "qa_short" and c["model"] == "beta" for c in doc["cells"])

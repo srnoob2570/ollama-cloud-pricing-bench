@@ -124,6 +124,8 @@ def craft_cell(tmp_path, workload: str, model: str, *, reps: dict[int, tuple[int
                 "fixture_hash": "f" * 64,
                 "k": 1,
                 "n": 1,
+                "reps": 1,
+                "pool": None,
                 "settle_s": 60.0,
                 "settle_mode": "registration",
                 "settle_reads": 2,

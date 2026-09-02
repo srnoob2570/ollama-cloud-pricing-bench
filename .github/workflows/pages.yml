@@ -1,0 +1,63 @@
+# GitHub Pages: the dataset dashboard, regenerated from the release itself.
+#
+# The dataset release ships raw + table snapshot + metadata (never the
+# dashboard), so the page is RE-DERIVED with `bench analyze --release <tag>`:
+# the release's own table prices it, zero quota (analyze never touches the
+# API), and the published dashboard always matches the released vintage.
+# Deployment lands on the `gh-pages` branch (the same branch the one-off
+# manual publish uses), so Pages has a single, branch-based source.
+
+name: pages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pages-dashboard
+  cancel-in-progress: true
+
+jobs:
+  publish-dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Resolve the release tag (event release, else the latest one)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.event.release.tag_name }}"
+          if [ -z "$tag" ]; then
+            tag="$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)"
+          fi
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+
+      - name: Install the harness
+        run: uv sync
+
+      - name: Re-derive the dashboard from the release (its own table vintage)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p 'metadata-*.json' -O metadata.json
+          table_version="$(jq -r .table_version metadata.json)"
+          uv run bench analyze --release "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --table-version "$table_version"
+
+      - name: Publish to gh-pages
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin gh-pages
+          git switch gh-pages
+          cp "releases/$TAG/analysis/dashboard.html" index.html
+          git add index.html
+          git commit -m "pages: dashboard re-derived from $TAG" || echo "no dashboard change"
+          git push origin gh-pages

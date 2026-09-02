@@ -712,6 +712,16 @@ def _print_predict_report(doc: dict, ruta: pathlib.Path) -> int:
             f"  pending blind estimates: {len(hallazgos['pending_blind'])} cells "
             "(the flow refuses them once the cell has run)"
         )
+    if hallazgos["measured_without_blind"]:
+        print(
+            "  measured with no blind estimate (that cell can never join the study): "
+            + "; ".join(hallazgos["measured_without_blind"])
+        )
+    if hallazgos["off_grid_estimates"]:
+        print(
+            "  estimates outside the current grid (retired scope, counted nowhere): "
+            + "; ".join(hallazgos["off_grid_estimates"])
+        )
     print(f"  report: {ruta}")
     return 0
 
@@ -722,7 +732,10 @@ def cmd_predict(args: argparse.Namespace) -> int:
     public description and the rate table, and the report re-derives everything
     offline from the raw datasets, like analyze."""
     if args.level is not None:
-        print("error: predict runs on the 12-cell grid; it takes no --level", file=sys.stderr)
+        print(
+            "error: predict runs on the predictability grid; it takes no --level",
+            file=sys.stderr,
+        )
         return 2
     grabando = args.phase is not None
     if args.report and grabando:
@@ -756,9 +769,6 @@ def cmd_predict(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    if math.isnan(args.s) or not (0.0 <= args.s <= 1.0):
-        print(f"error: --s must be in [0, 1] (S1 cache hit-rate); got {args.s!r}", file=sys.stderr)
-        return 2
     try:
         tabla = PriceTable.load(_pricing_dir(args), args.table_version)
     except TableError as e:
@@ -767,7 +777,7 @@ def cmd_predict(args: argparse.Namespace) -> int:
 
     if args.report:
         try:
-            doc = predict.build_report(_base(args), tabla=tabla, s=args.s)
+            doc = predict.build_report(_base(args), tabla=tabla)
         except (predict.PredictError, analyze.AnalyzeError) as e:
             print(f"error: {e}", file=sys.stderr)
             return 2
@@ -821,6 +831,13 @@ def cmd_predict(args: argparse.Namespace) -> int:
         f"predictability: table {doc['table_version']} - {counts['cells']} cells, "
         f"{counts['blind']} blind, {counts['informed']} informed"
     )
+    if counts["off_grid"]:
+        print(
+            f"  warning: {counts['off_grid']} locked estimates belong to cells outside "
+            "the current grid (a retired scope) - they are counted nowhere and the "
+            "report flags them in findings.off_grid_estimates",
+            file=sys.stderr,
+        )
     for fila in doc["cells"]:
         etiqueta = f"{fila['workload']}/{fila['model']} [{fila['level']}]"
         if fila["blind"] is None:
@@ -1096,7 +1113,12 @@ def build_parser() -> argparse.ArgumentParser:
             # here would read as a re-measured density instead of a re-priced
             # bundle.
             parser.add_argument("--ancla", type=float, default=100.0, help="P_LEGADO USD/month")
-            parser.add_argument("--s", type=float, default=0.5, help="S1 cache hit-rate (0..1)")
+            parser.add_argument(
+                "--s",
+                type=float,
+                default=analyze.S1_DEFAULT,  # the versioned default, never a second literal
+                help="S1 cache hit-rate (0..1)",
+            )
             parser.add_argument(
                 "--release",
                 default=None,
@@ -1127,12 +1149,19 @@ def build_parser() -> argparse.ArgumentParser:
             parser.add_argument("--usd", type=float, default=None, help="estimated credits ($)")
             parser.add_argument("--notes", default="", help="the estimator's reasoning (locked)")
             parser.add_argument("--report", action="store_true", help="write the MAPE report")
-            parser.add_argument("--s", type=float, default=0.5, help="S1 cache hit-rate (0..1)")
+            # No --s: the estimates and the comparative MAPE stay anchored to the
+            # persisted S0/S1 pair (methodology v1.2) - a custom S(x) never
+            # re-anchors them; it enters only through analyze's stamped re-runs.
         elif nombre in ("dry-run", "run", "resume", "status"):
             # status reads none of these but accepted them before Harness 10;
             # dropping them would break every script or habit mirroring `run`'s
             # invocation shape (a silent interface change, not a cleanup).
-            parser.add_argument("--s", type=float, default=0.5, help="S1 cache hit-rate (0..1)")
+            parser.add_argument(
+                "--s",
+                type=float,
+                default=analyze.S1_DEFAULT,  # the versioned default, never a second literal
+                help="S1 cache hit-rate (0..1)",
+            )
             parser.add_argument("--reps", type=int, default=5)
             parser.add_argument("--rep", type=int, default=None, help="run only this repetition")
             parser.add_argument("--k", type=int, default=1, help="concurrency of the burst")

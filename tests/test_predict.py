@@ -1,13 +1,15 @@
-"""`bench predict`: the predictability HITL flow + the comparative MAPE (ticket Harness 09).
+"""`bench predict`: the predictability HITL flow + the comparative MAPE (tickets #09, #42).
 
-The 12-cell subgrid is estimated blind BEFORE each cell runs — the flow refuses an
-estimate once the cell's real exists in the raw datasets, under any protocol vintage —
-and re-estimated informed at the end. Every record is timestamped and hash-locked; a
-registry edited after the fact refuses to grow and refuses to report. The report
-re-derives the reals from the analyze derivatives in native units (weekly pp / dollars
-of credits), with a percentile bootstrap CI per aggregate, the paired bootstrap of
-MAPE_legacy - MAPE_new as the comparative verdict, and the sub-resolution cells (real
-dp under a tick) excluded from the legacy side and flagged as an opacity finding.
+The measurable set (methodology v1.1 §8: strong four T2 + T3, 14 cells) is estimated
+blind BEFORE each cell runs — the flow refuses an estimate once the cell's real exists
+in the raw datasets, under any protocol vintage — and re-estimated informed at the end.
+Every record is timestamped and hash-locked; a registry edited after the fact refuses
+to grow and refuses to report. The report re-derives the reals from the analyze
+derivatives in native units (weekly pp / dollars of credits), anchored to the persisted
+S0/S1 pair (v1.2: no custom S re-anchors it), with a percentile bootstrap CI per
+aggregate, the paired bootstrap of MAPE_legacy - MAPE_new as the comparative verdict,
+and the sub-resolution cells (real dp under a tick) excluded from the legacy side and
+flagged as an opacity finding.
 
 Everything is asserted through produced artifacts; the fake observes ZERO requests
 during any predict invocation. The manual-math dataset below is hand-crafted raw
@@ -159,53 +161,56 @@ def craft_cell(tmp_path, workload: str, model: str, *, reps: dict[int, tuple[int
 def craft_study_dataset(tmp_path) -> None:
     """The four measured cells of the manual-math dataset:
 
-    - qa_short/glm-5.3-flash: 2 reps of 80K in / 80K out, dpp 2.0
-        -> real 2.0 pp; new S0 = (80000*0.15 + 80000*0.50)/1e6 = $0.052
-    - multi_turn/kimi-k3: 2 reps of 5.6K in / 1.6K out, dpp 0.5 and 1.5
-        -> real median 1.0 pp; new S0 = (5600*3 + 1600*15)/1e6 = $0.0408
-    - reasoning/glm-5.3-flash: 2 reps of 100K in / 300K out, dpp 0.05
-        -> real 0.05 pp, UNDER the 0.1 pp tick; new S0 = $0.165
+    - long_context/glm-5.3-flash: 2 reps of 30K in / 300 out, dpp 2.0
+        -> real 2.0 pp; new S0 = (30000*0.15 + 300*0.50)/1e6 = $0.00465
+    - long_generation/kimi-k3: 2 reps of 1.2K in / 5K out, dpp 0.5 and 1.5
+        -> real median 1.0 pp; new S0 = (1200*3 + 5000*15)/1e6 = $0.0786
+    - ratio_out/glm-5.3-flash: 2 reps of 4K in / 10K out, dpp 0.05
+        -> real 0.05 pp, UNDER the 0.1 pp tick; new S0 = (4000*0.15 + 10000*0.50)/1e6 = $0.0056
     - multi_file/kimi-k2.7-code: 1 rep of 150K in / 30K out, dpp 4.0
         -> real 4.0 pp; new S0 = (150000*0.95 + 30000*4)/1e6 = $0.2625
     """
     craft_cell(
         tmp_path,
-        "qa_short",
+        "long_context",
         "glm-5.3-flash",
-        reps={1: (80_000, 80_000, 2.0), 2: (80_000, 80_000, 2.0)},
-    )
-    craft_cell(
-        tmp_path, "multi_turn", "kimi-k3", reps={1: (5_600, 1_600, 0.5), 2: (5_600, 1_600, 1.5)}
+        reps={1: (30_000, 300, 2.0), 2: (30_000, 300, 2.0)},
     )
     craft_cell(
         tmp_path,
-        "reasoning",
+        "long_generation",
+        "kimi-k3",
+        reps={1: (1_200, 5_000, 0.5), 2: (1_200, 5_000, 1.5)},
+    )
+    craft_cell(
+        tmp_path,
+        "ratio_out",
         "glm-5.3-flash",
-        reps={1: (100_000, 300_000, 0.05), 2: (100_000, 300_000, 0.05)},
+        reps={1: (4_000, 10_000, 0.05), 2: (4_000, 10_000, 0.05)},
     )
     craft_cell(tmp_path, "multi_file", "kimi-k2.7-code", reps={1: (150_000, 30_000, 4.0)})
 
 
 def estimate_all_blind(tmp_path) -> None:
-    """The 12 blind estimates, locked while the dataset holds nothing.
+    """The 14 blind estimates, locked while the dataset holds nothing.
 
     The four measured cells' estimates are chosen so every hand-derived MAPE below
-    is simple; the eight still-unmeasured cells get placeholder numbers.
+    is simple; the ten still-unmeasured cells get placeholder numbers.
     """
     valores = {
-        ("qa_short", "glm-5.3-flash"): (
+        ("long_context", "glm-5.3-flash"): (
             4.0,
-            0.0624,
-        ),  # APE: legacy |4-2|/2 = 1.0, new (0.0624-0.052)/0.052 = 0.2
-        ("multi_turn", "kimi-k3"): (4.0, 0.0408),  # APE: legacy |4-1|/1 = 3.0, new 0.0
-        ("reasoning", "glm-5.3-flash"): (
+            0.00558,
+        ),  # APE: legacy |4-2|/2 = 1.0, new (0.00558-0.00465)/0.00465 = 0.20000000000000007
+        ("long_generation", "kimi-k3"): (4.0, 0.0786),  # APE: legacy |4-1|/1 = 3.0, new 0.0
+        ("ratio_out", "glm-5.3-flash"): (
             0.2,
-            0.33,
-        ),  # new (0.33-0.165)/0.165 = 1.0; legacy excluded
+            0.0112,
+        ),  # new (0.0112-0.0056)/0.0056 = 1.0 (exact); legacy excluded
         ("multi_file", "kimi-k2.7-code"): (
             8.0,
             0.28875,
-        ),  # legacy |8-4|/4 = 1.0, new (0.28875-0.2625)/0.2625 = 0.1
+        ),  # legacy |8-4|/4 = 1.0, new (0.28875-0.2625)/0.2625 = 0.09999999999999998
     }
     for workload, model in predict._GRID:
         pp, usd = valores.get((workload, model), (1.0, 0.01))
@@ -217,9 +222,9 @@ def estimate_all_informed(tmp_path) -> None:
     """The informed re-estimation of the four measured cells: exact (the learning
     curve's floor - MAPE 0 against the same reals)."""
     valores = {
-        ("qa_short", "glm-5.3-flash"): (2.0, 0.052),
-        ("multi_turn", "kimi-k3"): (1.0, 0.0408),
-        ("reasoning", "glm-5.3-flash"): (0.05, 0.165),
+        ("long_context", "glm-5.3-flash"): (2.0, 0.00465),
+        ("long_generation", "kimi-k3"): (1.0, 0.0786),
+        ("ratio_out", "glm-5.3-flash"): (0.05, 0.0056),
         ("multi_file", "kimi-k2.7-code"): (4.0, 0.2625),
     }
     for (workload, model), (pp, usd) in valores.items():
@@ -244,9 +249,12 @@ def fila(doc: dict, workload: str, model: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_grid_holds_twelve_cells_on_the_slates():
+def test_grid_holds_the_measurable_set_on_the_slates():
+    """The v1.1 re-scope: the strong four T2 workloads + T3, the pairs whose
+    legacy the meter resolves per cell — qa_short (T1, sub-resolution level)
+    and the pooled weak trio are out."""
     celdas = predict.grid()
-    assert len(celdas) == 12
+    assert len(celdas) == 14
     slates = {
         "T1": set(standard_table()),
         "T2": set(workloads.SLATE_T2),
@@ -255,19 +263,31 @@ def test_grid_holds_twelve_cells_on_the_slates():
     for c in celdas:
         assert c.model in slates[c.level], c.key
         assert c.workload in {w.name for w in workloads.WORKLOADS_BY_LEVEL[c.level]}, c.key
+        assert c.level in ("T2", "T3"), c.key  # the measurable-legacy levels only
     assert {(c.workload, c.model) for c in celdas} == (
         {
             (w, m)
-            for w in ("qa_short", "long_context", "multi_turn", "reasoning", "ratio_in")
+            for w in ("long_context", "long_generation", "ratio_in", "ratio_out")
             for m in ("glm-5.3-flash", "kimi-k3")
         }
-        | {("multi_file", "glm-5.3-flash"), ("multi_file", "kimi-k2.7-code")}
+        | {
+            (w, m)
+            for w in ("multi_file", "debugging", "refactoring")
+            for m in ("glm-5.3-flash", "kimi-k2.7-code")
+        }
     )
-    # the agentic cell carries the T3 slate's code model, never kimi-k3
-    assert {c.model for c in celdas if c.workload == "multi_file"} == {
+    # the agentic cells carry the T3 slate's code model, never kimi-k3
+    assert {c.model for c in celdas if c.level == "T3"} == {
         "glm-5.3-flash",
         "kimi-k2.7-code",
     }
+    # the redrawn-out workloads are refused as cells
+    for w in ("qa_short", "multi_turn", "reasoning", "tool_calling"):
+        try:
+            predict.find_cell(w, "glm-5.3-flash")
+        except predict.PredictError:
+            continue
+        raise AssertionError(f"{w} should not be a predictability cell")
 
 
 # ---------------------------------------------------------------------------
@@ -278,8 +298,8 @@ def test_grid_holds_twelve_cells_on_the_slates():
 def test_brief_walkthrough_shows_only_public_information(tmp_path, fake_cli):
     pricing = pricing_dir(tmp_path)
     doc = json_doc(tmp_path, "predict", "--pricing-dir", pricing)
-    assert doc["counts"] == {"blind": 0, "informed": 0, "cells": 12}
-    assert len(doc["cells"]) == 12
+    assert doc["counts"] == {"blind": 0, "informed": 0, "cells": 14, "off_grid": 0}
+    assert len(doc["cells"]) == 14
     for f in doc["cells"]:
         assert f["blind"] is None and f["informed"] is None
         b = f["brief"]
@@ -290,27 +310,28 @@ def test_brief_walkthrough_shows_only_public_information(tmp_path, fake_cli):
         assert "cache-free" in b["lane"]
         assert set(b["rates"]) == {"input", "cached_input", "output", "per"}
         assert b["table_version"] == "2026-08-31"
-    # the T3 cell's brief describes the billed agent loop, not a single request
-    agenticas = [f for f in doc["cells"] if f["workload"] == "multi_file"]
+    # the T3 cells' briefs describe the billed agent loop, not a single request
+    agenticas = [f for f in doc["cells"] if f["level"] == "T3"]
+    assert {f["workload"] for f in agenticas} == {"multi_file", "debugging", "refactoring"}
     assert all("agent" in f["brief"]["description"] for f in agenticas)
     assert fake_cli.calls == []  # the brief never touches the API
     _code, out, _err = run_cli(tmp_path, "predict", "--pricing-dir", pricing)
-    assert "PENDING blind" in out and "12 cells, 0 blind" in out
+    assert "PENDING blind" in out and "14 cells, 0 blind" in out
 
 
 def test_brief_marks_the_locked_cells_and_their_next_phase(tmp_path):
     pricing = pricing_dir(tmp_path)
-    code, out, err = estimate(tmp_path, "blind", "qa_short", "glm-5.3-flash", 2.0, 0.05)
+    code, out, err = estimate(tmp_path, "blind", "long_context", "glm-5.3-flash", 2.0, 0.05)
     assert code == 0, out or err
     doc = json_doc(tmp_path, "predict", "--pricing-dir", pricing)
     assert doc["counts"]["blind"] == 1
-    qa = next(
-        f for f in doc["cells"] if f["workload"] == "qa_short" and f["model"] == "glm-5.3-flash"
+    larga = next(
+        f for f in doc["cells"] if f["workload"] == "long_context" and f["model"] == "glm-5.3-flash"
     )
-    assert qa["brief"] is None  # estimated cells show no brief: nothing left to brief
-    assert qa["blind"]["estimated_pp"] == 2.0 and qa["blind"]["estimated_usd"] == 0.05
+    assert larga["brief"] is None  # estimated cells show no brief: nothing left to brief
+    assert larga["blind"]["estimated_pp"] == 2.0 and larga["blind"]["estimated_usd"] == 0.05
     otras = [f for f in doc["cells"] if f["blind"] is None]
-    assert len(otras) == 11  # the pending cells keep their public brief
+    assert len(otras) == 13  # the pending cells keep their public brief
 
 
 # ---------------------------------------------------------------------------
@@ -320,26 +341,26 @@ def test_brief_marks_the_locked_cells_and_their_next_phase(tmp_path):
 
 def test_blind_estimate_refused_after_the_real_exists(tmp_path, fake_cli):
     pricing_dir(tmp_path)
-    craft_cell(tmp_path, "qa_short", "glm-5.3-flash", reps={1: (80_000, 80_000, 2.0)})
-    code, _out, err = estimate(tmp_path, "blind", "qa_short", "glm-5.3-flash", 1.0, 0.01)
+    craft_cell(tmp_path, "long_context", "glm-5.3-flash", reps={1: (80_000, 80_000, 2.0)})
+    code, _out, err = estimate(tmp_path, "blind", "long_context", "glm-5.3-flash", 1.0, 0.01)
     assert code == 2 and "real already exists" in err
     assert "1 request lines, 1 batch lines" in err
     assert not (tmp_path / predict.PREDICT_DIR).exists()  # nothing was written
     # a batch line alone is evidence too (an aborted bracket still billed requests)
-    craft_cell(tmp_path, "multi_turn", "kimi-k3", reps={1: (5_600, 1_600, 0.5)})
-    code, _out, err = estimate(tmp_path, "blind", "multi_turn", "kimi-k3", 1.0, 0.01)
+    craft_cell(tmp_path, "ratio_in", "kimi-k3", reps={1: (5_600, 1_600, 0.5)})
+    code, _out, err = estimate(tmp_path, "blind", "ratio_in", "kimi-k3", 1.0, 0.01)
     assert code == 2 and "real already exists" in err
     # a cell without any raw evidence still takes its blind estimate
-    code, out, err = estimate(tmp_path, "blind", "reasoning", "glm-5.3-flash", 1.0, 0.01)
+    code, out, err = estimate(tmp_path, "blind", "debugging", "glm-5.3-flash", 1.0, 0.01)
     assert code == 0, out or err
     assert fake_cli.calls == []  # the flow never spends anything
 
 
 def test_blind_estimate_is_one_per_cell_and_locked(tmp_path):
     pricing_dir(tmp_path)
-    code, out, err = estimate(tmp_path, "blind", "qa_short", "glm-5.3-flash", 2.0, 0.05)
+    code, out, err = estimate(tmp_path, "blind", "long_context", "glm-5.3-flash", 2.0, 0.05)
     assert code == 0, out or err
-    code, _out, err = estimate(tmp_path, "blind", "qa_short", "glm-5.3-flash", 3.0, 0.06)
+    code, _out, err = estimate(tmp_path, "blind", "long_context", "glm-5.3-flash", 3.0, 0.06)
     assert code == 2 and "locked" in err and "not revisable" in err
     lineas = [
         json.loads(cruda)
@@ -358,12 +379,12 @@ def test_blind_estimate_is_one_per_cell_and_locked(tmp_path):
 
 def test_registry_tamper_refuses_everything_after_it(tmp_path):
     pricing_dir(tmp_path)
-    assert estimate(tmp_path, "blind", "qa_short", "glm-5.3-flash", 2.0, 0.05)[0] == 0
+    assert estimate(tmp_path, "blind", "long_context", "glm-5.3-flash", 2.0, 0.05)[0] == 0
     ruta = pathlib.Path(tmp_path, predict.PREDICT_DIR, "estimates-phase1.jsonl")
     linea = json.loads(ruta.read_text(encoding="utf-8").splitlines()[0])
     linea["estimated_pp"] = 1.0  # an estimate edited after its lock
     ruta.write_text(json.dumps(linea) + "\n", encoding="utf-8")
-    code, _out, err = estimate(tmp_path, "blind", "multi_turn", "kimi-k3", 1.0, 0.01)
+    code, _out, err = estimate(tmp_path, "blind", "ratio_in", "kimi-k3", 1.0, 0.01)
     assert code == 2 and "lock" in err and "edited" in err
     code, _out, err = run_cli(
         tmp_path, "predict", "--report", "--pricing-dir", str(pathlib.Path(tmp_path) / PRICING)
@@ -373,13 +394,13 @@ def test_registry_tamper_refuses_everything_after_it(tmp_path):
 
 def test_torn_and_foreign_registry_lines_are_refused(tmp_path):
     pricing_dir(tmp_path)
-    assert estimate(tmp_path, "blind", "qa_short", "glm-5.3-flash", 2.0, 0.05)[0] == 0
+    assert estimate(tmp_path, "blind", "long_context", "glm-5.3-flash", 2.0, 0.05)[0] == 0
     ruta = pathlib.Path(tmp_path, predict.PREDICT_DIR, "estimates-phase1.jsonl")
     ruta.write_text(ruta.read_text(encoding="utf-8") + "{torn\n", encoding="utf-8")
-    code, _out, err = estimate(tmp_path, "blind", "multi_turn", "kimi-k3", 1.0, 0.01)
+    code, _out, err = estimate(tmp_path, "blind", "ratio_in", "kimi-k3", 1.0, 0.01)
     assert code == 2 and "not JSON" in err
     ruta.write_text('{"junk": true}\n', encoding="utf-8")  # a foreign object, valid JSON
-    code, _out, err = estimate(tmp_path, "blind", "multi_turn", "kimi-k3", 1.0, 0.01)
+    code, _out, err = estimate(tmp_path, "blind", "ratio_in", "kimi-k3", 1.0, 0.01)
     assert code == 2 and "schema" in err
 
 
@@ -390,8 +411,8 @@ def test_torn_and_foreign_registry_lines_are_refused(tmp_path):
 
 def test_informed_needs_the_blind_estimate_first(tmp_path, fake_cli):
     pricing_dir(tmp_path)
-    craft_cell(tmp_path, "qa_short", "glm-5.3-flash", reps={1: (80_000, 80_000, 2.0)})
-    code, _out, err = estimate(tmp_path, "informed", "qa_short", "glm-5.3-flash", 2.0, 0.05)
+    craft_cell(tmp_path, "long_context", "glm-5.3-flash", reps={1: (80_000, 80_000, 2.0)})
+    code, _out, err = estimate(tmp_path, "informed", "long_context", "glm-5.3-flash", 2.0, 0.05)
     assert code == 2 and "blind estimate" in err
     assert not (tmp_path / predict.PREDICT_DIR / "estimates-phase2.jsonl").exists()
     assert fake_cli.calls == []
@@ -399,28 +420,28 @@ def test_informed_needs_the_blind_estimate_first(tmp_path, fake_cli):
 
 def test_informed_needs_measured_evidence(tmp_path):
     pricing_dir(tmp_path)
-    assert estimate(tmp_path, "blind", "qa_short", "glm-5.3-flash", 2.0, 0.05)[0] == 0
-    code, _out, err = estimate(tmp_path, "informed", "qa_short", "glm-5.3-flash", 2.0, 0.05)
+    assert estimate(tmp_path, "blind", "long_context", "glm-5.3-flash", 2.0, 0.05)[0] == 0
+    code, _out, err = estimate(tmp_path, "informed", "long_context", "glm-5.3-flash", 2.0, 0.05)
     assert code == 2 and "no measured evidence" in err
 
 
 def test_informed_records_after_blind_and_evidence(tmp_path, fake_cli):
     pricing_dir(tmp_path)
-    assert estimate(tmp_path, "blind", "qa_short", "glm-5.3-flash", 2.0, 0.05)[0] == 0
+    assert estimate(tmp_path, "blind", "long_context", "glm-5.3-flash", 2.0, 0.05)[0] == 0
     craft_cell(
         tmp_path,
-        "qa_short",
+        "long_context",
         "glm-5.3-flash",
         reps={1: (80_000, 80_000, 2.0), 2: (80_000, 80_000, 2.0)},
     )
-    code, out, err = estimate(tmp_path, "informed", "qa_short", "glm-5.3-flash", 2.0, 0.05)
+    code, out, err = estimate(tmp_path, "informed", "long_context", "glm-5.3-flash", 2.0, 0.05)
     assert code == 0, out or err
     linea = json.loads(
         (tmp_path / predict.PREDICT_DIR / "estimates-phase2.jsonl").read_text(encoding="utf-8")
     )
     assert linea["evidence"] == {"request_lines": 2, "batch_lines": 2}
     assert linea["phase"] == "informed"
-    code, _out, err = estimate(tmp_path, "informed", "qa_short", "glm-5.3-flash", 2.0, 0.05)
+    code, _out, err = estimate(tmp_path, "informed", "long_context", "glm-5.3-flash", 2.0, 0.05)
     assert code == 2 and "not revisable" in err
 
 
@@ -452,12 +473,14 @@ def test_report_mape_matches_the_manual_math(tmp_path, fake_cli):
         for p in sorted(pathlib.Path(tmp_path, carpeta).glob("*.jsonl"))
     }
     assert despues == antes  # raw untouched
-    assert doc["estimates"] == {"blind": 12, "informed": 4}
+    assert doc["estimates"] == {"blind": 14, "informed": 4}
 
-    # the blind phase: legacy over cells 1/2/4 (reasoning is sub-resolution),
-    # new over the four cells whose extrapolation exists. The MAPEs are the
-    # unrounded means of the per-cell APEs (full float precision).
+    # the blind phase: legacy over long_context/long_generation/multi_file
+    # (ratio_out is sub-resolution), new over the four cells whose extrapolation
+    # exists. The MAPEs are the unrounded means of the per-cell APEs (full float
+    # precision), anchored to the persisted S0/S1 pair.
     ciego = doc["aggregate"]["blind"]
+    assert doc["params"]["s1_default"] == 0.5  # v1.2: the versioned default, not a flag
     assert ciego["mape_legacy"] == {"mape": 1.6666666666666667, "cells": 3, "ci": [1.0, 3.0]}
     assert ciego["mape_new"]["cells"] == 4 and ciego["mape_new"]["mape"] == 0.325
     assert (
@@ -487,17 +510,18 @@ def test_report_mape_matches_the_manual_math(tmp_path, fake_cli):
     assert informada["ollama_claim"] == "not resolved"
 
     # per-cell APEs match the hand math
-    qa = next(
-        c for c in doc["cells"] if c["workload"] == "qa_short" and c["model"] == "glm-5.3-flash"
+    larga = next(
+        c for c in doc["cells"] if c["workload"] == "long_context" and c["model"] == "glm-5.3-flash"
     )
-    assert qa["real_pp"] == 2.0 and qa["real_new_s0_usd_per_run"] == 0.052
-    assert qa["blind"]["ape_legacy"] == 1.0 and qa["blind"]["ape_new"] == 0.2
-    assert qa["informed"]["ape_legacy"] == 0.0 and qa["informed"]["ape_new"] == 0.0
-    multi = next(
-        c for c in doc["cells"] if c["workload"] == "multi_turn" and c["model"] == "kimi-k3"
+    assert larga["real_pp"] == 2.0 and larga["real_new_s0_usd_per_run"] == 0.00465
+    assert larga["blind"]["ape_legacy"] == 1.0
+    assert larga["blind"]["ape_new"] == 0.20000000000000007  # (0.00558-0.00465)/0.00465, exact
+    assert larga["informed"]["ape_legacy"] == 0.0 and larga["informed"]["ape_new"] == 0.0
+    generacion = next(
+        c for c in doc["cells"] if c["workload"] == "long_generation" and c["model"] == "kimi-k3"
     )
-    assert multi["real_pp"] == 1.0 and multi["real_new_s0_usd_per_run"] == 0.0408
-    assert multi["blind"]["ape_legacy"] == 3.0 and multi["blind"]["ape_new"] == 0.0
+    assert generacion["real_pp"] == 1.0 and generacion["real_new_s0_usd_per_run"] == 0.0786
+    assert generacion["blind"]["ape_legacy"] == 3.0 and generacion["blind"]["ape_new"] == 0.0
     archivo = next(
         c for c in doc["cells"] if c["workload"] == "multi_file" and c["model"] == "kimi-k2.7-code"
     )
@@ -506,8 +530,11 @@ def test_report_mape_matches_the_manual_math(tmp_path, fake_cli):
 
     # the per-workload breakdown carries the same numbers, grouped
     desglose = {w["workload"]: w for w in doc["workloads"]}
-    assert desglose["qa_short"]["blind"] == {"mape_legacy": 1.0, "mape_new": 0.2}
-    assert desglose["multi_turn"]["blind"] == {"mape_legacy": 3.0, "mape_new": 0.0}
+    assert desglose["long_context"]["blind"] == {
+        "mape_legacy": 1.0,
+        "mape_new": 0.20000000000000007,
+    }
+    assert desglose["long_generation"]["blind"] == {"mape_legacy": 3.0, "mape_new": 0.0}
     assert desglose["multi_file"]["blind"] == {
         "mape_legacy": 1.0,
         "mape_new": 0.09999999999999998,
@@ -523,17 +550,17 @@ def test_report_mape_matches_the_manual_math(tmp_path, fake_cli):
 def test_report_excludes_sub_resolution_cells_from_the_legacy_side(tmp_path):
     full_study(tmp_path)
     doc = report(tmp_path)
-    reasoning = next(
-        c for c in doc["cells"] if c["workload"] == "reasoning" and c["model"] == "glm-5.3-flash"
+    salida = next(
+        c for c in doc["cells"] if c["workload"] == "ratio_out" and c["model"] == "glm-5.3-flash"
     )
     # the real exists but sits under the tick: no legacy APE anywhere
-    assert reasoning["real_pp"] == 0.05 and reasoning["legacy_status"] == "sub_resolution"
-    assert reasoning["blind"]["ape_legacy"] is None
-    assert reasoning["informed"]["ape_legacy"] is None
-    assert reasoning["blind"]["ape_new"] == 1.0  # the new side has no such floor
+    assert salida["real_pp"] == 0.05 and salida["legacy_status"] == "sub_resolution"
+    assert salida["blind"]["ape_legacy"] is None
+    assert salida["informed"]["ape_legacy"] is None
+    assert salida["blind"]["ape_new"] == 1.0  # the new side has no such floor
     hallazgos = doc["findings"]
     assert hallazgos["sub_resolution_legacy"] == [
-        "reasoning/glm-5.3-flash (real 0.05 pp, under the 0.1 pp tick)"
+        "ratio_out/glm-5.3-flash (real 0.05 pp, under the 0.1 pp tick)"
     ]
     # the blind legacy MAPE counted 3 cells, not 4
     assert doc["aggregate"]["blind"]["mape_legacy"]["cells"] == 3
@@ -541,27 +568,60 @@ def test_report_excludes_sub_resolution_cells_from_the_legacy_side(tmp_path):
         tmp_path, "predict", "--report", "--pricing-dir", str(pathlib.Path(tmp_path) / PRICING)
     )
     assert "sub-resolution (excluded from the legacy side)" in out
-    assert "reasoning/glm-5.3-flash (real 0.05 pp, under the 0.1 pp tick)" in out
+    assert "ratio_out/glm-5.3-flash (real 0.05 pp, under the 0.1 pp tick)" in out
 
 
 def test_report_lists_unmeasured_and_pending_cells(tmp_path):
     full_study(tmp_path)
     doc = report(tmp_path)
     hallazgos = doc["findings"]
-    assert len(hallazgos["unmeasured"]) == 8
+    assert len(hallazgos["unmeasured"]) == 10
     assert hallazgos["pending_blind"] == []
-    assert len(hallazgos["pending_informed"]) == 8  # blind but never re-estimated
+    assert len(hallazgos["pending_informed"]) == 10  # blind but never re-estimated
     # an unmeasured cell carries no real and no APE, even with an estimate in hand
-    larga = next(
-        c for c in doc["cells"] if c["workload"] == "long_context" and c["model"] == "glm-5.3-flash"
+    entrada = next(
+        c for c in doc["cells"] if c["workload"] == "ratio_in" and c["model"] == "kimi-k3"
     )
-    assert larga["real_pp"] is None and larga["legacy_status"] == "unmeasured"
-    assert larga["blind"]["ape_legacy"] is None and larga["blind"]["ape_new"] is None
+    assert entrada["real_pp"] is None and entrada["legacy_status"] == "unmeasured"
+    assert entrada["blind"]["ape_legacy"] is None and entrada["blind"]["ape_new"] is None
+
+
+def test_report_flags_off_grid_estimates_and_measured_cells_without_blind(tmp_path):
+    """A registry from the retired 12-cell scope: the qa_short line is schema-valid
+    and hash-locked, but its cell is no longer a predictability cell. It must not
+    count in any headline, must not enter any APE, and must be named in
+    findings.off_grid_estimates. The measured long_context cell whose blind went
+    off-grid with it is a permanent dead end for the study (the flow refuses a
+    blind after the run) and is named in findings.measured_without_blind."""
+    pricing_dir(tmp_path)
+    assert estimate(tmp_path, "blind", "long_context", "glm-5.3-flash", 2.0, 0.05)[0] == 0
+    ruta = estimates_path(tmp_path, "blind")
+    linea = json.loads(ruta.read_text(encoding="utf-8").splitlines()[0])
+    linea["cell"] = {"workload": "qa_short", "model": "glm-5.3-flash"}  # a v1-era cell
+    linea["hash"] = predict.line_hash(linea)  # re-locked: the registry itself is honest
+    ruta.write_text(json.dumps(linea, ensure_ascii=False) + "\n", encoding="utf-8")
+    # the walkthrough headline counts grid cells only and names the strays
+    doc = json_doc(tmp_path, "predict", "--pricing-dir", pricing_dir(tmp_path))
+    assert doc["counts"] == {"blind": 0, "informed": 0, "cells": 14, "off_grid": 1}
+    # the report: no row for qa_short, the stray flagged, the dead end flagged
+    craft_cell(tmp_path, "long_context", "glm-5.3-flash", reps={1: (80_000, 80_000, 2.0)})
+    doc = report(tmp_path)
+    assert doc["estimates"] == {"blind": 0, "informed": 0}
+    assert {f"{c['workload']}/{c['model']}" for c in doc["cells"]} == {
+        f"{w}/{m}" for w, m in predict._GRID
+    }
+    assert doc["findings"]["off_grid_estimates"] == ["qa_short/glm-5.3-flash (blind)"]
+    assert doc["findings"]["measured_without_blind"] == ["long_context/glm-5.3-flash"]
+    _code, out, _err = run_cli(
+        tmp_path, "predict", "--report", "--pricing-dir", str(pathlib.Path(tmp_path) / PRICING)
+    )
+    assert "qa_short/glm-5.3-flash (blind)" in out
+    assert "measured with no blind estimate" in out
 
 
 def test_report_without_raw_data_is_a_clean_error(tmp_path):
     pricing_dir(tmp_path)
-    assert estimate(tmp_path, "blind", "qa_short", "glm-5.3-flash", 2.0, 0.05)[0] == 0
+    assert estimate(tmp_path, "blind", "long_context", "glm-5.3-flash", 2.0, 0.05)[0] == 0
     code, _out, err = run_cli(
         tmp_path, "predict", "--report", "--pricing-dir", str(pathlib.Path(tmp_path) / PRICING)
     )
@@ -575,7 +635,7 @@ def test_report_without_estimates_reports_only_findings(tmp_path, fake_cli):
     doc = report(tmp_path)
     assert doc["aggregate"] == {}  # nothing estimated: nothing to compare
     assert doc["estimates"] == {"blind": 0, "informed": 0}
-    assert len(doc["findings"]["pending_blind"]) == 12
+    assert len(doc["findings"]["pending_blind"]) == 14
     assert fake_cli.calls == []
     _code, out, _err = run_cli(
         tmp_path, "predict", "--report", "--pricing-dir", str(pathlib.Path(tmp_path) / PRICING)
@@ -617,7 +677,7 @@ def test_recording_flags_need_a_phase_and_a_full_cell(tmp_path):
     code, _out, err = run_cli(tmp_path, "predict", "--pp", "2.0", "--pricing-dir", pricing)
     assert code == 2 and "--phase" in err
     code, _out, err = run_cli(
-        tmp_path, "predict", "--workload", "qa_short", "--pricing-dir", pricing
+        tmp_path, "predict", "--workload", "long_context", "--pricing-dir", pricing
     )
     assert code == 2 and "--phase" in err
     code, _out, err = run_cli(
@@ -626,7 +686,7 @@ def test_recording_flags_need_a_phase_and_a_full_cell(tmp_path):
         "--phase",
         "blind",
         "--workload",
-        "qa_short",
+        "long_context",
         "--pp",
         "2.0",
         "--pricing-dir",
@@ -639,7 +699,7 @@ def test_recording_flags_need_a_phase_and_a_full_cell(tmp_path):
         "--phase",
         "blind",
         "--workload",
-        "qa_short",
+        "long_context",
         "--model",
         "glm-5.3-flash",
         "--usd",
@@ -649,7 +709,7 @@ def test_recording_flags_need_a_phase_and_a_full_cell(tmp_path):
     )
     assert code == 2 and "--pp" in err
     code, _out, err = run_cli(
-        tmp_path, "predict", "--report", "--workload", "qa_short", "--pricing-dir", pricing
+        tmp_path, "predict", "--report", "--workload", "long_context", "--pricing-dir", pricing
     )
     assert code == 2 and "whole grid" in err
 
@@ -657,9 +717,9 @@ def test_recording_flags_need_a_phase_and_a_full_cell(tmp_path):
 def test_estimate_values_are_validated(tmp_path):
     pricing_dir(tmp_path)
     for pp, usd in ((0, 0.01), (-1, 0.01), (2.0, 0), (2.0, -0.5)):
-        code, _out, err = estimate(tmp_path, "blind", "qa_short", "glm-5.3-flash", pp, usd)
+        code, _out, err = estimate(tmp_path, "blind", "long_context", "glm-5.3-flash", pp, usd)
         assert code == 2 and "> 0" in err, (pp, usd)
-    code, _out, err = estimate(tmp_path, "blind", "qa_short", "no-existe", 2.0, 0.01)
+    code, _out, err = estimate(tmp_path, "blind", "long_context", "no-existe", 2.0, 0.01)
     assert code == 2 and "not one of the predictability cells" in err
     code, _out, err = run_cli(
         tmp_path,
@@ -678,10 +738,13 @@ def test_estimate_values_are_validated(tmp_path):
         str(pathlib.Path(tmp_path) / PRICING),
     )
     assert code == 2 and "not one of the predictability cells" in err  # outside the grid
+    # v1.2: no custom S enters the predictability flow, out of range or not -
+    # the estimates and the comparative MAPE stay anchored to the S0/S1 pair
     code, _out, err = estimate(
-        tmp_path, "blind", "qa_short", "glm-5.3-flash", 2.0, 0.01, "--s", "1.5"
+        tmp_path, "blind", "long_context", "glm-5.3-flash", 2.0, 0.01, "--s", "0.9"
     )
-    assert code == 2 and "--s must be in [0, 1]" in err
+    # argparse prefix-matching names the settle flags; either way --s is not read
+    assert code == 2 and ("ambiguous option" in err or "unrecognized" in err)
     assert not (tmp_path / predict.PREDICT_DIR).exists()
 
 
@@ -691,13 +754,13 @@ def test_infinite_estimates_are_refused_never_locked(tmp_path):
     Infinity tokens the report could never parse back."""
     pricing_dir(tmp_path)
     for pp, usd in (("1e999", 0.01), (2.0, "1e999")):
-        code, _out, err = estimate(tmp_path, "blind", "qa_short", "glm-5.3-flash", pp, usd)
+        code, _out, err = estimate(tmp_path, "blind", "long_context", "glm-5.3-flash", pp, usd)
         assert code == 2 and "finite" in err, (pp, usd)
     assert not (tmp_path / predict.PREDICT_DIR).exists()
     # the cell is not bricked: a real estimate still locks
-    code, out, err = estimate(tmp_path, "blind", "qa_short", "glm-5.3-flash", 2.0, 0.05)
+    code, out, err = estimate(tmp_path, "blind", "long_context", "glm-5.3-flash", 2.0, 0.05)
     assert code == 0, out or err
-    reporte = estimate(tmp_path, "informed", "qa_short", "glm-5.3-flash", 2.0, 0.05)
+    reporte = estimate(tmp_path, "informed", "long_context", "glm-5.3-flash", 2.0, 0.05)
     assert reporte[0] == 2 and "no measured evidence" in reporte[2]  # informed still gated
 
 
@@ -737,7 +800,7 @@ def test_report_sets_aside_estimates_from_another_table_vintage(tmp_path):
     doc = json.loads(salida)
     assert doc["table_version"] == "2026-09-01"
     qa = next(
-        c for c in doc["cells"] if c["workload"] == "qa_short" and c["model"] == "glm-5.3-flash"
+        c for c in doc["cells"] if c["workload"] == "long_context" and c["model"] == "glm-5.3-flash"
     )
     assert qa["blind"]["table_vintage_mismatch"] is True
     assert qa["blind"]["ape_legacy"] == 1.0  # the legacy side never moved
@@ -747,26 +810,28 @@ def test_report_sets_aside_estimates_from_another_table_vintage(tmp_path):
     assert ciego["mape_new"] is None and ciego["paired_cells"] == 0
     assert ciego["verdict"] == "no comparison"
     obsoletas = doc["findings"]["stale_table_estimates"]
-    assert len(obsoletas) == 16  # 12 blind + 4 informed records, each flagged once
+    assert len(obsoletas) == 18  # 14 blind + 4 informed records, each flagged once
     assert {e.split(" (")[0] for e in obsoletas} == {f"{w}/{m}" for w, m in predict._GRID}
     # and on its own vintage the same estimates price normally
     doc2 = report(tmp_path, "--table-version", "2026-08-31")
     qa2 = next(
-        c for c in doc2["cells"] if c["workload"] == "qa_short" and c["model"] == "glm-5.3-flash"
+        c
+        for c in doc2["cells"]
+        if c["workload"] == "long_context" and c["model"] == "glm-5.3-flash"
     )
     assert qa2["blind"]["table_vintage_mismatch"] is False
-    assert qa2["blind"]["ape_new"] == 0.2
+    assert qa2["blind"]["ape_new"] == 0.20000000000000007
     assert doc2["findings"]["stale_table_estimates"] == []
 
 
 def test_the_flow_needs_no_api_key(tmp_path, monkeypatch):
     monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
     pricing = pricing_dir(tmp_path)
-    code, out, err = estimate(tmp_path, "blind", "qa_short", "glm-5.3-flash", 2.0, 0.05)
+    code, out, err = estimate(tmp_path, "blind", "long_context", "glm-5.3-flash", 2.0, 0.05)
     assert code == 0, out or err
     code, _out, err = run_cli(tmp_path, "predict", "--pricing-dir", pricing)
     assert code == 0, err
-    craft_cell(tmp_path, "qa_short", "glm-5.3-flash", reps={1: (80_000, 80_000, 2.0)})
+    craft_cell(tmp_path, "long_context", "glm-5.3-flash", reps={1: (80_000, 80_000, 2.0)})
     code, _out, err = run_cli(
         tmp_path, "predict", "--report", "--pricing-dir", str(pathlib.Path(tmp_path) / PRICING)
     )

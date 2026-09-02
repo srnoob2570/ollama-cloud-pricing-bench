@@ -66,6 +66,12 @@ from .cost import new_task_cost  # the cost model's single pricing formula
 from .pricing import TableError
 
 CACHE_SWEEP_S = (0.0, 0.25, 0.5, 0.9)  # the fixed cache sweep (S0 included)
+# The persisted S0/S1 pair's S1: the versioned default hit rate (methodology
+# v1.2), declared by the methodology and mirrored by analyze's --s default.
+# A custom S(x) never re-anchors the locked estimates or the comparative MAPE
+# (predict reads this constant, not a flag); it enters only through analyze's
+# stamped re-runs.
+S1_DEFAULT = 0.5
 RATE_FACTORS = (0.8, 1.2)  # the fixed rates sweep (+/-20 %)
 ANCLA_FACTORS = (0.7, 1.0, 1.3)  # the fixed P_LEGADO sweep (+/-30 %)
 # The sensitivity sweeps move ONE cost-model axis at a time over the S0 floor
@@ -722,6 +728,7 @@ def build(
     level: str | None = None,
     model: str | None = None,
     protocol_version: str | None = None,
+    cells_only: bool = False,
 ) -> dict:
     """The analysis doc, computed from raw alone. Raises AnalyzeError when the
     base holds no raw dataset at all.
@@ -730,7 +737,12 @@ def build(
     harness's own). A fetched dataset release is analyzed with ITS OWN protocol
     — the raw<->code<->table pairing, consumed: a frozen v2 release stays
     analyzable as the opacity case study it is kept as, while the local path
-    never mixes vintages."""
+    never mixes vintages.
+
+    `cells_only` skips the pooled/who-wins/dp-tokens/sensitivity derivatives
+    (the doc then carries the cells and nothing around them): predict's
+    comparative report reads the cells alone, so it never pays for the sweeps
+    it does not consume. The full doc stays the default."""
     base = pathlib.Path(base)
     vintage = protocol_version or PROTOCOL_VERSION
     runs_dir = base / "runs"
@@ -798,7 +810,7 @@ def build(
         {r.get("run_id") for r in requests if isinstance(r.get("run_id"), str)}
         | {b.get("run_id") for b in batches if isinstance(b.get("run_id"), str)}
     )
-    return {
+    doc = {
         "kind": "analysis",
         "generated_at": time.time(),
         "protocol_version": vintage,  # the vintage the filter kept (a release's own)
@@ -826,15 +838,6 @@ def build(
         },
         "s_per_model": {m: dataclasses.asdict(resueltos[m]) for m in modelos},
         "cells": celdas,
-        "pooled": _pooled_section(batches, requests, usd=usd, session_usd=session_usd),
-        "who_wins": _who_wins(celdas),
-        "dp_tokens_curve": _curva_dp_tokens(batches, requests),
-        "sensitivity": {
-            "rates": _sweep_rates(celdas, tick_usd),
-            "cache": _sweep_cache(celdas, tabla, tick_usd),
-            "ancla": _sweep_ancla(celdas, tick_usd),
-            "k_axis": _sweep_k(batches, requests, usd, session_usd),
-        },
         "paper_discounts": sin_materializar,
         "notes": (
             "computed from the raw runs/*.jsonl + batches/*.jsonl lines alone "
@@ -853,6 +856,17 @@ def build(
             "never verdicted, and who-wins counts only measured verdicts."
         ),
     }
+    if not cells_only:
+        doc["pooled"] = _pooled_section(batches, requests, usd=usd, session_usd=session_usd)
+        doc["who_wins"] = _who_wins(celdas)
+        doc["dp_tokens_curve"] = _curva_dp_tokens(batches, requests)
+        doc["sensitivity"] = {
+            "rates": _sweep_rates(celdas, tick_usd),
+            "cache": _sweep_cache(celdas, tabla, tick_usd),
+            "ancla": _sweep_ancla(celdas, tick_usd),
+            "k_axis": _sweep_k(batches, requests, usd, session_usd),
+        }
+    return doc
 
 
 # ---------------------------------------------------------------------------

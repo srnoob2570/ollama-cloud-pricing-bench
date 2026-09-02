@@ -7,15 +7,20 @@ is the median of its n=5 runs; the error is |estimate − real| / real, and the 
 COMPARATIVE (MAPE legacy vs MAPE new, bootstrap CI) — never an absolute threshold. The
 experiment reuses the workloads' runs: zero extra quota.
 
-The 12-cell subgrid (the design's decision, adjusted to the slates):
+The cell list (redrawn onto the measurable set — methodology v1.1 §8: the strong
+four T2 workloads + T3 on the legacy side, where the meter resolves the real;
+the sub-tick cells stay out — the weak trio pools per model, marked allocated
+and never verdicted, which is a treatment, not an opacity finding of this report):
 
-    {qa_short, long_context, multi_turn, reasoning, ratio_in}
-        x {glm-5.3-flash, kimi-k3}                     = 10 cells
-    + {multi_file} x {glm-5.3-flash, kimi-k2.7-code}   = 12
+    {long_context, long_generation, ratio_in, ratio_out}
+        x {glm-5.3-flash, kimi-k3}                                = 8 cells
+    + {multi_file, debugging, refactoring}
+        x {glm-5.3-flash, kimi-k2.7-code}                         = 6
 
-(kimi-k3 does not belong to the T3 slate, so the agentic cell carries kimi-k2.7-code
-instead.) Every estimate is recorded in the system's NATIVE units — weekly-window pp
-(legacy) and dollars of credits (new): bridging tokens to GPU-time is part of the
+14 cells. (kimi-k3 does not belong to the T3 slate, so the agentic cells carry
+kimi-k2.7-code instead — the v1 design's slate-coherence rule, kept.) Every
+estimate is recorded in the system's NATIVE units — weekly-window pp (legacy)
+and dollars of credits (new): bridging tokens to GPU-time is part of the
 difficulty under test, so the anchor never enters the MAPE.
 
 Two phases, one locked estimate per cell per phase, under
@@ -37,8 +42,12 @@ and refuses to report.
 The report (`bench predict --report`) is offline like analyze: the real of each cell
 comes from the analyze derivatives — legacy = the median Δpp(weekly) of the cell's reps;
 new = the S0 extrapolation of each rep's measured tokens x the versioned table (the
-model's effective S1 — measured where the calibration was conclusive — as the
-sensitivity). MAPE per system, carried per cell (APE), per workload and aggregate, each
+model's effective S1 — measured where the calibration was conclusive, else the
+versioned default — as the sensitivity). Anchoring (methodology v1.2): estimates and
+verdicts read the persisted S0/S1 pair — S0 floor + S1 (default 50 %) with the
+measured hit-rate winning where conclusive; a custom S(x) never re-anchors them
+(custom S enters only through analyze's stamped re-runs). MAPE per system, carried
+per cell (APE), per workload and aggregate, each
 aggregate with a percentile bootstrap CI under a fixed seed — the study never gambles —
 plus the paired bootstrap of MAPE_legacy − MAPE_new as the comparative verdict.
 
@@ -62,6 +71,7 @@ import time
 from . import analyze as analyze_mod
 from . import lane as lane_mod
 from . import workloads as workloads_mod
+from .analyze import S1_DEFAULT
 from .analyze import _es_numero  # the cost model's number test, shared with analyze
 from .calibration import TICK_BAND, TICK_PP
 from .client import PROTOCOL_VERSION
@@ -89,31 +99,39 @@ class PredictError(Exception):
     """The flow refused (ordering, locking, or a cell outside the grid)."""
 
 
-# The subgrid: (workload, model) pairs — the design's 12 cells. The level follows
-# the workload's own (qa_short is the T1 anchor; the rest are T2/T3 workloads).
+# The cell list: (workload, model) pairs — the measurable set (methodology v1.1
+# §8): the strong four T2 workloads + T3, the pairs the meter resolves per cell.
+# The workload half is DERIVED from the workload table (the same STRONG_T2 set
+# runner.py anchors the hybrid brackets to) so a re-scope cannot leave a stale
+# copy here; the model half is the study's own decision (kimi-k3 does not belong
+# to the T3 slate — the v1 design's slate-coherence rule, kept). The level
+# follows the workload's own.
+_MEDIBLES = tuple(w.name for w in workloads_mod.T2 if w.name in workloads_mod.STRONG_T2)
+_AGENTICAS = tuple(w.name for w in workloads_mod.T3)
 _GRID: tuple[tuple[str, str], ...] = (
-    *(
-        (w, m)
-        for w in ("qa_short", "long_context", "multi_turn", "reasoning", "ratio_in")
-        for m in ("glm-5.3-flash", "kimi-k3")
-    ),
-    ("multi_file", "glm-5.3-flash"),
-    ("multi_file", "kimi-k2.7-code"),
+    *((w, m) for w in _MEDIBLES for m in ("glm-5.3-flash", "kimi-k3")),
+    *((w, m) for w in _AGENTICAS for m in ("glm-5.3-flash", "kimi-k2.7-code")),
 )
 
 # The fixture's public description — everything the blind estimator receives beyond
 # the rate table. Prose carries the SHAPE only: the numbers live in the brief's
 # structured fields (requests_per_run, tokens_in/out_per_request, straight from the
-# workload table), so the two can never drift apart.
+# workload table), so the two can never drift apart. The three T3 briefs share
+# their boilerplate (the billed agent loop); only the task and the repo differ —
+# one template, two parameters, no drift.
+_T3_BRIEF = (
+    "one agentic{task} task over a synthetic{repo}: a deterministic agent loop "
+    "where every step is a billed chat request (up to the loop's step cap), "
+    "pytest as the checker."
+)
 WORKLOAD_BRIEFS: dict[str, str] = {
-    "qa_short": "short Q&A prompts, one per request, a one-sentence answer each.",
     "long_context": "one document-comprehension request over a long register.",
-    "multi_turn": "one multi-turn conversation, billed per turn.",
-    "reasoning": "one reasoning task: a small prompt, a long thinking output.",
+    "long_generation": "one long-generation request: a short prompt, a very long output.",
     "ratio_in": "one extreme-input request: a huge document in, a tiny answer out.",
-    "multi_file": "one agentic task over a synthetic multi-file repo: a deterministic agent "
-    "loop where every step is a billed chat request (up to the loop's step cap), pytest "
-    "as the checker.",
+    "ratio_out": "extreme-output: many short requests, each a small prompt with a long answer.",
+    "multi_file": _T3_BRIEF.format(task="", repo=" multi-file repo"),
+    "debugging": _T3_BRIEF.format(task=" debugging", repo=" repo with a known bug"),
+    "refactoring": _T3_BRIEF.format(task=" refactoring", repo=" multi-file repo"),
 }
 
 
@@ -136,10 +154,10 @@ def _level_of(workload: str) -> str:
 
 
 def grid() -> tuple[PredictCell, ...]:
-    """The 12 cells, validated against the workload table on every call."""
+    """The measurable-set cells, validated against the workload table on every call."""
     celdas = tuple(PredictCell(w, m, _level_of(w)) for w, m in _GRID)
-    if len({c.key for c in celdas}) != 12:
-        raise PredictError("the predictability grid does not hold 12 distinct cells")
+    if len({c.key for c in celdas}) != len(_GRID):
+        raise PredictError(f"the predictability grid does not hold {len(_GRID)} distinct cells")
     return celdas
 
 
@@ -292,6 +310,18 @@ def _find(registros: list[dict], workload: str, model: str) -> dict | None:
     return None
 
 
+def _claves_grid() -> set[tuple[str, str]]:
+    """Every cell's (workload, model) key — the grid-membership test."""
+    return {(c.workload, c.model) for c in grid()}
+
+
+def _en_grid(registros: list[dict], claves: set[tuple[str, str]]) -> int:
+    """How many of the phase's locked records still belong to the grid: estimates
+    locked under a retired scope (a v1-era registry, say) count nowhere — they
+    are neither a cell's estimate nor evidence, and the report flags them."""
+    return sum(1 for r in registros if (r["cell"]["workload"], r["cell"]["model"]) in claves)
+
+
 def record_estimate(
     base,
     *,
@@ -380,8 +410,11 @@ def record_estimate(
 def plan_doc(base, tabla) -> dict:
     """The walk-through artifact: every cell's phase state plus the pending cells'
     public brief. Raises TableError when the table does not price a grid model —
-    the brief would be lying about the rates the estimator will see."""
+    the brief would be lying about the rates the estimator will see. The counts
+    cover grid cells only; estimates locked under a retired scope ride in
+    counts['off_grid'] (the report flags them in findings.off_grid_estimates)."""
     base = pathlib.Path(base)
+    claves = _claves_grid()
     ciegos = load_estimates(base, BLIND)
     informadas = load_estimates(base, INFORMED)
     filas = []
@@ -419,9 +452,11 @@ def plan_doc(base, tabla) -> dict:
         "table_version": tabla.table_version,
         "cells": filas,
         "counts": {
-            "blind": len(ciegos),
-            "informed": len(informadas),
+            "blind": _en_grid(ciegos, claves),
+            "informed": _en_grid(informadas, claves),
             "cells": len(grid()),
+            "off_grid": (len(ciegos) - _en_grid(ciegos, claves))
+            + (len(informadas) - _en_grid(informadas, claves)),
         },
     }
 
@@ -554,17 +589,30 @@ def _ape(estimado: float | None, real: float | None) -> float | None:
     return abs(estimado - real) / real
 
 
-def build_report(base, *, tabla, s: float) -> dict:
+def build_report(base, *, tabla) -> dict:
     """The MAPE report, offline from the raw datasets + the locked estimates.
 
-    `s` prices only the S1 sensitivity of the new side; the verdict's MAPEs are
-    native-unit, so the anchor never enters (analyze still receives the inert
-    default anchor: its dollar derivatives are not this report's input).
+    Anchored to the persisted S0/S1 pair (methodology v1.2): the new side's S1
+    sensitivity resolves per model from the calibration (measured wins where
+    conclusive) against the versioned default S1_DEFAULT — never against a
+    custom S(x), which enters only through analyze's stamped re-runs. The
+    verdict's MAPEs are native-unit, so the anchor never enters (analyze still
+    receives the inert default anchor: its dollar derivatives are not this
+    report's input — so the build is cells-only, the pooled/who-wins/curve/
+    sensitivity derivatives are not paid).
+
+    Estimates locked under a retired scope (cells outside the current grid, say
+    a v1-era registry) count nowhere — neither in the headline counts nor in any
+    APE — and are flagged in findings.off_grid_estimates; a cell whose real
+    exists but whose blind estimate is missing can never join the study (the
+    flow refuses a blind after the run) and is flagged in
+    findings.measured_without_blind.
     """
     base = pathlib.Path(base)
     ciegos = load_estimates(base, BLIND)
     informadas = load_estimates(base, INFORMED)
-    doc = analyze_mod.build(base, tabla=tabla, ancla=100.0, s=s)
+    claves = _claves_grid()
+    doc = analyze_mod.build(base, tabla=tabla, ancla=100.0, s=S1_DEFAULT, cells_only=True)
     celdas_analyze = {(c["model"], c["workload"]): c for c in doc["cells"]}
 
     filas = []
@@ -720,6 +768,22 @@ def build_report(base, *, tabla, s: float) -> dict:
             for f in filas
             if f["blind"] is not None and f["informed"] is None
         ],
+        # a cell measured before any blind estimate exists is a permanent dead
+        # end for the study (the flow refuses a blind after the run): name it,
+        # never leave it as an anonymous line in pending_blind
+        "measured_without_blind": [
+            f"{f['workload']}/{f['model']}"
+            for f in filas
+            if f["real_pp"] is not None and f["blind"] is None
+        ],
+        # estimates locked under a retired scope: valid hashes, real money
+        # spent on the estimate, but no grid cell to attach to anymore
+        "off_grid_estimates": sorted(
+            f"{r['cell']['workload']}/{r['cell']['model']} ({r['phase']})"
+            for fase, registros in ((BLIND, ciegos), (INFORMED, informadas))
+            for r in registros
+            if (r["cell"]["workload"], r["cell"]["model"]) not in claves
+        ),
     }
     return {
         "kind": "predictability-report",
@@ -727,12 +791,12 @@ def build_report(base, *, tabla, s: float) -> dict:
         "protocol_version": PROTOCOL_VERSION,
         "table_version": tabla.table_version,
         "params": {
-            "s": s,
+            "s1_default": S1_DEFAULT,
             "tick_pp": TICK_PP,
             "bootstrap_samples": BOOTSTRAP_B,
             "bootstrap_seed": BOOTSTRAP_SEED,
         },
-        "estimates": {"blind": len(ciegos), "informed": len(informadas)},
+        "estimates": {"blind": _en_grid(ciegos, claves), "informed": _en_grid(informadas, claves)},
         "cells": filas,
         "workloads": desglose,
         "aggregate": fases,
@@ -751,6 +815,10 @@ def build_report(base, *, tabla, s: float) -> dict:
             "unmeasurable for those workloads. Estimates locked against another table "
             "vintage are set aside from the new-side APEs (the repricing itself would "
             "become the error) and flagged in findings.stale_table_estimates; the legacy "
-            "APE stands, pp being meter-native."
+            "APE stands, pp being meter-native. Estimates locked under a retired scope "
+            "(cells outside the current grid) count nowhere and are flagged in "
+            "findings.off_grid_estimates; a measured cell with no blind estimate is "
+            "flagged in findings.measured_without_blind (the flow refuses a blind after "
+            "the run, so that cell can never join the study)."
         ),
     }

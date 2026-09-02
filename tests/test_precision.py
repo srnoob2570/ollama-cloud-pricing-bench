@@ -165,12 +165,12 @@ def test_predict_report_persists_full_precision(tmp_path):
     # tmp pricing dir), never on whichever snapshot the repo holds today
     tabla = PriceTable.load(tmp_path / "pricing")
 
-    qa = next(
-        c for c in doc["cells"] if c["workload"] == "qa_short" and c["model"] == "glm-5.3-flash"
+    larga = next(
+        c for c in doc["cells"] if c["workload"] == "long_context" and c["model"] == "glm-5.3-flash"
     )
-    real = new_task_cost(80_000, 80_000, tabla.rate("glm-5.3-flash"), s=0.0, per=tabla.per)
-    assert qa["real_new_s0_usd_per_run"] == real
-    assert qa["blind"]["ape_new"] == abs(0.0624 - real) / real
+    real = new_task_cost(30_000, 300, tabla.rate("glm-5.3-flash"), s=0.0, per=tabla.per)
+    assert larga["real_new_s0_usd_per_run"] == real
+    assert larga["blind"]["ape_new"] == abs(0.00558 - real) / real
 
     archivo = next(
         c for c in doc["cells"] if c["workload"] == "multi_file" and c["model"] == "kimi-k2.7-code"

@@ -307,14 +307,14 @@ def test_threshold_and_costs_match_manual_math(tmp_path):
     # threshold pp/1M from the cell's own measured mix (0.8 and 0.7 $/1M)
     assert near(a["threshold_pp_per_1m"]["s0"], 0.80 / U, 4)
     assert near(a["threshold_pp_per_1m"]["s1"], 0.70 / U, 4)
-    assert a["verdict"]["s0"] == "new" and a["verdict"]["s1"] == "new"
+    assert a["verdict"]["s0"]["winner"] == "new" and a["verdict"]["s1"]["winner"] == "new"
 
     b = cell(doc, "beta", "throughput")
     assert near(b["legacy_cost_task_usd"]["median"], 0.2 * U, 9)
     assert b["pp_per_1m"]["median"] == 0.2 * 1e6 / 2_000_000
     assert near(b["new_cost_task_s0_usd"], 2.0, 9)
     assert near(b["threshold_pp_per_1m"]["s0"], 2.0 / 2.0 / U, 4)
-    assert b["verdict"]["s0"] == "legacy" and b["verdict"]["s1"] == "legacy"
+    assert b["verdict"]["s0"]["winner"] == "legacy" and b["verdict"]["s1"]["winner"] == "legacy"
 
     c = cell(doc, "beta", "qa_short")
     assert c["pp_per_1m"]["median"] == 9.6 * 1e6 / 1_250_000
@@ -322,7 +322,7 @@ def test_threshold_and_costs_match_manual_math(tmp_path):
     assert near(c["new_cost_task_s0_usd"], 2.0, 9)
     # threshold from the measured mix: $2.0 per 1.25M tokens = 1.6 $/1M
     assert near(c["threshold_pp_per_1m"]["s0"], 2.0 / 1.25 / U, 4)
-    assert c["verdict"]["s0"] == "new"
+    assert c["verdict"]["s0"]["winner"] == "new"
 
 
 def test_pass_rate_and_completed_task_costs_match_manual_math(tmp_path):
@@ -369,7 +369,8 @@ def test_unmeasured_cell_is_no_data_and_never_extrapolated(tmp_path):
     assert g["legacy_cost_task_usd"] is None
     assert g["threshold_pp_per_1m"] is None  # no measurement -> no comparison line
     assert near(g["new_cost_task_s0_usd"], (1000 * 0.5 + 500 * 1.5) / 1e6, 9)  # its OWN rates
-    assert g["verdict"]["s0"] == "no data" and g["verdict"]["s1"] == "no data"
+    assert g["verdict"]["s0"]["winner"] == "no data"
+    assert g["verdict"]["s1"]["winner"] == "no data"
     html = (tmp_path / "analysis" / "dashboard.html").read_text(encoding="utf-8")
     assert "no data" in html
 
@@ -416,6 +417,160 @@ def test_analyze_writes_threshold_bars_and_curve_pngs(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# verdict margins {winner, margin_pct} and the allocated/session rules (#40)
+# ---------------------------------------------------------------------------
+
+
+def test_every_measured_verdict_carries_its_margin_pct(tmp_path):
+    """margin_pct = (loser - winner) / loser, as a percentage of the loser's
+    cost — the saving from picking the winner, riding the verdict object.
+
+    Hand math (cell C): legacy $9.6*U vs new S0 $2.0 -> new wins by
+    (9.6U - 2.0) / (9.6U). Cell B: legacy $0.2U vs new $2.0 -> legacy wins by
+    (2.0 - 0.2U) / 2.0. gamma has no legacy reading: no data, no margin."""
+    pricing = with_tables(tmp_path)
+    craft_dataset(tmp_path)
+    doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
+
+    c = cell(doc, "beta", "qa_short")
+    assert c["verdict"]["s0"] == {"winner": "new", "margin_pct": (9.6 * U - 2.0) / (9.6 * U) * 100}
+    b = cell(doc, "beta", "throughput")
+    assert near(b["verdict"]["s0"]["margin_pct"], (2.0 - 0.2 * U) / 2.0 * 100, 9)
+    assert b["verdict"]["s0"]["winner"] == "legacy"
+    g = cell(doc, "gamma", "qa_short")
+    assert g["verdict"]["s0"] == {"winner": "no data", "margin_pct": None}
+
+
+def test_a_tie_verdict_carries_no_margin(tmp_path):
+    """Inside the tie band (min of 2 ticks and 5 % of the cheaper cost) the
+    verdict is a tie with no margin to report. Hand math: legacy dpp 2.04/U
+    sits $0.04 above the new S0 $2.0 — under the $0.046 two-tick band."""
+    pricing = with_tables(tmp_path)
+    requests = [req("throughput", "beta", "bTie", tok_in=2_000_000, tok_out=0)]
+    write_raw(
+        tmp_path,
+        requests,
+        [batch("throughput", "beta", "bTie", dpp_weekly=2.04 / U)],
+    )
+    doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
+    t = cell(doc, "beta", "throughput")
+    assert t["verdict"]["s0"] == {"winner": "tie", "margin_pct": None}
+
+
+def test_allocated_readings_carry_costs_marked_and_never_verdicted(tmp_path):
+    """An allocated reading shows its allocated costs but never a verdict: the
+    rows are marked `reading: allocated` with `verdict: null`, and the
+    who-wins table counts only measured verdicts (a pooled workload never
+    appears in it).
+
+    Hand math: the pool's dpp_weekly 0.5 / dpp_session 0.4, shares 0.75/0.25
+    -> allocated 0.375/0.125 weekly, 0.3/0.1 session; multi_turn ran 2
+    attempted tasks, reasoning 1; session $/pp = U / 6.22."""
+    pricing = with_tables(tmp_path)
+    requests = [
+        req("multi_turn", "alpha", "bP", index=0, tok_in=1000, tok_out=500),
+        req("multi_turn", "alpha", "bP", index=1, tok_in=1000, tok_out=500, checker="fail"),
+        req("reasoning", "alpha", "bP", index=2, tok_in=800, tok_out=200),
+    ]
+    lote = batch(
+        None,
+        "alpha",
+        "bP",
+        n=3,
+        reps=2,
+        pool={"workloads": ["multi_turn", "reasoning"], "reps": 2},
+        dpp_weekly=0.5,
+    )
+    lote["dpp_session"] = 0.4
+    write_raw(tmp_path, requests, [lote])
+    doc = analyze_doc(tmp_path, "--pricing-dir", pricing)
+    sesion = U / 6.22
+    a = doc["pooled"][0]["allocations"]
+    for lectura in a.values():
+        assert lectura["reading"] == "allocated"
+        assert lectura["verdict"] is None
+    mt, rea = a["multi_turn"], a["reasoning"]
+    assert mt["attempted"] == 2 and mt["completed"] == 1
+    assert rea["attempted"] == 1 and rea["completed"] == 1
+    assert near(mt["cost_task_attempted_usd"], 0.375 * U / 2, 12)
+    assert near(mt["cost_task_completed_usd"], 0.375 * U / 1, 12)
+    assert near(rea["cost_task_attempted_usd"], 0.125 * U, 12)
+    assert near(mt["cost_task_attempted_usd_session"], 0.3 * sesion / 2, 12)
+    assert near(rea["cost_task_attempted_usd_session"], 0.1 * sesion, 12)
+    # the allocated workloads are never verdicted anywhere: not cells, not
+    # who-wins rows
+    assert all(c["model"] != "alpha" for c in doc["cells"])
+    assert all(w["workload"] not in ("multi_turn", "reasoning") for w in doc["who_wins"])
+
+
+def test_a_pooled_workload_without_token_reports_is_unattributable_not_free(tmp_path):
+    """A mixed pool where one workload's lines all omit their token counts: its
+    share is 0.0 but its allocated Δpp is None (no data) — never dpp x 0.0
+    shipping a measured-looking $0.00 legacy cost."""
+    pricing = with_tables(tmp_path)
+    requests = [
+        req("multi_turn", "alpha", "bMix", index=0, tok_in=1000, tok_out=500),
+        req("reasoning", "alpha", "bMix", index=1, tok_in=1000, tok_out=500),
+    ]
+    requests[1].update({"tok_in": None, "tok_out": None})
+    lote = batch(
+        None,
+        "alpha",
+        "bMix",
+        n=2,
+        reps=1,
+        pool={"workloads": ["multi_turn", "reasoning"], "reps": 1},
+        dpp_weekly=0.4,
+    )
+    write_raw(tmp_path, requests, [lote])
+    doc = analyze_doc(tmp_path, "--pricing-dir", pricing)
+    a = doc["pooled"][0]["allocations"]
+    assert a["reasoning"]["share"] == 0.0
+    assert a["reasoning"]["dpp_weekly"] is None and a["reasoning"]["dpp_session"] is None
+    assert a["reasoning"]["cost_task_attempted_usd"] is None
+    assert near(a["multi_turn"]["dpp_weekly"], 0.4, 12)
+    assert near(a["multi_turn"]["cost_task_attempted_usd"], 0.4 * U, 12)
+
+
+def test_both_windows_ship_per_bracket_and_the_session_ships_unanchored(tmp_path):
+    """Weekly is the primary (the anchor); the session window rides as the
+    secondary signal, priced with the derived $/pp (weekly / R, R = 6.22) and
+    carrying its unanchored caveat in the doc, the notes and the dashboard.
+
+    Hand math (alpha/qa_short, dpp 0.2 both windows, 2 tasks): session
+    $/task = 0.2 * (U/6.22) / 2."""
+    pricing = with_tables(tmp_path)
+    craft_dataset(tmp_path)
+    doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
+    sesion = U / 6.22
+
+    # the derived session $/pp is stamped with its caveat, never as an anchor
+    s = doc["base_params"]["session"]
+    assert s["ratio_r"] == 6.22
+    assert s["usd_per_pp"] == sesion
+    assert "unanchored" in s["caveat"] and "secondary" in s["caveat"]
+
+    a = cell(doc, "alpha", "qa_short")
+    # both windows per bracket: the per-rep rows carry both dpp...
+    assert all(r["dpp_weekly"] == 0.2 and r["dpp_session"] == 0.2 for r in a["reps"])
+    # ...and the cell's legacy distributions exist for both windows
+    assert near(a["legacy_cost_task_usd_session"]["median"], 0.2 * sesion / 2, 12)
+    assert near(a["legacy_cost_task_usd"]["median"], 0.2 * U / 2, 12)
+    assert near(
+        a["legacy_cost_completed_usd_session"]["median"],
+        (0.2 * sesion / 2 + 0.2 * sesion) / 2,  # median of rep1 (2 tasks) and rep2 (1)
+        9,
+    )
+    # every curve point (one per bracket) reports both windows
+    puntos = [p for p in doc["dp_tokens_curve"] if p["batch_id"] == "bA1"]
+    assert puntos and puntos[0]["dpp_weekly"] == 0.2 and puntos[0]["dpp_session"] == 0.2
+    # the caveat ships in the doc's notes and the rendered dashboard
+    assert "unanchored" in doc["notes"]
+    html = (tmp_path / "analysis" / "dashboard.html").read_text(encoding="utf-8")
+    assert "unanchored" in html
+
+
 def test_sweep_rates_plus20_flips_the_borderline_cell(tmp_path):
     pricing = with_tables(tmp_path)
     craft_dataset(tmp_path)
@@ -425,7 +580,7 @@ def test_sweep_rates_plus20_flips_the_borderline_cell(tmp_path):
     vueltas = {(f["model"], f["workload"]): f["verdict"] for f in barrido["flips"]["1.2"]}
     # cell C: legacy $2.2094 sits between new $2.0 and new x1.2 = $2.4, both by
     # a real margin -> +20% rates push the new side past the legacy side
-    assert vueltas[("beta", "qa_short")] == "legacy"
+    assert vueltas[("beta", "qa_short")]["winner"] == "legacy"
     assert len(barrido["flips"]["1.2"]) == 1
     assert barrido["flips"]["0.8"] == []  # cheaper rates flip nothing here
 
@@ -456,7 +611,7 @@ def test_sweep_anchor_scales_legacy_side_and_flips(tmp_path):
     # legacy side drops to $1.5466 and the winner flips to legacy
     c07 = sweep_cell(barrido, "0.7", "beta", "qa_short")
     assert near(c07["legacy_cost_task_usd"], 9.6 * U * 0.7, 9)
-    assert c07["verdict"] == "legacy"
+    assert c07["verdict"]["winner"] == "legacy"
     vueltas = {(f["model"], f["workload"]) for f in barrido["flips"]["0.7"]}
     assert vueltas == {("beta", "qa_short")}
     # the measured pp/1M never moves with the anchor (it is meter-native)

@@ -20,15 +20,19 @@ Cost model (methodology v1 §3, CONTEXT.md "critical threshold"):
 
 - legacy side: Δpp(weekly) of the bracketed batch x (P_LEGADO / 4.345 / 100)
   USD per pp, per attempted (accepted) and per completed (checker-passed) task;
+  the session window rides per bracket as the secondary signal at the derived
+  session $/pp (weekly / R, R ≈ 6.22) — unanchored, never a second anchor;
 - new side: measured median tokens x the versioned table rates, under S0=0 %
   and S1=`--s` (or the measured hit rate where the calibration was conclusive);
 - threshold pp/1M = the cell's own measured token mix priced on the table
   ($/1M) / USD-per-pp — the pp/1M above which legacy becomes more expensive
   for that cell. It is computed ONLY from the cell's own measurement: an
   unmeasured cell gets no threshold and never borrows one from another model;
-- verdict: legacy/new when one system is cheaper by a real margin (>2 meter
-  ticks OR >5 % of the cheaper cost, the methodology's uncertainty rule), tie
-  inside it, "no data" whenever either side is unmeasurable.
+- verdict: `{winner, margin_pct}` — legacy/new when one system is cheaper by a
+  real margin (>2 meter ticks OR >5 % of the cheaper cost, the methodology's
+  uncertainty rule), tie inside it, "no data" whenever either side is
+  unmeasurable; margin_pct = (loser − winner) / loser. Allocated readings
+  (pooled brackets) carry the allocated marker and are never verdicted.
 
 The derivatives' baseline is the k=1 (serial) cell, as methodology v1 §6
 fixes; k>1 cells feed the k-axis sweep (the concurrency workstream's cells)
@@ -60,6 +64,22 @@ ANCLA_FACTORS = (0.7, 1.0, 1.3)  # the fixed P_LEGADO sweep (+/-30 %)
 # The sensitivity sweeps move ONE cost-model axis at a time over the S0 floor
 # scenario; the cache sweep covers the S axis itself.
 SWEEP_SCENARIO = "s0"
+# The session window's secondary $/pp is DERIVED, never an independent anchor
+# (methodology v1 §3): session $/pp = weekly $/pp / R, R the session:weekly
+# tick ratio, live-verified at 6.22 (expected range 5-7) -> ~$0.037/session pp.
+SESSION_R = 6.22
+SESSION_CAVEAT = (
+    "session figures are the derived secondary signal, unanchored — never an "
+    "independent anchor: session $/pp = weekly $/pp / R (R = session:weekly "
+    f"ticks, live verification {SESSION_R:g}, expected range 5-7); the weekly "
+    "window remains the study's unit of account and its only anchor"
+)
+
+
+def session_usd_per_pp(usd_weekly: float) -> float:
+    """The session window's derived $/pp: the weekly bridge divided by R."""
+    return usd_weekly / SESSION_R
+
 
 TASK_WORKLOADS = frozenset(w.name for ws in workloads_mod.WORKLOADS_BY_LEVEL.values() for w in ws)
 # The curve's allow-list: the real workloads' cells plus the concurrency
@@ -96,20 +116,26 @@ def _cuantiles(values: list) -> dict | None:
     }
 
 
-def verdict_of(legacy: float | None, nuevo: float | None, tick_usd: float) -> str:
-    """Who wins this cell: legacy/new when cheaper by a real margin, tie
-    inside the meter's resolution, "no data" when either side is unmeasurable.
+def verdict_of(legacy: float | None, nuevo: float | None, tick_usd: float) -> dict:
+    """Who wins this cell, and by how much: `{winner, margin_pct}`, where
+    margin_pct = (loser − winner) / loser — the saving from picking the winner,
+    as a percentage of the loser's cost (the methodology's verdict margin).
 
     A real margin is the methodology's uncertainty rule in dollars — the gap
     must exceed 2 ticks of the meter OR 5 % of the cheaper cost — so the tie
     band is the MINIMUM of the two: the binding (smaller) threshold decides.
+    Inside it the verdict is a tie with no margin (margin_pct null); "no data"
+    when either side is unmeasurable. An allocated reading never reaches this
+    function: verdicts require a directly measured legacy reading.
     """
     if legacy is None or nuevo is None:
-        return "no data"
+        return {"winner": "no data", "margin_pct": None}
     margen = min(2 * tick_usd, 0.05 * min(legacy, nuevo))
     if abs(legacy - nuevo) <= margen:
-        return "tie"
-    return "legacy" if legacy < nuevo else "new"
+        return {"winner": "tie", "margin_pct": None}
+    if legacy < nuevo:
+        return {"winner": "legacy", "margin_pct": (nuevo - legacy) / nuevo * 100}
+    return {"winner": "new", "margin_pct": (legacy - nuevo) / legacy * 100}
 
 
 def load_calibrations(runs_dir: pathlib.Path) -> dict:
@@ -152,8 +178,12 @@ def _por_batch(requests: list[dict]) -> dict:
     return por_batch
 
 
-def _rep_row(batch: dict, lineas: list[dict], usd: float) -> dict:
+def _rep_row(batch: dict, lineas: list[dict], usd: float, session_usd: float) -> dict:
     """One bracketed batch's contribution: its measured rep of the cell.
+
+    Both windows ship per bracket (methodology v1 §4): dpp_weekly is the
+    primary (the anchor); dpp_session rides as the secondary signal, priced
+    with the derived session $/pp and carrying the doc-level unanchored caveat.
 
     Batch lines carry no `rep` field (the schema never declared one); the
     repetition comes from the batch's own request lines, where it is required.
@@ -164,7 +194,9 @@ def _rep_row(batch: dict, lineas: list[dict], usd: float) -> dict:
     intentadas = sum(1 for r in lineas if r.get("http") == 200)
     completadas = sum(1 for r in lineas if r.get("checker") == "pass")
     dpp = batch.get("dpp_weekly")
+    dpp_s = batch.get("dpp_session")
     medible = _es_numero(dpp) and intentadas > 0
+    medible_s = medible and _es_numero(dpp_s)
     pp = dpp * 1e6 / tokens if medible and tokens else None
     return {
         "rep": rep if isinstance(rep, int) else None,
@@ -175,13 +207,20 @@ def _rep_row(batch: dict, lineas: list[dict], usd: float) -> dict:
         "tokens_out": tout,
         "tokens_total": tokens,
         "dpp_weekly": dpp if _es_numero(dpp) else None,
+        "dpp_session": dpp_s if _es_numero(dpp_s) else None,
         "pp_per_1m": pp if pp is not None else None,
         "cost_task_attempted_usd": dpp * usd / intentadas if medible else None,
         "cost_task_completed_usd": (dpp * usd / completadas if medible and completadas else None),
+        "cost_task_attempted_usd_session": (
+            dpp_s * session_usd / intentadas if medible_s else None
+        ),
+        "cost_task_completed_usd_session": (
+            dpp_s * session_usd / completadas if medible_s and completadas else None
+        ),
     }
 
 
-def _cells(batches: list[dict], requests: list[dict], usd: float) -> dict:
+def _cells(batches: list[dict], requests: list[dict], usd: float, session_usd: float) -> dict:
     """The k=1 cells grouped by (model, workload): per-rep rows plus the raw
     lines that back them (tokens, checker verdicts). Pooled brackets carry no
     single workload, so they never enter a cell — their legacy attribution is
@@ -195,7 +234,9 @@ def _cells(batches: list[dict], requests: list[dict], usd: float) -> dict:
             continue
         clave = (batch["model"], batch["workload"])
         celda = celdas.setdefault(clave, {"level": batch.get("level"), "reps": [], "lineas": []})
-        celda["reps"].append(_rep_row(batch, por_batch.get(batch["batch_id"], []), usd))
+        celda["reps"].append(
+            _rep_row(batch, por_batch.get(batch["batch_id"], []), usd, session_usd)
+        )
         celda["lineas"].extend(por_batch.get(batch["batch_id"], []))
     return celdas
 
@@ -267,6 +308,23 @@ def _cell_doc(
         "legacy_cost_completed_usd": _cuantiles(
             [r["cost_task_completed_usd"] for r in reps if r["cost_task_completed_usd"] is not None]
         ),
+        # the session window rides as the secondary signal: the same per-task
+        # math on the bracket's dpp_session, priced at the DERIVED session
+        # $/pp — the doc-level unanchored caveat applies to every figure here
+        "legacy_cost_task_usd_session": _cuantiles(
+            [
+                r["cost_task_attempted_usd_session"]
+                for r in reps
+                if r["cost_task_attempted_usd_session"] is not None
+            ]
+        ),
+        "legacy_cost_completed_usd_session": _cuantiles(
+            [
+                r["cost_task_completed_usd_session"]
+                for r in reps
+                if r["cost_task_completed_usd_session"] is not None
+            ]
+        ),
         "new_cost_task_s0_usd": s0,
         "new_cost_task_s1_usd": s1,
         "s_effective": {"s": s_efectivo.s, "source": s_efectivo.source},
@@ -291,7 +349,9 @@ def _who_wins(celdas: list[dict]) -> list[dict]:
         for escenario in ("s0", "s1"):
             conteo = {"legacy": 0, "new": 0, "tie": 0, "unmeasured": 0}
             for c in grupo:
-                v = c["verdict"][escenario]
+                v = c["verdict"][escenario]["winner"]
+                # only measured verdicts count as wins: ties count as ties and
+                # an allocated reading never reaches a verdict at all
                 conteo["unmeasured" if v == "no data" else v] += 1
             fila[escenario] = conteo
         filas.append(fila)
@@ -315,6 +375,7 @@ def _curva_dp_tokens(batches: list[dict], requests: list[dict]) -> list[dict]:
         tin, tout = _tokens_de(por_batch.get(batch.get("batch_id"), []))
         if tin is None:
             continue
+        dpp_s = batch.get("dpp_session")
         puntos.append(
             {
                 "model": batch["model"],
@@ -325,6 +386,7 @@ def _curva_dp_tokens(batches: list[dict], requests: list[dict]) -> list[dict]:
                 "batch_id": batch.get("batch_id"),
                 "tokens_total": tin + tout,
                 "dpp_weekly": dpp,
+                "dpp_session": dpp_s if _es_numero(dpp_s) else None,
             }
         )
     return sorted(puntos, key=lambda p: (p["workload"] or "", p["model"] or "", p["tokens_total"]))
@@ -355,7 +417,7 @@ def _sweep_rates(celdas: list[dict], tick_usd: float) -> dict:
                     "verdict": veredicto,
                 }
             )
-            if veredicto != c["verdict"][SWEEP_SCENARIO]:
+            if veredicto["winner"] != c["verdict"][SWEEP_SCENARIO]["winner"]:
                 vueltas.append(
                     {"model": c["model"], "workload": c["workload"], "verdict": veredicto}
                 )
@@ -397,7 +459,7 @@ def _sweep_cache(celdas: list[dict], tabla, tick_usd: float) -> dict:
                     "verdict": veredicto,
                 }
             )
-            if veredicto != c["verdict"][SWEEP_SCENARIO]:
+            if veredicto["winner"] != c["verdict"][SWEEP_SCENARIO]["winner"]:
                 vueltas.append(
                     {"model": c["model"], "workload": c["workload"], "verdict": veredicto}
                 )
@@ -432,7 +494,7 @@ def _sweep_ancla(celdas: list[dict], tick_usd: float) -> dict:
                     "verdict": veredicto,
                 }
             )
-            if veredicto != c["verdict"][SWEEP_SCENARIO]:
+            if veredicto["winner"] != c["verdict"][SWEEP_SCENARIO]["winner"]:
                 vueltas.append(
                     {"model": c["model"], "workload": c["workload"], "verdict": veredicto}
                 )
@@ -446,7 +508,7 @@ def _sweep_ancla(celdas: list[dict], tick_usd: float) -> dict:
     return barrido
 
 
-def _sweep_k(batches: list[dict], requests: list[dict], usd: float) -> dict:
+def _sweep_k(batches: list[dict], requests: list[dict], usd: float, session_usd: float) -> dict:
     """The k axis: the concurrency workstream's cells — effective cost per task
     under k, with the methodology's coded outcome (invariant -> squeeze,
     growing -> overhead; wall_clock_s carries the serialized reading). The
@@ -459,7 +521,7 @@ def _sweep_k(batches: list[dict], requests: list[dict], usd: float) -> dict:
             continue
         if not isinstance(batch.get("k"), int):
             continue
-        fila = _rep_row(batch, por_batch.get(batch.get("batch_id"), []), usd)
+        fila = _rep_row(batch, por_batch.get(batch.get("batch_id"), []), usd, session_usd)
         if fila["cost_task_attempted_usd"] is None:
             continue
         entrada = {
@@ -538,10 +600,11 @@ def allocate_pooled(batch: dict, lineas: list[dict]) -> dict[str, dict] | None:
     the verdict-margin work's.
 
     Null-safe: None when the line is not a pooled bracket, when no request
-    reports both token counts, or when the pool total is zero; a workload with
+    reports both token counts, or when the pool total is zero. A workload with
     no readable token reports takes no share (the denominator is the reported
-    tokens only). The allocation keeps the exact floats — the precision policy
-    rounds nothing that is persisted.
+    tokens only) and its Δpp allocation is None, never a measured-looking 0.0:
+    an unattributable reading is no data, not a free one. The allocation keeps
+    the exact floats — the precision policy rounds nothing that is persisted.
     """
     pool = batch.get("pool")
     if not isinstance(pool, dict) or not isinstance(pool.get("workloads"), list):
@@ -558,25 +621,75 @@ def allocate_pooled(batch: dict, lineas: list[dict]) -> dict[str, dict] | None:
     dpp_s, dpp_w = batch.get("dpp_session"), batch.get("dpp_weekly")
     asignacion: dict[str, dict] = {}
     for workload in pool["workloads"]:
-        share = tokens_de.get(workload, 0) / total
+        tokens = tokens_de.get(workload, 0)
+        # no readable token report -> the workload's slice is unattributable:
+        # its Δpp stays None (no data), never dpp x 0.0 in a $0.00 disguise
+        atribuible = tokens > 0
         asignacion[workload] = {
-            "tokens_total": tokens_de.get(workload, 0),
-            "share": share,
-            "dpp_session": dpp_s * share if _es_numero(dpp_s) else None,
-            "dpp_weekly": dpp_w * share if _es_numero(dpp_w) else None,
+            "tokens_total": tokens,
+            "share": tokens / total,
+            "dpp_session": dpp_s * tokens / total if _es_numero(dpp_s) and atribuible else None,
+            "dpp_weekly": dpp_w * tokens / total if _es_numero(dpp_w) and atribuible else None,
         }
     return asignacion
 
 
-def _pooled_section(batches: list[dict], requests: list[dict]) -> list[dict]:
+def _allocated_costs(
+    asignacion: dict[str, dict],
+    lineas: list[dict],
+    *,
+    usd: float,
+    session_usd: float,
+) -> None:
+    """The allocated readings' costs, in place: the workload's slice of the
+    pool's measured Δpp priced at the anchor (weekly, primary) and at the
+    derived session $/pp (secondary), per attempted and per completed task of
+    the workload's own request lines. Every reading is marked allocated and
+    carries NO verdict: verdicts require a directly measured legacy reading
+    (the glossary's rule), so who-wins never sees an allocation."""
+    for workload, lectura in asignacion.items():
+        propias = [r for r in lineas if r.get("workload") == workload]
+        intentadas = sum(1 for r in propias if r.get("http") == 200)
+        completadas = sum(1 for r in propias if r.get("checker") == "pass")
+        dpp_w, dpp_s = lectura["dpp_weekly"], lectura["dpp_session"]
+        lectura.update(
+            {
+                "attempted": intentadas,
+                "completed": completadas,
+                "reading": "allocated",
+                "verdict": None,
+                "cost_task_attempted_usd": (
+                    dpp_w * usd / intentadas if intentadas and dpp_w is not None else None
+                ),
+                "cost_task_completed_usd": (
+                    dpp_w * usd / completadas if completadas and dpp_w is not None else None
+                ),
+                "cost_task_attempted_usd_session": (
+                    dpp_s * session_usd / intentadas if intentadas and dpp_s is not None else None
+                ),
+                "cost_task_completed_usd_session": (
+                    dpp_s * session_usd / completadas if completadas and dpp_s is not None else None
+                ),
+            }
+        )
+
+
+def _pooled_section(
+    batches: list[dict], requests: list[dict], *, usd: float, session_usd: float
+) -> list[dict]:
     """The pooled brackets' allocation rows: the raw bracket, its pool, and the
-    per-workload allocation each of its workloads derives post-hoc."""
+    per-workload allocation each of its workloads derives post-hoc — costs
+    marked allocated, never verdicted."""
     por_batch = _por_batch(requests)
     filas = []
     for batch in batches:
         pool = batch.get("pool")
         if not isinstance(pool, dict):
             continue
+        lineas = por_batch.get(batch.get("batch_id"), [])
+        asignacion = allocate_pooled(batch, lineas)
+        if asignacion is not None:
+            _allocated_costs(asignacion, lineas, usd=usd, session_usd=session_usd)
         filas.append(
             {
                 "batch_id": batch.get("batch_id"),
@@ -587,7 +700,7 @@ def _pooled_section(batches: list[dict], requests: list[dict]) -> list[dict]:
                 "reps": pool.get("reps"),
                 "dpp_session": batch.get("dpp_session"),
                 "dpp_weekly": batch.get("dpp_weekly"),
-                "allocations": allocate_pooled(batch, por_batch.get(batch.get("batch_id"), [])),
+                "allocations": asignacion,
             }
         )
     return filas
@@ -642,12 +755,13 @@ def build(
         requests = [r for r in requests if r.get("batch_id") in ids_validos]
 
     usd = usd_per_pp(ancla)
+    session_usd = session_usd_per_pp(usd)
     tick_usd = usd * TICK_PP
 
     # The effective hit rate per model: the calibration's measured rate wins
     # over the --s assumption when it was conclusive (methodology v1 §7).
     calibracion = load_calibrations(runs_dir)
-    agrupadas = _cells(batches, requests, usd)
+    agrupadas = _cells(batches, requests, usd, session_usd)
     modelos = sorted({modelo for modelo, _w in agrupadas if isinstance(modelo, str)})
     resueltos = calibration_mod.resolve_s(calibracion, modelos, default_s=s)
 
@@ -688,6 +802,13 @@ def build(
             "s": s,
             "tick_pp": TICK_PP,
             "tick_usd": tick_usd,
+            # the session window's derived $/pp (secondary, unanchored — the
+            # caveat travels with the stamp, never alone)
+            "session": {
+                "ratio_r": SESSION_R,
+                "usd_per_pp": session_usd,
+                "caveat": SESSION_CAVEAT,
+            },
         },
         "raw": {
             "run_ids": run_ids,
@@ -698,14 +819,14 @@ def build(
         },
         "s_per_model": {m: dataclasses.asdict(resueltos[m]) for m in modelos},
         "cells": celdas,
-        "pooled": _pooled_section(batches, requests),
+        "pooled": _pooled_section(batches, requests, usd=usd, session_usd=session_usd),
         "who_wins": _who_wins(celdas),
         "dp_tokens_curve": _curva_dp_tokens(batches, requests),
         "sensitivity": {
             "rates": _sweep_rates(celdas, tick_usd),
             "cache": _sweep_cache(celdas, tabla, tick_usd),
             "ancla": _sweep_ancla(celdas, tick_usd),
-            "k_axis": _sweep_k(batches, requests, usd),
+            "k_axis": _sweep_k(batches, requests, usd, session_usd),
         },
         "paper_discounts": sin_materializar,
         "notes": (
@@ -714,11 +835,15 @@ def build(
             "calibration/probe workstreams stay out of the cells). The threshold "
             "pp/1M prices each cell's OWN measured token mix on the table: an "
             "unmeasured cell reports no data and never borrows a threshold. A "
-            "verdict needs a real margin: >2 meter ticks or >5 % of the cheaper "
-            "cost; the per-rep quantiles carry the full uncertainty. Pooled "
+            "verdict is {winner, margin_pct}, the margin (loser - winner)/loser: "
+            "a real margin is >2 meter ticks or >5 % of the cheaper cost; the "
+            "per-rep quantiles carry the full uncertainty. Both windows ship per "
+            f"bracket: weekly is the primary (the anchor); the session is the "
+            f"secondary signal, {SESSION_CAVEAT[0].lower() + SESSION_CAVEAT[1:]}. "
+            "Pooled "
             "brackets (workload null) are never cells: their per-workload legacy "
             "sits in 'pooled' as token-share allocations, marked allocated and "
-            "never verdicted."
+            "never verdicted, and who-wins counts only measured verdicts."
         ),
     }
 
@@ -941,6 +1066,11 @@ function $(id) { return document.getElementById(id); }
 function sin(x) { return x === null || x === undefined; }
 function dinero(x) { return sin(x) ? "no data" : "$" + Number(x).toPrecision(6); }
 function pps(x) { return sin(x) ? "no data" : Number(x).toFixed(4) + " pp/1M"; }
+function veredicto(v) {
+  if (!v || v.winner === "no data") return "no data";
+  if (v.winner === "tie") return "tie";
+  return v.winner + " (" + Number(v.margin_pct).toPrecision(4) + "%)";
+}
 
 function celdasFiltradas() {
   return DATA.cells.filter(function (c) {
@@ -961,14 +1091,14 @@ function renderTabla() {
       pps(c.pp_per_1m ? c.pp_per_1m.median : null),
       c.threshold_pp_per_1m ? pps(c.threshold_pp_per_1m[esc]) : "no data",
       sin(c.pass_rate) ? "no data" : Math.round(c.pass_rate * 100) + "%",
-      c.verdict[esc]
+      veredicto(c.verdict[esc])
     ].forEach(function (valor) {
       var td = document.createElement("td");
       td.textContent = valor;
       tr.appendChild(td);
     });
-    if (c.verdict[esc] === "legacy") tr.className = "gana-legacy";
-    if (c.verdict[esc] === "new") tr.className = "gana-new";
+    if (c.verdict[esc].winner === "legacy") tr.className = "gana-legacy";
+    if (c.verdict[esc].winner === "new") tr.className = "gana-new";
     cuerpo.appendChild(tr);
   });
 }

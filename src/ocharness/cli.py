@@ -866,7 +866,7 @@ def _print_analyze(doc: dict, carpeta: pathlib.Path, etiqueta: str | None = None
     )
     conteo = {"legacy": 0, "new": 0, "tie": 0, "no data": 0}
     for c in doc["cells"]:
-        conteo[c["verdict"]["s0"]] += 1
+        conteo[c["verdict"]["s0"]["winner"]] += 1
     print(
         f"  cells: {len(doc['cells'])} | s0 verdicts: {conteo['legacy']} legacy, "
         f"{conteo['new']} new, {conteo['tie']} tie, {conteo['no data']} no data"

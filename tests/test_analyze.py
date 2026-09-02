@@ -600,7 +600,8 @@ def test_credit_ratio_re_denominates_the_comparison(tmp_path):
     assert doc1["base_params"]["credit_ratio"] == 1.0
 
     a3, a1 = cell(doc3, "alpha", "qa_short"), cell(doc1, "alpha", "qa_short")
-    # the threshold scales EXACTLY by the ratio: legacy tolerates 3x more
+    # the threshold scales EXACTLY by the ratio: the credits make the new side
+    # 3x cheaper in paid dollars, so the legacy quota tolerates 3x FEWER
     # pp/1M before the discounted credits undercut it
     assert near(a3["threshold_pp_per_1m"]["s0"], a1["threshold_pp_per_1m"]["s0"] / 3, 9)
     # ...and ratio 1 reproduces the 1:1 credit comparison of methodology v1.2
@@ -616,6 +617,26 @@ def test_credit_ratio_re_denominates_the_comparison(tmp_path):
     assert near(b1["verdict"]["s0"]["margin_pct"], (2.0 - 0.2 * U) / (0.2 * U) * 100, 9)
     # the two margins are genuinely different numbers
     assert not near(b3["verdict"]["s0"]["margin_pct"], b1["verdict"]["s0"]["margin_pct"], 2)
+
+
+def test_credit_ratio_below_one_is_rejected(tmp_path):
+    """No tier sells credits below face value (Team x2, Pro/Max x3): a ratio
+    < 1 would silently price the new side MORE EXPENSIVE than its dollars —
+    the validator refuses it instead of pricing an unsupported hypothesis."""
+    pricing = with_tables(tmp_path)
+    craft_dataset(tmp_path)
+    for ratio in ("0.5", "0", "-3"):
+        codigo, _salida, errores = analyze_cli(
+            tmp_path,
+            "--pricing-dir",
+            pricing,
+            "--table-version",
+            "2026-08-31",
+            "--credit-ratio",
+            ratio,
+        )
+        assert codigo == 2, ratio
+        assert "must be a finite number >= 1" in errores, ratio
 
 
 def test_a_sub_tick_winner_prices_with_its_session_equivalent(tmp_path):
@@ -806,6 +827,10 @@ def test_sweep_anchor_scales_legacy_side_and_flips(tmp_path):
         sweep_cell(barrido, "1.3", "beta", "tool_calling")["pp_per_1m"]
         == (0.8 / U) * 1e6 / 2_000_000
     )
+    # the threshold DOES ride with the anchor (it divides by USD/pp): x0.7
+    # raises it by 1/0.7, exactly what the sweep's note promises
+    base_thr = cell(doc, "beta", "tool_calling")["threshold_pp_per_1m"]["s0"]
+    assert near(c07["threshold_pp_per_1m"], base_thr / 0.7, 9)
     # cell C's paid gap is far too wide for a ±30 % anchor to close: it stays new
     assert sweep_cell(barrido, "0.7", "beta", "qa_short")["verdict"]["winner"] == "new"
 
@@ -1150,3 +1175,7 @@ def test_zero_movement_and_aborted_brackets_never_enter_a_cell(tmp_path):
     celda = cell(doc, "alpha", "qa_short")
     assert [r["rep"] for r in celda["reps"]] == [1, 2]  # the two extra brackets stay out
     assert all(r["settle_exit"] == "stable" for r in celda["reps"])  # the marker rides the row
+    # the dp-tokens curve applies the same rule: neither bracket is a
+    # measurement, so neither becomes a curve point
+    ids = {p["batch_id"] for p in doc["dp_tokens_curve"]}
+    assert "bCero" not in ids and "bAbortada" not in ids

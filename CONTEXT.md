@@ -83,9 +83,12 @@ measured legacy reading (margin rule: >2 ticks or >5 % of the cheaper cost).
 _Avoid_: estimado (unmarked), medido (it is not) · _es_: lectura asignada
 
 **Verdict margin**:
-The saving from picking the winner: (loser − winner) ÷ loser, as a percentage of the
-loser's cost. It rides the verdict object alongside the winner; a verdict exists only
-when the margin clears the tie band (>2 ticks or >5 % of the cheaper cost).
+The saving from picking the winner: (loser − winner) ÷ winner, as a percentage of the
+winner's cost — how much more expensive the loser is; unbounded, it exceeds 100 % when
+the loser costs more than twice the winner. In **paid dollars** (methodology v1.3): the
+new side's credits divide by the credit ratio before the comparison. It rides the verdict
+object alongside the winner; a verdict exists only when the margin clears the tie band
+(>2 ticks or >5 % of the cheaper cost).
 _Avoid_: beneficio (unquantified), ventaja · _es_: margen del veredicto
 
 **Extrapolation**:

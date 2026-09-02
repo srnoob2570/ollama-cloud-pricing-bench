@@ -962,9 +962,10 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     if not math.isfinite(args.ancla) or args.ancla <= 0:
         print(f"error: --ancla must be a finite number > 0; got {args.ancla!r}", file=sys.stderr)
         return 2
-    if not math.isfinite(args.credit_ratio) or args.credit_ratio <= 0:
+    if not math.isfinite(args.credit_ratio) or args.credit_ratio < 1:
         print(
-            f"error: --credit-ratio must be a finite number > 0; got {args.credit_ratio!r}",
+            f"error: --credit-ratio must be a finite number >= 1 (the tiers sell "
+            f"credits at or above face value: Team x2, Pro/Max x3); got {args.credit_ratio!r}",
             file=sys.stderr,
         )
         return 2
@@ -1136,8 +1137,9 @@ def build_parser() -> argparse.ArgumentParser:
                 default=3.0,
                 help=(
                     "new-plan credits per paid dollar at the comparisons "
-                    "(verdicts, margins, pp/1M threshold); 1 reproduces the "
-                    "legacy 1:1 credit comparison"
+                    "(verdicts, margins, pp/1M threshold); the tiers are Team "
+                    "x2, Pro/Max x3; 1 reproduces the legacy 1:1 credit "
+                    "comparison"
                 ),
             )
             parser.add_argument(

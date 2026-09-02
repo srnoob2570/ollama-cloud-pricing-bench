@@ -76,7 +76,14 @@ _RE_ASK_DAYS = re.compile(
     r"\d+\) How many days pass between inspections of the unit tagged \[R-(\d{4})\]\?"
 )
 
-_REGISTER_REPLY_ONLY = "Reply with the access code only, nothing else."
+# The reply must stay one short line AND name its unit: the register checker
+# anchors every datum to the sentence that carries it (a right value attached
+# to no unit cannot be graded), so "code only, nothing else" was an
+# unsatisfiable instruction — every model obeyed it and failed 30/30 (#audit
+# 2026-09-02, OBSERVACIÓN 9).
+_REGISTER_REPLY_ONLY = (
+    "Reply in one short sentence: name the unit and its access code, nothing else."
+)
 
 _DEVICES = (
     "coolant pump",
@@ -165,7 +172,8 @@ def _long_context(rng: random.Random) -> list[tuple[str, tuple[dict, ...]]]:
 
 
 def _ratio_in(rng: random.Random) -> list[tuple[str, tuple[dict, ...]]]:
-    # One datum buried in a very large input; the answer is one short line.
+    # One datum buried in a very large input; the answer is one short line
+    # that names the unit (the checker anchors the datum to its label).
     texto = _register_text(rng, lines=1600, asks=[(1500, "code")])
     return [(f"{texto}\n{_REGISTER_REPLY_ONLY}", ())]
 

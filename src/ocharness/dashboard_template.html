@@ -203,9 +203,10 @@ svg { display: block; max-width: 100%; }
     <tbody id="tabla-cuerpo"></tbody>
   </table>
   <p class="note" style="margin-top:8px">Verdicts compare what the same monthly budget buys on
-    each system: the new plan sells $3 of credits per $1 paid (Max: $100 &rarr; $300 credits),
-    so a new-side figure of $X in credits really costs $X&thinsp;/&thinsp;3 paid. The margin is
-    stated in paid dollars &mdash; example: a task that burns $3.00 of new-plan credits costs
+    each system: the new plan sells credits at a per-tier multiplier over money paid
+    (<span class="mono" id="credit-ratio-note"></span> at this doc's tier: Max $100 &rarr; $300
+    credits), so a new-side figure of $X in credits really costs $X&thinsp;&divide;&thinsp;<span class="mono credit-ratio-num"></span> paid. The margin is
+    stated in paid dollars &mdash; example: a task that burns $<span class="mono credit-ratio-num"></span>.00 of new-plan credits costs
     $1.00 paid. The two price columns are nominal dollars for the
     token scenario set in the &laquo;tokens in&raquo; / &laquo;tokens out&raquo; inputs
     (default 1M in / 250k out). The new column prices the scenario exactly on the official
@@ -231,7 +232,8 @@ svg { display: block; max-width: 100%; }
     (measured meter read at the anchor; a sub-tick weekly read shows its session-derived
     equivalent, marked)</span>
     <span><span class="sw" style="background:var(--new);width:3px"></span>new paid $/1M at the
-    slider's S(x), each cell's own measured mix &mdash; credits at ⅓ of face value</span>
+    slider's S(x), each cell's own measured mix &mdash; credits at face value &divide;
+    <span class="mono credit-ratio-num"></span></span>
     <span>legacy left of new &rArr; legacy is cheaper (the same comparison as the pp/1M
     threshold, translated at the anchor in paid dollars)</span></div>
 </div>
@@ -245,7 +247,8 @@ svg { display: block; max-width: 100%; }
     <span><span class="sw" style="background:var(--tie);border-radius:50%"></span>tie</span>
     <span>center axis = 0 % (a tie sits on it); bars cap at 100 % &mdash; the chevron marks a
     margin beyond; margins follow the slider</span>
-    <span>margins are in paid dollars: the new plan's credits count at ⅓ of face value</span></div>
+    <span>margins are in paid dollars: the new plan's credits count at face value &divide;
+    <span class="mono credit-ratio-num"></span></span></div>
 </div>
 
 <details>
@@ -275,8 +278,11 @@ var USDPP = BP.usd_per_pp;   // the anchor: USD per weekly pp
 var TICKUSD = BP.tick_usd;   // one meter tick, in USD
 // the new plan's per-tier credit multiplier (Max: $100 -> $300 credits): the
 // verdicts, margins and threshold compare PAID dollars, so the new side's
-// nominal credit cost divides by this (the persisted doc's credit_ratio)
-var CREDITRATIO = isNum(BP.credit_ratio) ? BP.credit_ratio : 3.0;
+// nominal credit cost divides by this (the persisted doc's credit_ratio).
+// A doc persisted before v1.3 carries no credit_ratio: its verdicts were
+// computed 1:1, so the fallback reproduces THAT comparison (1.0) and never
+// re-denominates an old doc's numbers behind its own persisted chips.
+var CREDITRATIO = isNum(BP.credit_ratio) ? BP.credit_ratio : 1.0;
 var PER = RATES.per || 1000000;
 var SLIDER_DEFAULT = Math.round((typeof BP.s === "number" ? BP.s : 0.5) * 100);
 // the token scenario: input and output are priced at their own rates; the
@@ -732,11 +738,22 @@ function renderStatus() {
   });
 }
 function renderAll() {
+  renderCreditRatioNote();
   renderReco();
   renderTable();
   renderThreshold();
   renderMargins();
   renderStatus();
+}
+
+// the credit multiplier the doc was analyzed with, filled into the prose: the
+// copy must never hardcode a ratio the persisted doc may not have used
+function renderCreditRatioNote() {
+  var nota = $("credit-ratio-note");
+  if (nota) nota.textContent = "credit ratio " + CREDITRATIO + "x";
+  Array.prototype.forEach.call(document.querySelectorAll(".credit-ratio-num"), function (el) {
+    el.textContent = String(CREDITRATIO);
+  });
 }
 
 $("filter-model").addEventListener("change", function (e) {

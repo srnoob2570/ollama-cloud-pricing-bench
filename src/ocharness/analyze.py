@@ -78,11 +78,12 @@ from .pricing import TableError
 
 CACHE_SWEEP_S = (0.0, 0.25, 0.5, 0.9)  # the fixed cache sweep (S0 included)
 # The methodology version this harness implements: the versioned S1 default is
-# declared here (v1.2), and every analysis set's header carries the version so
-# a future default change (v1.3) never ambiguates old artifacts (#46).
+# declared here (v1.2, unchanged in v1.3), and every analysis set's header
+# carries the version so a default change never ambiguates old artifacts (#46).
 METHODOLOGY_VERSION = "v1.3"
-# The persisted S0/S1 pair's S1: the versioned default hit rate (methodology
-# v1.2), declared by the methodology and mirrored by analyze's --s default.
+# The persisted S0/S1 pair's S1: the versioned default hit rate (declared since
+# methodology v1.2), carried by the methodology and mirrored by analyze's --s
+# default.
 # A custom S(x) never re-anchors the locked estimates or the comparative MAPE
 # (predict reads this constant, not a flag); it enters only through analyze's
 # stamped re-runs.
@@ -102,6 +103,12 @@ SESSION_CAVEAT = (
     f"ticks, live verification {SESSION_R:g}, expected range 5-7); the weekly "
     "window remains the study's unit of account and its only anchor"
 )
+# The paid-dollar re-denomination every comparison point applies by default
+# (methodology v1.3 §3): the new plan sells credits at a per-tier multiplier
+# (Max $100 → $300 credits), so the anchor tier's ratio is 3.0. Declared once
+# here and mirrored by build's own default, so no caller can silently compare
+# in face-value credits.
+DEFAULT_CREDIT_RATIO = 3.0
 
 
 def session_usd_per_pp(usd_weekly: float) -> float:
@@ -149,7 +156,7 @@ def verdict_of(
     nuevo: float | None,
     tick_usd: float,
     legacy_session: float | None = None,
-    credit_ratio: float = 1.0,
+    credit_ratio: float = DEFAULT_CREDIT_RATIO,
 ) -> dict:
     """Who wins this cell, and by how much: `{winner, margin_pct}`, where
     margin_pct = (loser − winner) / winner — how much more expensive the loser
@@ -326,7 +333,7 @@ def _cell_doc(
     usd: float,
     tick_usd: float,
     s_efectivo,
-    credit_ratio: float = 1.0,
+    credit_ratio: float = DEFAULT_CREDIT_RATIO,
 ) -> dict:
     """One (model, workload) derivative: distributions, extrapolation, verdict."""
     reps = sorted(celda["reps"], key=lambda r: r["rep"] if isinstance(r["rep"], int) else 0)
@@ -357,8 +364,9 @@ def _cell_doc(
     # bridges it to the meter's unit: an unmeasured cell gets none, and none
     # is ever borrowed from another model's measurement. The comparison is in
     # paid dollars (methodology v1.3): the new side's credits divide by
-    # credit_ratio, so the legacy quota tolerates credit_ratio times more
-    # pp/1M before the new plan becomes cheaper.
+    # credit_ratio, so the threshold falls by the ratio — the legacy quota
+    # tolerates credit_ratio times FEWER pp/1M before the new plan (3x cheaper
+    # in paid dollars at the Max tier) undercuts it.
     tokens_medios = tin_med + tout_med if tin_med is not None and tout_med is not None else None
 
     legacy_cuantiles = _cuantiles(
@@ -450,7 +458,11 @@ def _curva_dp_tokens(batches: list[dict], requests: list[dict]) -> list[dict]:
     """The dp-vs-tokens points: one per bracketed batch of a KNOWN workload
     with a readable bracket and a readable token total (any k — the k cells
     are part of the story the curve tells; probe volleys, calibration replays
-    and any unknown workload are workstream evidence, never curve points)."""
+    and any unknown workload are workstream evidence, never curve points).
+    The same rules as the cells apply to a bracket that cannot measure: an
+    aborted bracket (its burst broke its own contract) and a zero-movement
+    one (stale reads at the pre-burst plateau) never enter the curve — the
+    meter's registration lag is not a data point."""
     por_batch = _por_batch(requests)
     puntos = []
     for batch in batches:
@@ -460,6 +472,11 @@ def _curva_dp_tokens(batches: list[dict], requests: list[dict]) -> list[dict]:
             continue
         if not isinstance(batch.get("model"), str):
             continue
+        if isinstance(batch.get("notes"), str) and batch["notes"].startswith("aborted"):
+            continue
+        if _es_numero(batch.get("dpp_session")) and _es_numero(batch.get("dpp_weekly")):
+            if batch["dpp_session"] == 0.0 and batch["dpp_weekly"] == 0.0:
+                continue
         tin, tout = _tokens_de(por_batch.get(batch.get("batch_id"), []))
         if tin is None:
             continue
@@ -480,7 +497,9 @@ def _curva_dp_tokens(batches: list[dict], requests: list[dict]) -> list[dict]:
     return sorted(puntos, key=lambda p: (p["workload"] or "", p["model"] or "", p["tokens_total"]))
 
 
-def _sweep_rates(celdas: list[dict], tick_usd: float, credit_ratio: float = 1.0) -> dict:
+def _sweep_rates(
+    celdas: list[dict], tick_usd: float, credit_ratio: float = DEFAULT_CREDIT_RATIO
+) -> dict:
     """Rates +/-20 %: the new-plan side scales with the table, the legacy side
     is meter-native and cannot move. Flips read against the S0 verdict."""
     barrido = {"factors": list(RATE_FACTORS), "cells": {}, "flips": {}}
@@ -528,7 +547,9 @@ def _sweep_rates(celdas: list[dict], tick_usd: float, credit_ratio: float = 1.0)
     return barrido
 
 
-def _sweep_cache(celdas: list[dict], tabla, tick_usd: float, credit_ratio: float = 1.0) -> dict:
+def _sweep_cache(
+    celdas: list[dict], tabla, tick_usd: float, credit_ratio: float = DEFAULT_CREDIT_RATIO
+) -> dict:
     """Cache hit-rate in {0, 25, 50, 90} %: only models the table discounts move."""
     barrido = {"s_values": list(CACHE_SWEEP_S), "cells": {}, "flips": {}}
     for s in CACHE_SWEEP_S:
@@ -581,7 +602,9 @@ def _sweep_cache(celdas: list[dict], tabla, tick_usd: float, credit_ratio: float
     return barrido
 
 
-def _sweep_ancla(celdas: list[dict], tick_usd: float, credit_ratio: float = 1.0) -> dict:
+def _sweep_ancla(
+    celdas: list[dict], tick_usd: float, credit_ratio: float = DEFAULT_CREDIT_RATIO
+) -> dict:
     """P_LEGADO +/-30 %: every legacy dollar moves with the anchor, measured
     pp/1M cannot. Flips read against the baseline verdict."""
     barrido = {"factors": list(ANCLA_FACTORS), "cells": {}, "flips": {}}
@@ -609,6 +632,13 @@ def _sweep_ancla(celdas: list[dict], tick_usd: float, credit_ratio: float = 1.0)
                     "workload": c["workload"],
                     "legacy_cost_task_usd": legacy,
                     "pp_per_1m": c["pp_per_1m"]["median"] if c["pp_per_1m"] else None,
+                    # the threshold rides with the anchor: it divides by
+                    # USD/pp (× credit_ratio), so a stronger anchor lowers it
+                    "threshold_pp_per_1m": (
+                        c["threshold_pp_per_1m"]["s0"] / factor
+                        if c["threshold_pp_per_1m"]
+                        else None
+                    ),
                     "verdict": veredicto,
                 }
             )
@@ -834,7 +864,7 @@ def build(
     model: str | None = None,
     protocol_version: str | None = None,
     cells_only: bool = False,
-    credit_ratio: float = 3.0,
+    credit_ratio: float = DEFAULT_CREDIT_RATIO,
 ) -> dict:
     """The analysis doc, computed from raw alone. Raises AnalyzeError when the
     base holds no raw dataset at all.

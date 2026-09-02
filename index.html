@@ -1,0 +1,786 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ollama Cloud cost analysis: legacy or new?</title>
+<style>
+/* three-state theme tokens: system is the default (no attribute), light and
+   dark are selectable. Chart colors NEVER appear here outside these tokens. */
+:root {
+  color-scheme: light;
+  --plane: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --ring: rgba(11,11,11,.10);
+  --hover: rgba(11,11,11,.04); --panel-shadow: 0 1px 3px rgba(11,11,11,.05);
+  --legacy: #2a78d6; --new: #eb6834;            /* series: legacy / new (validated) */
+  --legacy-soft: rgba(42,120,214,.14); --new-soft: rgba(235,104,52,.14);
+  --tie: #898781;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --plane: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,.10);
+    --hover: rgba(255,255,255,.05); --panel-shadow: 0 1px 3px rgba(0,0,0,.45);
+    --legacy: #3987e5; --new: #d95926;
+    --legacy-soft: rgba(57,135,229,.18); --new-soft: rgba(217,89,38,.18);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --plane: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,.10);
+  --hover: rgba(255,255,255,.05); --panel-shadow: 0 1px 3px rgba(0,0,0,.45);
+  --legacy: #3987e5; --new: #d95926;
+  --legacy-soft: rgba(57,135,229,.18); --new-soft: rgba(217,89,38,.18);
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 28px 24px 48px; background: var(--plane); color: var(--ink);
+  font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+/* one radius scale: panels 12px, controls 8px, badges 6px, chips full-pill */
+.wrap { max-width: 1200px; margin: 0 auto; }
+.skip { position: absolute; left: -9999px; }
+.skip:focus { left: 16px; top: 12px; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--ring); border-radius: 8px; padding: 6px 10px; z-index: 5; }
+:focus-visible { outline: 2px solid var(--legacy); outline-offset: 2px; }
+h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: -.02em; font-weight: 700;
+  text-wrap: balance; }
+h2 { font-size: 15px; letter-spacing: -.01em; color: var(--ink);
+  margin: 30px 0 12px; font-weight: 600; }
+.sub { color: var(--muted); font-size: 12.5px; }
+.mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+.badge { display: inline-block; font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+  border: 1px solid var(--ring); border-radius: 6px; padding: 1px 6px; color: var(--ink-2);
+  background: var(--surface); margin-left: 6px; vertical-align: 1px; }
+.panel { background: var(--surface); border: 1px solid var(--ring); border-radius: 12px;
+  padding: 16px 18px; margin: 0 0 14px; box-shadow: var(--panel-shadow); }
+/* controls: label-above-control (11px caps, ink-2 for AA contrast, not muted),
+   one radius for every control (8px), hover/focus/active states on each */
+.controls { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-end; margin: 14px 0 4px; }
+.ctl { display: flex; flex-direction: column; gap: 5px; }
+.ctl-row { display: flex; gap: 6px; align-items: center; }
+.ctl-label, legend { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--ink-2); font-weight: 600; }
+legend { padding: 0; margin-bottom: 5px; }
+select, input[type="number"] { font: inherit; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--ring); border-radius: 8px; padding: 5px 9px;
+  transition: border-color .15s ease; }
+select:hover, input[type="number"]:hover { border-color: var(--axis); }
+#filter-model { width: 180px; }
+#input-tokens-in, #input-tokens-out { width: 110px; }
+button.preset { font: inherit; font-size: 12px; color: var(--ink-2); background: var(--surface);
+  border: 1px solid var(--ring); border-radius: 8px; padding: 5px 9px; cursor: pointer;
+  transition: border-color .15s ease, color .15s ease, background .15s ease; }
+button.preset:hover { border-color: var(--axis); color: var(--ink); background: var(--hover); }
+button.preset:active { transform: translateY(1px); }
+/* theme as a segmented control: the native radios stay in the DOM (the JS and
+   the localStorage persistence are untouched), only their paint is ours */
+fieldset { font: inherit; border: 0; padding: 0; margin: 0; }
+.seg { display: inline-flex; border: 1px solid var(--ring); border-radius: 8px;
+  overflow: hidden; background: var(--surface); }
+.seg label { position: relative; padding: 5px 12px; font-size: 12.5px; color: var(--ink-2);
+  cursor: pointer; transition: background .15s ease, color .15s ease; }
+.seg label + label { border-left: 1px solid var(--ring); }
+.seg label:hover { background: var(--hover); color: var(--ink); }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label:has(input:checked) { background: var(--hover); color: var(--ink); font-weight: 600; }
+.seg label:has(input:focus-visible) { outline: 2px solid var(--legacy); outline-offset: -2px; }
+input[type="range"] { accent-color: var(--new); vertical-align: middle; width: 260px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.scroll-x { overflow: auto; max-height: 72vh; }
+th { position: sticky; top: 0; z-index: 1; background: var(--surface);
+  font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+  text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--axis); font-weight: 600; }
+td { padding: 7px 8px; border-bottom: 1px solid var(--grid); vertical-align: middle; }
+tbody tr { transition: background .15s ease; }
+tbody tr:hover { background: var(--hover); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 2px 9px;
+  border-radius: 999px; font-weight: 600; white-space: nowrap; }
+.chip .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.chip.legacy { color: var(--legacy); background: var(--legacy-soft); }
+.chip.legacy .dot { background: var(--legacy); }
+.chip.new { color: var(--new); background: var(--new-soft); }
+.chip.new .dot { background: var(--new); }
+.chip.tie { color: var(--ink-2); border: 1px dashed var(--axis); }
+.chip.nodata { color: var(--muted); font-weight: 500; }
+.mbar { display: inline-flex; align-items: center; gap: 7px; }
+.mbar .track { position: relative; width: 84px; height: 10px; background: var(--grid);
+  border-radius: 3px; overflow: hidden; }
+.mbar .fill { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
+.mbar .fill.legacy { left: 0; background: var(--legacy); }
+.mbar .fill.new { right: 0; background: var(--new); }
+.mbar b { font-weight: 600; min-width: 48px; text-align: right; }
+.big { font-size: 28px; font-weight: 700; letter-spacing: -.02em; margin: 4px 0 2px;
+  text-wrap: balance; }
+.h-legacy { color: var(--legacy); } .h-new { color: var(--new); }
+.pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.pill { background: var(--surface); border: 1px solid var(--ring); border-radius: 8px;
+  padding: 8px 12px; font-size: 12.5px; min-width: 150px; }
+.pill b { display: block; font-size: 11px; color: var(--muted); font-weight: 600;
+  text-transform: uppercase; letter-spacing: .05em; margin-bottom: 3px; }
+.legend { display: flex; gap: 14px; align-items: center; font-size: 12px; color: var(--ink-2);
+  margin: 8px 0 0; flex-wrap: wrap; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+  margin-right: 5px; vertical-align: -1px; }
+.note { font-size: 12px; color: var(--muted); }
+details { border-top: 1px solid var(--grid); padding-top: 10px; margin-top: 10px; }
+summary { cursor: pointer; color: var(--ink-2); font-weight: 600; font-size: 13px;
+  transition: color .15s ease; }
+summary:hover { color: var(--ink); }
+svg { display: block; max-width: 100%; }
+/* the charts draw at their viewBox aspect and scale to the panel: the fixed
+   pixel width left the wide panels half empty */
+#chart-threshold svg, #chart-margins svg, #chart-dp svg { width: 100%; height: auto; }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<main id="main" class="wrap">
+<h1>Ollama Cloud cost analysis: legacy or new?</h1>
+<div class="sub">table 2026-08-31 | anchor $100/mo = 0.230150 USD/pp (tick 0.023015 USD) | S1 assumed 50% | generated 2026-09-02 12:05:49 UTC | raw: 1140 request lines, 30 batch lines (T2-20260902T051123Z-ebf685c7) | protocol 3</div>
+
+<section id="reco" class="panel">
+  <div class="big" id="reco-headline"></div>
+  <div class="sub" id="reco-sub"></div>
+  <div class="pills" id="reco-pills"></div>
+</section>
+
+<div class="panel">
+  <div class="controls">
+    <div class="ctl">
+      <label class="ctl-label" for="filter-model">model</label>
+      <select id="filter-model"><option value="">all models</option><option value="deepseek-v4-flash">deepseek-v4-flash</option><option value="glm-5.3">glm-5.3</option><option value="glm-5.3-flash">glm-5.3-flash</option><option value="gpt-oss:20b">gpt-oss:20b</option><option value="kimi-k3">kimi-k3</option><option value="minimax-m3">minimax-m3</option></select>
+    </div>
+    <div class="ctl">
+      <label class="ctl-label" for="input-tokens-in">tokens in</label>
+      <input type="number" id="input-tokens-in" min="1" step="1000" value="1000000" class="mono">
+    </div>
+    <div class="ctl">
+      <label class="ctl-label" for="input-tokens-out">tokens out</label>
+      <div class="ctl-row">
+        <input type="number" id="input-tokens-out" min="1" step="1000" value="250000" class="mono">
+        <button type="button" class="preset mono" data-in="1000000" data-out="250000">4:1</button>
+        <button type="button" class="preset mono" data-in="625000" data-out="625000">1:1</button>
+        <button type="button" class="preset mono" data-in="250000" data-out="1000000">1:4</button>
+      </div>
+    </div>
+    <fieldset>
+      <legend>theme</legend>
+      <div class="seg" role="radiogroup" aria-label="theme">
+        <label><input type="radio" name="theme" value="system" checked><span>system</span></label>
+        <label><input type="radio" name="theme" value="light"><span>light</span></label>
+        <label><input type="radio" name="theme" value="dark"><span>dark</span></label>
+      </div>
+    </fieldset>
+    <span id="estado-filtro" class="note"></span>
+  </div>
+</div>
+
+<div class="panel">
+  <label for="slider-s"><b>Cache hit-rate S(x)</b> &mdash; presentation layer only:
+    <input type="range" id="slider-s" min="0" max="100" value="50" step="1">
+    <b id="slider-val" class="mono">50%</b></label>
+  <p class="note" id="slider-note">The slider and the token scenario (in/out) recompute in live JS
+    the new-plan costs, the critical threshold and the verdict margins from the embedded
+    per-cell tokens, rates and anchor &mdash;
+    nothing persisted changes (raw immutable; derivatives regenerate only with versioned parameters).
+    Models with a conclusive measured hit-rate keep it (marked &laquo;measured S&raquo;) and the slider
+    cannot move them; models without a published discount are unmoved: S(x) &equiv; S0 for them. A
+    custom value that overrides measurements belongs to a stamped re-run (--s), never to this
+    dashboard.</p>
+</div>
+
+<h2>Cells (model &times; workload)</h2>
+<div class="panel scroll-x">
+  <table>
+    <thead><tr>
+      <th>model</th><th>workload</th><th>level</th>
+      <th class="num">legacy $ / <span class="hdr-tokens mono">1M+250k</span> tok</th>
+      <th class="num">new $ / <span class="hdr-tokens mono">1M+250k</span> tok</th>
+      <th class="num">pass rate</th><th>verdict</th><th>margin</th>
+    </tr></thead>
+    <tbody id="tabla-cuerpo"></tbody>
+  </table>
+  <p class="note" style="margin-top:8px">The two price columns are nominal dollars for the
+    token scenario set in the &laquo;tokens in&raquo; / &laquo;tokens out&raquo; inputs
+    (default 1M in / 250k out). The new column prices the scenario exactly on the official
+    table (input, cached input and output at their own rates) and follows the S(x) slider.
+    The legacy meter emits a single pp read per bracket with no in/out decomposition (the
+    GPU-time rate was never published), so the legacy column applies the cell's measured
+    pp/1M to the scenario's in+out total &mdash; hover for the underlying meter read and
+    the per-task prices; a sub-tick weekly read falls back to the session-derived
+    equivalent, marked &laquo;session&raquo;. The verdict chips are the measured per-task
+    comparison of each cell and do not follow the scenario inputs. The meter-native view
+    lives in the threshold chart below. Every verdict shows its margin (the chip's
+    +X&nbsp;%): how much
+    more expensive the loser is, (loser &minus; winner) &divide; winner — it can exceed 100 %
+    when the loser costs more than twice the winner. A verdict exists only when the margin
+    clears the tie band (&gt;2 meter ticks or &gt;5 % of the cheaper cost); inside it the cell
+    is a tie.</p>
+</div>
+
+<h2>Break-even per million tokens: legacy $ vs new-plan $</h2>
+<div class="panel">
+  <div id="chart-threshold"></div>
+  <div class="legend"><span><span class="sw" style="background:var(--legacy)"></span>legacy $/1M
+    (measured meter read at the anchor; a sub-tick weekly read shows its session-derived
+    equivalent, marked)</span>
+    <span><span class="sw" style="background:var(--new);width:3px"></span>new $/1M at the slider's
+    S(x), each cell's own measured mix</span>
+    <span>legacy left of new &rArr; legacy is cheaper (the same comparison as the pp/1M
+    threshold, translated at the anchor)</span></div>
+</div>
+
+<h2>How much do you save by picking the winner?</h2>
+<div class="panel">
+  <div id="chart-margins"></div>
+  <div class="legend"><span><span class="sw" style="background:var(--legacy)"></span>legacy wins
+    (left)</span>
+    <span><span class="sw" style="background:var(--new)"></span>new wins (right)</span>
+    <span><span class="sw" style="background:var(--tie);border-radius:50%"></span>tie</span>
+    <span>center axis = 0 % (a tie sits on it); bars cap at 100 % &mdash; the chevron marks a
+    margin beyond; margins follow the slider</span></div>
+</div>
+
+<details>
+  <summary>Robustness: who wins by profile, sensitivity sweeps, cache calibration, legacy quota
+    vs tokens</summary>
+  <h2>Who wins, by user profile (persisted S0/S1 reference)</h2>
+  <div class="panel"><table><thead><tr><th class="">workload (user profile)</th><th class="v">level</th><th class="v">S0 legacy / new / tie / unmeasured</th><th class="v">S1 legacy / new / tie / unmeasured</th></tr></thead><tbody><tr><td class="">long_context</td><td class="v">T2</td><td class="v">5 / 0 / 0 / 0</td><td class="v">5 / 0 / 0 / 0</td></tr><tr><td class="">long_generation</td><td class="v">T2</td><td class="v">5 / 0 / 0 / 0</td><td class="v">5 / 0 / 0 / 0</td></tr><tr><td class="">ratio_in</td><td class="v">T2</td><td class="v">5 / 0 / 0 / 0</td><td class="v">5 / 0 / 0 / 0</td></tr><tr><td class="">ratio_out</td><td class="v">T2</td><td class="v">5 / 0 / 0 / 0</td><td class="v">5 / 0 / 0 / 0</td></tr></tbody></table><p class="nota">counts of measured models whose winner is each system (a margin beyond 2 meter ticks or 5 %); unmeasured models count as unmeasured, never as a win.</p></div>
+  <h2>Sensitivity sweeps</h2>
+  <div class="panel"><table><thead><tr><th class="">sweep</th><th class="v">axis values</th><th class="v">verdict changes</th></tr></thead><tbody><tr><td class="">table rates</td><td class="v">0.8, 1.2</td><td class="v">0.8: 0 flips, 1.2: 0 flips</td></tr><tr><td class="">cache hit rate S</td><td class="v">0, 0.25, 0.5, 0.9</td><td class="v">0: 0 flips, 0.25: 0 flips, 0.5: 0 flips, 0.9: 1 flips</td></tr><tr><td class="">P_LEGADO (anchor)</td><td class="v">0.7, 1, 1.3</td><td class="v">0.7: 0 flips, 1: 0 flips, 1.3: 0 flips</td></tr><tr><td class="">k axis (cells under k)</td><td class="v">1 / 4 / 8</td><td class="v">no cells</td></tr></tbody></table></div>
+  <h2>Cache calibration (effective S per model)</h2>
+  <div class="panel"><p class='nota'>deepseek-v4-flash: S=50% (assumed)</p><p class='nota'>glm-5.3: S=50% (assumed)</p><p class='nota'>glm-5.3-flash: S=50% (assumed)</p><p class='nota'>gpt-oss:20b: S=50% (assumed)</p><p class='nota'>kimi-k3: S=50% (assumed)</p><p class='nota'>minimax-m3: S=50% (assumed)</p></div>
+  <h2>Legacy quota vs billed tokens</h2>
+  <div class="panel"><div id="chart-dp"></div></div>
+</details>
+
+<p class="note" style="margin-top:16px">computed from the raw runs/*.jsonl + batches/*.jsonl lines alone (k=1 cells are the derivatives&#x27; baseline; k&gt;1 cells and the calibration/probe workstreams stay out of the cells). The threshold pp/1M prices each cell&#x27;s OWN measured token mix on the table: an unmeasured cell reports no data and never borrows a threshold. A verdict is {winner, margin_pct}, the margin (loser - winner)/winner: a real margin is &gt;2 meter ticks or &gt;5 % of the cheaper cost; a sub-tick winner (weekly reads 0.0) prices with its session-derived weekly-equivalent, falling back to the loser&#x27;s own cost (exactly 100 %) with no session reading either; the per-rep quantiles carry the full uncertainty. Both windows ship per bracket: weekly is the primary (the anchor); the session is the secondary signal, session figures are the derived secondary signal, unanchored — never an independent anchor: session $/pp = weekly $/pp / R (R = session:weekly ticks, live verification 6.22, expected range 5-7); the weekly window remains the study&#x27;s unit of account and its only anchor. Pooled brackets (workload null) are never cells: their per-workload legacy sits in &#x27;pooled&#x27; as token-share allocations, marked allocated and never verdicted, and who-wins counts only measured verdicts.</p>
+</main>
+
+<script id="analysis-data" type="application/json">{"kind": "analysis", "generated_at": 1788350749.1907449, "protocol_version": "3", "base_params": {"methodology_version": "v1.2", "table_version": "2026-08-31", "ancla": 100.0, "usd_per_pp": 0.23014959723820486, "s": 0.5, "tick_pp": 0.1, "tick_usd": 0.023014959723820488, "session": {"ratio_r": 6.22, "usd_per_pp": 0.03700154296434162, "caveat": "session figures are the derived secondary signal, unanchored — never an independent anchor: session $/pp = weekly $/pp / R (R = session:weekly ticks, live verification 6.22, expected range 5-7); the weekly window remains the study's unit of account and its only anchor"}}, "raw": {"run_ids": ["T2-20260902T051123Z-ebf685c7"], "request_lines": 1140, "batch_lines": 30, "lines_other_protocol": 0, "levels": ["T2"]}, "s_per_model": {"deepseek-v4-flash": {"model": "deepseek-v4-flash", "s": 0.5, "source": "assumed", "conclusive": false, "measured_hit_rate": null, "paper_discount_declared": false, "note": "no calibration data - the S1 assumption is kept"}, "glm-5.3": {"model": "glm-5.3", "s": 0.5, "source": "assumed", "conclusive": false, "measured_hit_rate": null, "paper_discount_declared": false, "note": "no calibration data - the S1 assumption is kept"}, "glm-5.3-flash": {"model": "glm-5.3-flash", "s": 0.5, "source": "assumed", "conclusive": false, "measured_hit_rate": null, "paper_discount_declared": false, "note": "no calibration data - the S1 assumption is kept"}, "gpt-oss:20b": {"model": "gpt-oss:20b", "s": 0.5, "source": "assumed", "conclusive": false, "measured_hit_rate": null, "paper_discount_declared": false, "note": "no calibration data - the S1 assumption is kept"}, "kimi-k3": {"model": "kimi-k3", "s": 0.5, "source": "assumed", "conclusive": false, "measured_hit_rate": null, "paper_discount_declared": false, "note": "no calibration data - the S1 assumption is kept"}, "minimax-m3": {"model": "minimax-m3", "s": 0.5, "source": "assumed", "conclusive": false, "measured_hit_rate": null, "paper_discount_declared": false, "note": "no calibration data - the S1 assumption is kept"}}, "cells": [{"model": "deepseek-v4-flash", "workload": "long_context", "level": "T2", "reps": [{"rep": 1, "batch_id": "062dc476d28891ce", "settle_exit": "stable", "attempted": 5, "completed": 5, "tokens_in": 194568, "tokens_out": 2277, "tokens_total": 196845, "dpp_weekly": 0.10000000000000009, "dpp_session": 0.20000000000000018, "pp_per_1m": 0.508013919581397, "cost_task_attempted_usd": 0.004602991944764101, "cost_task_completed_usd": 0.004602991944764101, "cost_task_attempted_usd_session": 0.001480061718573666, "cost_task_completed_usd_session": 0.001480061718573666}], "attempted": 5, "completed": 5, "pass_rate": 1.0, "tok_in_median": 38918, "tok_out_median": 512, "pp_per_1m": {"median": 0.508013919581397, "p25": 0.508013919581397, "p75": 0.508013919581397, "p95": 0.508013919581397}, "legacy_cost_task_usd": {"median": 0.004602991944764101, "p25": 0.004602991944764101, "p75": 0.004602991944764101, "p95": 0.004602991944764101}, "legacy_cost_completed_usd": {"median": 0.004602991944764101, "p25": 0.004602991944764101, "p75": 0.004602991944764101, "p95": 0.004602991944764101}, "legacy_cost_task_usd_session": {"median": 0.001480061718573666, "p25": 0.001480061718573666, "p75": 0.001480061718573666, "p95": 0.001480061718573666}, "legacy_cost_completed_usd_session": {"median": 0.001480061718573666, "p25": 0.001480061718573666, "p75": 0.001480061718573666, "p95": 0.001480061718573666}, "new_cost_task_s0_usd": 0.01779976, "new_cost_task_s1_usd": 0.009510226, "s_effective": {"s": 0.5, "source": "assumed"}, "threshold_pp_per_1m": {"s0": 1.9614495866091808, "s1": 1.0479820433679938}, "verdict": {"s0": {"winner": "legacy", "margin_pct": 286.6997859999997}, "s1": {"winner": "legacy", "margin_pct": 106.60965984999982}}}, {"model": "deepseek-v4-flash", "workload": "long_generation", "level": "T2", "reps": [{"rep": 1, "batch_id": "ded6128f86fc558d", "settle_exit": "stable", "attempted": 5, "completed": 4, "tokens_in": 7218, "tokens_out": 175100, "tokens_total": 182318, "dpp_weekly": 0.10000000000000009, "dpp_session": 0.30000000000000027, "pp_per_1m": 0.5484921949560663, "cost_task_attempted_usd": 0.004602991944764101, "cost_task_completed_usd": 0.005753739930955126, "cost_task_attempted_usd_session": 0.002220092577860499, "cost_task_completed_usd_session": 0.0027751157223256237}], "attempted": 5, "completed": 4, "pass_rate": 0.8, "tok_in_median": 1443, "tok_out_median": 27337, "pp_per_1m": {"median": 0.5484921949560663, "p25": 0.5484921949560663, "p75": 0.5484921949560663, "p95": 0.5484921949560663}, "legacy_cost_task_usd": {"median": 0.004602991944764101, "p25": 0.004602991944764101, "p75": 0.004602991944764101, "p95": 0.004602991944764101}, "legacy_cost_completed_usd": {"median": 0.005753739930955126, "p25": 0.005753739930955126, "p75": 0.005753739930955126, "p95": 0.005753739930955126}, "legacy_cost_task_usd_session": {"median": 0.002220092577860499, "p25": 0.002220092577860499, "p75": 0.002220092577860499, "p95": 0.002220092577860499}, "legacy_cost_completed_usd_session": {"median": 0.0027751157223256237, "p25": 0.0027751157223256237, "p75": 0.0027751157223256237, "p95": 0.0027751157223256237}, "new_cost_task_s0_usd": 0.036719760000000004, "new_cost_task_s1_usd": 0.036412401000000004, "s_effective": {"s": 0.5, "source": "assumed"}, "threshold_pp_per_1m": {"s0": 5.5436885753995835, "s1": 5.497285696490618}, "verdict": {"s0": {"winner": "legacy", "margin_pct": 697.7367859999993}, "s1": {"winner": "legacy", "margin_pct": 691.0594117249993}}}, {"model": "deepseek-v4-flash", "workload": "ratio_in", "level": "T2", "reps": [{"rep": 1, "batch_id": "ad3a178820eaf54d", "settle_exit": "stable", "attempted": 5, "completed": 0, "tokens_in": 325284, "tokens_out": 405, "tokens_total": 325689, "dpp_weekly": 0.0, "dpp_session": 0.20000000000000018, "pp_per_1m": 0.0, "cost_task_attempted_usd": 0.0, "cost_task_completed_usd": null, "cost_task_attempted_usd_session": 0.001480061718573666, "cost_task_completed_usd_session": null}], "attempted": 5, "completed": 0, "pass_rate": 0.0, "tok_in_median": 65054, "tok_out_median": 48, "pp_per_1m": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_task_usd": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_completed_usd": null, "legacy_cost_task_usd_session": {"median": 0.001480061718573666, "p25": 0.001480061718573666, "p75": 0.001480061718573666, "p95": 0.001480061718573666}, "legacy_cost_completed_usd_session": null, "new_cost_task_s0_usd": 0.02868712, "new_cost_task_s1_usd": 0.014830618, "s_effective": {"s": 0.5, "source": "assumed"}, "threshold_pp_per_1m": {"s0": 1.914619157629566, "s1": 0.9898165219194495}, "verdict": {"s0": {"winner": "legacy", "margin_pct": 1938.2380910199981}, "s1": {"winner": "legacy", "margin_pct": 1002.026997515499}}}, {"model": "deepseek-v4-flash", "workload": "ratio_out", "level": "T2", "reps": [{"rep": 1, "batch_id": "5295695a58ba961b", "settle_exit": "stable", "attempted": 100, "completed": 99, "tokens_in": 7899, "tokens_out": 144169, "tokens_total": 152068, "dpp_weekly": 0.10000000000000009, "dpp_session": 0.20000000000000018, "pp_per_1m": 0.6576005471236558, "cost_task_attempted_usd": 0.00023014959723820504, "cost_task_completed_usd": 0.00023247434064465158, "cost_task_attempted_usd_session": 7.400308592868331e-05, "cost_task_completed_usd_session": 7.475059184715485e-05}], "attempted": 100, "completed": 99, "pass_rate": 0.99, "tok_in_median": 79.0, "tok_out_median": 711.5, "pp_per_1m": {"median": 0.6576005471236558, "p25": 0.6576005471236558, "p75": 0.6576005471236558, "p95": 0.6576005471236558}, "legacy_cost_task_usd": {"median": 0.00023014959723820504, "p25": 0.00023014959723820504, "p75": 0.00023014959723820504, "p95": 0.00023014959723820504}, "legacy_cost_completed_usd": {"median": 0.00023247434064465158, "p25": 0.00023247434064465158, "p75": 0.00023247434064465158, "p95": 0.00023247434064465158}, "legacy_cost_task_usd_session": {"median": 7.400308592868331e-05, "p25": 7.400308592868331e-05, "p75": 7.400308592868331e-05, "p95": 7.400308592868331e-05}, "legacy_cost_completed_usd_session": {"median": 7.475059184715485e-05, "p25": 7.475059184715485e-05, "p75": 7.475059184715485e-05, "p95": 7.475059184715485e-05}, "new_cost_task_s0_usd": 0.0009739400000000001, "new_cost_task_s1_usd": 0.0009571130000000001, "s_effective": {"s": 0.5, "source": "assumed"}, "threshold_pp_per_1m": {"s0": 5.353281846932322, "s1": 5.260791884882986}, "verdict": {"s0": {"winner": "legacy", "margin_pct": 323.1769299999997}, "s1": {"winner": "legacy", "margin_pct": 315.8655984999997}}}, {"model": "glm-5.3", "workload": "long_context", "level": "T2", "reps": [{"rep": 1, "batch_id": "60e0dfabca21ac53", "settle_exit": "stable", "attempted": 5, "completed": 5, "tokens_in": 203069, "tokens_out": 987, "tokens_total": 204056, "dpp_weekly": 0.10000000000000009, "dpp_session": 0.7000000000000006, "pp_per_1m": 0.4900615517308978, "cost_task_attempted_usd": 0.004602991944764101, "cost_task_completed_usd": 0.004602991944764101, "cost_task_attempted_usd_session": 0.005180216015007831, "cost_task_completed_usd_session": 0.005180216015007831}], "attempted": 5, "completed": 5, "pass_rate": 1.0, "tok_in_median": 40617, "tok_out_median": 223, "pp_per_1m": {"median": 0.4900615517308978, "p25": 0.4900615517308978, "p75": 0.4900615517308978, "p95": 0.4900615517308978}, "legacy_cost_task_usd": {"median": 0.004602991944764101, "p25": 0.004602991944764101, "p75": 0.004602991944764101, "p95": 0.004602991944764101}, "legacy_cost_completed_usd": {"median": 0.004602991944764101, "p25": 0.004602991944764101, "p75": 0.004602991944764101, "p95": 0.004602991944764101}, "legacy_cost_task_usd_session": {"median": 0.005180216015007831, "p25": 0.005180216015007831, "p75": 0.005180216015007831, "p95": 0.005180216015007831}, "legacy_cost_completed_usd_session": {"median": 0.005180216015007831, "p25": 0.005180216015007831, "p75": 0.005180216015007831, "p95": 0.005180216015007831}, "new_cost_task_s0_usd": 0.057844999999999994, "new_cost_task_s1_usd": 0.03469331, "s_effective": {"s": 0.5, "source": "assumed"}, "threshold_pp_per_1m": {"s0": 6.154175440744367, "s1": 3.6910487744857976}, "verdict": {"s0": {"winner": "legacy", "margin_pct": 1156.6826249999986}, "s1": {"winner": "legacy", "margin_pct": 653.7121597499993}}}, {"model": "glm-5.3", "workload": "long_generation", "level": "T2", "reps": [{"rep": 1, "batch_id": "1a637b20e4acd30c", "settle_exit": "stable", "attempted": 5, "completed": 1, "tokens_in": 7541, "tokens_out": 183720, "tokens_total": 191261, "dpp_weekly": 0.30000000000000027, "dpp_session": 1.8000000000000016, "pp_per_1m": 1.5685372344597188, "cost_task_attempted_usd": 0.013808975834292303, "cost_task_completed_usd": 0.06904487917146152, "cost_task_attempted_usd_session": 0.013320555467162995, "cost_task_completed_usd_session": 0.06660277733581497}], "attempted": 5, "completed": 1, "pass_rate": 0.2, "tok_in_median": 1508, "tok_out_median": 34763, "pp_per_1m": {"median": 1.5685372344597188, "p25": 1.5685372344597188, "p75": 1.5685372344597188, "p95": 1.5685372344597188}, "legacy_cost_task_usd": {"median": 0.013808975834292303, "p25": 0.013808975834292303, "p75": 0.013808975834292303, "p95": 0.013808975834292303}, "legacy_cost_completed_usd": {"median": 0.06904487917146152, "p25": 0.06904487917146152, "p75": 0.06904487917146152, "p95": 0.06904487917146152}, "legacy_cost_task_usd_session": {"median": 0.013320555467162995, "p25": 0.013320555467162995, "p75": 0.013320555467162995, "p95": 0.013320555467162995}, "legacy_cost_completed_usd_session": {"median": 0.06660277733581497, "p25": 0.06660277733581497, "p75": 0.06660277733581497, "p95": 0.06660277733581497}, "new_cost_task_s0_usd": 0.15506840000000002, "new_cost_task_s1_usd": 0.15420884, "s_effective": {"s": 0.5, "source": "assumed"}, "threshold_pp_per_1m": {"s0": 18.576057952634336, "s1": 18.47308896363486}, "verdict": {"s0": {"winner": "legacy", "margin_pct": 1022.9536633333325}, "s1": {"winner": "legacy", "margin_pct": 1016.7290163333323}}}, {"model": "glm-5.3", "workload": "ratio_in", "level": "T2", "reps": [{"rep": 1, "batch_id": "67f57bfb4e19150c", "settle_exit": "stable", "attempted": 5, "completed": 0, "tokens_in": 336525, "tokens_out": 368, "tokens_total": 336893, "dpp_weekly": 0.10000000000000009, "dpp_session": 1.100000000000001, "pp_per_1m": 0.2968301508193999, "cost_task_attempted_usd": 0.004602991944764101, "cost_task_completed_usd": null, "cost_task_attempted_usd_session": 0.008140339452155164, "cost_task_completed_usd_session": null}], "attempted": 5, "completed": 0, "pass_rate": 0.0, "tok_in_median": 67306, "tok_out_median": 81, "pp_per_1m": {"median": 0.2968301508193999, "p25": 0.2968301508193999, "p75": 0.2968301508193999, "p95": 0.2968301508193999}, "legacy_cost_task_usd": {"median": 0.004602991944764101, "p25": 0.004602991944764101, "p75": 0.004602991944764101, "p95": 0.004602991944764101}, "legacy_cost_completed_usd": null, "legacy_cost_task_usd_session": {"median": 0.008140339452155164, "p25": 0.008140339452155164, "p75": 0.008140339452155164, "p95": 0.008140339452155164}, "legacy_cost_completed_usd_session": null, "new_cost_task_s0_usd": 0.09458479999999998, "new_cost_task_s1_usd": 0.05622038, "s_effective": {"s": 0.5, "source": "assumed"}, "threshold_pp_per_1m": {"s0": 6.098668229777255, "s1": 3.6249951934349354}, "verdict": {"s0": {"winner": "legacy", "margin_pct": 1954.8547799999976}, "s1": {"winner": "legacy", "margin_pct": 1121.387755499999}}}, {"model": "glm-5.3", "workload": "ratio_out", "level": "T2", "reps": [{"rep": 1, "batch_id": "2c76b03fb77d1ae9", "settle_exit": "stable", "attempted": 100, "completed": 100, "tokens_in": 8804, "tokens_out": 196391, "tokens_total": 205195, "dpp_weekly": 0.30000000000000027, "dpp_session": 2.0, "pp_per_1m": 1.4620239284582972, "cost_task_attempted_usd": 0.0006904487917146152, "cost_task_completed_usd": 0.0006904487917146152, "cost_task_attempted_usd_session": 0.0007400308592868324, "cost_task_completed_usd_session": 0.0007400308592868324}], "attempted": 100, "completed": 100, "pass_rate": 1.0, "tok_in_median": 88.0, "tok_out_median": 1741.5, "pp_per_1m": {"median": 1.4620239284582972, "p25": 1.4620239284582972, "p75": 1.4620239284582972, "p95": 1.4620239284582972}, "legacy_cost_task_usd": {"median": 0.0006904487917146152, "p25": 0.0006904487917146152, "p75": 0.0006904487917146152, "p95": 0.0006904487917146152}, "legacy_cost_completed_usd": {"median": 0.0006904487917146152, "p25": 0.0006904487917146152, "p75": 0.0006904487917146152, "p95": 0.0006904487917146152}, "legacy_cost_task_usd_session": {"median": 0.0007400308592868324, "p25": 0.0007400308592868324, "p75": 0.0007400308592868324, "p95": 0.0007400308592868324}, "legacy_cost_completed_usd_session": {"median": 0.0007400308592868324, "p25": 0.0007400308592868324, "p75": 0.0007400308592868324, "p95": 0.0007400308592868324}, "new_cost_task_s0_usd": 0.0077858, "new_cost_task_s1_usd": 0.00773564, "s_effective": {"s": 0.5, "source": "assumed"}, "threshold_pp_per_1m": {"s0": 18.49100901885761, "s1": 18.37188073244056}, "verdict": {"s0": {"winner": "legacy", "margin_pct": 1027.6433666666655}, "s1": {"winner": "legacy", "margin_pct": 1020.3785266666655}}}, {"model": "glm-5.3-flash", "workload": "long_context", "level": "T2", "reps": [{"rep": 1, "batch_id": "5dba9ca292c7b297", "settle_exit": "stable", "attempted": 5, "completed": 5, "tokens_in": 203066, "tokens_out": 934, "tokens_total": 204000, "dpp_weekly": 0.0, "dpp_session": 0.10000000000000009, "pp_per_1m": 0.0, "cost_task_attempted_usd": 0.0, "cost_task_completed_usd": 0.0, "cost_task_attempted_usd_session": 0.000740030859286833, "cost_task_completed_usd_session": 0.000740030859286833}], "attempted": 5, "completed": 5, "pass_rate": 1.0, "tok_in_median": 40607, "tok_out_median": 157, "pp_per_1m": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_task_usd": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_completed_usd": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_task_usd_session": {"median": 0.000740030859286833, "p25": 0.000740030859286833, "p75": 0.000740030859286833, "p95": 0.000740030859286833}, "legacy_cost_completed_usd_session": {"median": 0.000740030859286833, "p25": 0.000740030859286833, "p75": 0.000740030859286833, "p95": 0.000740030859286833}, "new_cost_task_s0_usd": 0.00616955, "new_cost_task_s1_usd": 0.0037331300000000003, "s_effective": {"s": 0.5, "source": "assumed"}, "threshold_pp_per_1m": {"s0": 0.6576070736434108, "s1": 0.39791114341085265}, "verdict": {"s0": {"winner": "legacy", "margin_pct": 833.6882067249992}, "s1": {"winner": "legacy", "margin_pct": 504.4559903349995}}}, {"model": "glm-5.3-flash", "workload": "long_generation", "level": "T2", "reps": [{"rep": 1, "batch_id": "bf7746f48dd1c642", "settle_exit": "stable", "attempted": 5, "completed": 3, "tokens_in": 7539, "tokens_out": 119624, "tokens_total": 127163, "dpp_weekly": 0.0, "dpp_session": 0.30000000000000027, "pp_per_1m": 0.0, "cost_task_attempted_usd": 0.0, "cost_task_completed_usd": 0.0, "cost_task_attempted_usd_session": 0.002220092577860499, "cost_task_completed_usd_session": 0.0037001542964341647}], "attempted": 5, "completed": 3, "pass_rate": 0.6, "tok_in_median": 1507, "tok_out_median": 22054, "pp_per_1m": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_task_usd": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_completed_usd": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_task_usd_session": {"median": 0.002220092577860499, "p25": 0.002220092577860499, "p75": 0.002220092577860499, "p95": 0.002220092577860499}, "legacy_cost_completed_usd_session": {"median": 0.0037001542964341647, "p25": 0.0037001542964341647, "p75": 0.0037001542964341647, "p95": 0.0037001542964341647}, "new_cost_task_s0_usd": 0.011253049999999999, "new_cost_task_s1_usd": 0.01116263, "s_effective": {"s": 0.5, "source": "assumed"}, "threshold_pp_per_1m": {"s0": 2.075230348881626, "s1": 2.0585555515470477}, "verdict": {"s0": {"winner": "legacy", "margin_pct": 506.87300665833277}, "s1": {"winner": "legacy", "margin_pct": 502.8002035283328}}}, {"model": "glm-5.3-flash", "workload": "ratio_in", "level": "T2", "reps": [{"rep": 1, "batch_id": "7f30cb304996e0e1", "settle_exit": "stable", "attempted": 5, "completed": 0, "tokens_in": 336533, "tokens_out": 441, "tokens_total": 336974, "dpp_weekly": 0.0, "dpp_session": 0.20000000000000018, "pp_per_1m": 0.0, "cost_task_attempted_usd": 0.0, "cost_task_completed_usd": null, "cost_task_attempted_usd_session": 0.001480061718573666, "cost_task_completed_usd_session": null}], "attempted": 5, "completed": 0, "pass_rate": 0.0, "tok_in_median": 67307, "tok_out_median": 88, "pp_per_1m": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_task_usd": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_completed_usd": null, "legacy_cost_task_usd_session": {"median": 0.001480061718573666, "p25": 0.001480061718573666, "p75": 0.001480061718573666, "p95": 0.001480061718573666}, "legacy_cost_completed_usd_session": null, "new_cost_task_s0_usd": 0.01014005, "new_cost_task_s1_usd": 0.006101629999999999, "s_effective": {"s": 0.5, "source": "assumed"}, "threshold_pp_per_1m": {"s0": 0.6537356962682691, "s1": 0.3933761013428295}, "verdict": {"s0": {"winner": "legacy", "margin_pct": 685.1099432374992}, "s1": {"winner": "legacy", "margin_pct": 412.25510554249956}}}, {"model": "glm-5.3-flash", "workload": "ratio_out", "level": "T2", "reps": [{"rep": 1, "batch_id": "9aa9051819a23dca", "settle_exit": "stable", "attempted": 100, "completed": 100, "tokens_in": 8778, "tokens_out": 151304, "tokens_total": 160082, "dpp_weekly": 0.0, "dpp_session": 0.40000000000000036, "pp_per_1m": 0.0, "cost_task_attempted_usd": 0.0, "cost_task_completed_usd": 0.0, "cost_task_attempted_usd_session": 0.00014800617185736661, "cost_task_completed_usd_session": 0.00014800617185736661}], "attempted": 100, "completed": 100, "pass_rate": 1.0, "tok_in_median": 88.0, "tok_out_median": 1439.5, "pp_per_1m": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_task_usd": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_completed_usd": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_task_usd_session": {"median": 0.00014800617185736661, "p25": 0.00014800617185736661, "p75": 0.00014800617185736661, "p95": 0.00014800617185736661}, "legacy_cost_completed_usd_session": {"median": 0.00014800617185736661, "p25": 0.00014800617185736661, "p75": 0.00014800617185736661, "p95": 0.00014800617185736661}, "new_cost_task_s0_usd": 0.00073295, "new_cost_task_s1_usd": 0.0007276699999999999, "s_effective": {"s": 0.5, "source": "assumed"}, "threshold_pp_per_1m": {"s0": 2.084888870703764, "s1": 2.0698698199672663}, "verdict": {"s0": {"winner": "legacy", "margin_pct": 495.21583512499944}, "s1": {"winner": "legacy", "margin_pct": 491.64841632499946}}}, {"model": "gpt-oss:20b", "workload": "ratio_out", "level": "T2", "reps": [{"rep": 1, "batch_id": "16b336fbd73abbe0", "settle_exit": "stable", "attempted": 100, "completed": 100, "tokens_in": 14234, "tokens_out": 105326, "tokens_total": 119560, "dpp_weekly": 0.0, "dpp_session": 0.10000000000000009, "pp_per_1m": 0.0, "cost_task_attempted_usd": 0.0, "cost_task_completed_usd": 0.0, "cost_task_attempted_usd_session": 3.7001542964341653e-05, "cost_task_completed_usd_session": 3.7001542964341653e-05}], "attempted": 100, "completed": 100, "pass_rate": 1.0, "tok_in_median": 142.0, "tok_out_median": 972.0, "pp_per_1m": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_task_usd": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_completed_usd": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_task_usd_session": {"median": 3.7001542964341653e-05, "p25": 3.7001542964341653e-05, "p75": 3.7001542964341653e-05, "p95": 3.7001542964341653e-05}, "legacy_cost_completed_usd_session": {"median": 3.7001542964341653e-05, "p25": 3.7001542964341653e-05, "p75": 3.7001542964341653e-05, "p95": 3.7001542964341653e-05}, "new_cost_task_s0_usd": 0.00030154, "new_cost_task_s1_usd": 0.00029905499999999995, "s_effective": {"s": 0.5, "source": "assumed"}, "threshold_pp_per_1m": {"s0": 1.1761142728904845, "s1": 1.1664218806104125}, "verdict": {"s0": {"winner": "legacy", "margin_pct": 814.9389885999991}, "s1": {"winner": "legacy", "margin_pct": 808.2230524499989}}}, {"model": "kimi-k3", "workload": "long_context", "level": "T2", "reps": [{"rep": 1, "batch_id": "5ac03ad5935e1d7a", "settle_exit": "stable", "attempted": 5, "completed": 5, "tokens_in": 194316, "tokens_out": 1606, "tokens_total": 195922, "dpp_weekly": 0.40000000000000036, "dpp_session": 2.6999999999999966, "pp_per_1m": 2.041628811465789, "cost_task_attempted_usd": 0.018411967779056404, "cost_task_completed_usd": 0.018411967779056404, "cost_task_attempted_usd_session": 0.01998083320074445, "cost_task_completed_usd_session": 0.01998083320074445}], "attempted": 5, "completed": 5, "pass_rate": 1.0, "tok_in_median": 38857, "tok_out_median": 300, "pp_per_1m": {"median": 2.041628811465789, "p25": 2.041628811465789, "p75": 2.041628811465789, "p95": 2.041628811465789}, "legacy_cost_task_usd": {"median": 0.018411967779056404, "p25": 0.018411967779056404, "p75": 0.018411967779056404, "p95": 0.018411967779056404}, "legacy_cost_completed_usd": {"median": 0.018411967779056404, "p25": 0.018411967779056404, "p75": 0.018411967779056404, "p95": 0.018411967779056404}, "legacy_cost_task_usd_session": {"median": 0.01998083320074445, "p25": 0.01998083320074445, "p75": 0.01998083320074445, "p95": 0.01998083320074445}, "legacy_cost_completed_usd_session": {"median": 0.01998083320074445, "p25": 0.01998083320074445, "p75": 0.01998083320074445, "p95": 0.01998083320074445}, "new_cost_task_s0_usd": 0.121071, "new_cost_task_s1_usd": 0.06861405000000001, "s_effective": {"s": 0.5, "source": "assumed"}, "threshold_pp_per_1m": {"s0": 13.434468805066782, "s1": 7.613659045636797}, "verdict": {"s0": {"winner": "legacy", "margin_pct": 557.5668687499995}, "s1": {"winner": "legacy", "margin_pct": 272.66005906249967}}}, {"model": "kimi-k3", "workload": "long_generation", "level": "T2", "reps": [{"rep": 1, "batch_id": "4311a422ec2c3c91", "settle_exit": "stable", "attempted": 5, "completed": 5, "tokens_in": 7938, "tokens_out": 144880, "tokens_total": 152818, "dpp_weekly": 1.4999999999999902, "dpp_session": 9.799999999999997, "pp_per_1m": 9.815597639021517, "cost_task_attempted_usd": 0.069044879171461, "cost_task_completed_usd": 0.069044879171461, "cost_task_attempted_usd_session": 0.07252302421010956, "cost_task_completed_usd_session": 0.07252302421010956}], "attempted": 5, "completed": 5, "pass_rate": 1.0, "tok_in_median": 1588, "tok_out_median": 28416, "pp_per_1m": {"median": 9.815597639021517, "p25": 9.815597639021517, "p75": 9.815597639021517, "p95": 9.815597639021517}, "legacy_cost_task_usd": {"median": 0.069044879171461, "p25": 0.069044879171461, "p75": 0.069044879171461, "p95": 0.069044879171461}, "legacy_cost_completed_usd": {"median": 0.069044879171461, "p25": 0.069044879171461, "p75": 0.069044879171461, "p95": 0.069044879171461}, "legacy_cost_task_usd_session": {"median": 0.07252302421010956, "p25": 0.07252302421010956, "p75": 0.07252302421010956, "p95": 0.07252302421010956}, "legacy_cost_completed_usd_session": {"median": 0.07252302421010956, "p25": 0.07252302421010956, "p75": 0.07252302421010956, "p95": 0.07252302421010956}, "new_cost_task_s0_usd": 0.431004, "new_cost_task_s1_usd": 0.4288602, "s_effective": {"s": 0.5, "source": "assumed"}, "threshold_pp_per_1m": {"s0": 62.415423943474195, "s1": 62.10497163711505}, "verdict": {"s0": {"winner": "legacy", "margin_pct": 524.237460000004}, "s1": {"winner": "legacy", "margin_pct": 521.1325230000041}}}, {"model": "kimi-k3", "workload": "ratio_in", "level": "T2", "reps": [{"rep": 1, "batch_id": "d39430a4b07fec0b", "settle_exit": "stable", "attempted": 5, "completed": 0, "tokens_in": 324405, "tokens_out": 556, "tokens_total": 324961, "dpp_weekly": 0.7000000000000006, "dpp_session": 4.300000000000004, "pp_per_1m": 2.154104646403724, "cost_task_attempted_usd": 0.03222094361334871, "cost_task_completed_usd": null, "cost_task_attempted_usd_session": 0.031821326949333824, "cost_task_completed_usd_session": null}], "attempted": 5, "completed": 0, "pass_rate": 0.0, "tok_in_median": 64885, "tok_out_median": 98, "pp_per_1m": {"median": 2.154104646403724, "p25": 2.154104646403724, "p75": 2.154104646403724, "p95": 2.154104646403724}, "legacy_cost_task_usd": {"median": 0.03222094361334871, "p25": 0.03222094361334871, "p75": 0.03222094361334871, "p95": 0.03222094361334871}, "legacy_cost_completed_usd": null, "legacy_cost_task_usd_session": {"median": 0.031821326949333824, "p25": 0.031821326949333824, "p75": 0.031821326949333824, "p95": 0.031821326949333824}, "legacy_cost_completed_usd_session": null, "new_cost_task_s0_usd": 0.196125, "new_cost_task_s1_usd": 0.10853025, "s_effective": {"s": 0.5, "source": "assumed"}, "threshold_pp_per_1m": {"s0": 13.113631642121785, "s1": 7.256727701860485}, "verdict": {"s0": {"winner": "legacy", "margin_pct": 508.68794642857085}, "s1": {"winner": "legacy", "margin_pct": 236.83138303571397}}}, {"model": "kimi-k3", "workload": "ratio_out", "level": "T2", "reps": [{"rep": 1, "batch_id": "baeffdf63ccef93e", "settle_exit": "stable", "attempted": 100, "completed": 100, "tokens_in": 21675, "tokens_out": 123405, "tokens_total": 145080, "dpp_weekly": 1.3000000000000012, "dpp_session": 8.5, "pp_per_1m": 8.960573476702518, "cost_task_attempted_usd": 0.0029919447640966656, "cost_task_completed_usd": 0.0029919447640966656, "cost_task_attempted_usd_session": 0.003145131151969038, "cost_task_completed_usd_session": 0.003145131151969038}], "attempted": 100, "completed": 100, "pass_rate": 1.0, "tok_in_median": 217.0, "tok_out_median": 1219.0, "pp_per_1m": {"median": 8.960573476702518, "p25": 8.960573476702518, "p75": 8.960573476702518, "p95": 8.960573476702518}, "legacy_cost_task_usd": {"median": 0.0029919447640966656, "p25": 0.0029919447640966656, "p75": 0.0029919447640966656, "p95": 0.0029919447640966656}, "legacy_cost_completed_usd": {"median": 0.0029919447640966656, "p25": 0.0029919447640966656, "p75": 0.0029919447640966656, "p95": 0.0029919447640966656}, "legacy_cost_task_usd_session": {"median": 0.003145131151969038, "p25": 0.003145131151969038, "p75": 0.003145131151969038, "p95": 0.003145131151969038}, "legacy_cost_completed_usd_session": {"median": 0.003145131151969038, "p25": 0.003145131151969038, "p75": 0.003145131151969038, "p95": 0.003145131151969038}, "new_cost_task_s0_usd": 0.018936, "new_cost_task_s1_usd": 0.018643049999999998, "s_effective": {"s": 0.5, "source": "assumed"}, "threshold_pp_per_1m": {"s0": 57.29590529247911, "s1": 56.409507137883}, "verdict": {"s0": {"winner": "legacy", "margin_pct": 532.8993846153841}, "s1": {"winner": "legacy", "margin_pct": 523.1080942307686}}}, {"model": "minimax-m3", "workload": "long_context", "level": "T2", "reps": [{"rep": 1, "batch_id": "271827b8ffc1f62f", "settle_exit": "stable", "attempted": 5, "completed": 5, "tokens_in": 192334, "tokens_out": 1382, "tokens_total": 193716, "dpp_weekly": 0.0, "dpp_session": 0.10000000000000009, "pp_per_1m": 0.0, "cost_task_attempted_usd": 0.0, "cost_task_completed_usd": 0.0, "cost_task_attempted_usd_session": 0.000740030859286833, "cost_task_completed_usd_session": 0.000740030859286833}], "attempted": 5, "completed": 5, "pass_rate": 1.0, "tok_in_median": 38467, "tok_out_median": 277, "pp_per_1m": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_task_usd": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_completed_usd": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_task_usd_session": {"median": 0.000740030859286833, "p25": 0.000740030859286833, "p75": 0.000740030859286833, "p95": 0.000740030859286833}, "legacy_cost_completed_usd_session": {"median": 0.000740030859286833, "p25": 0.000740030859286833, "p75": 0.000740030859286833, "p95": 0.000740030859286833}, "new_cost_task_s0_usd": 0.023745, "new_cost_task_s1_usd": 0.01451292, "s_effective": {"s": 0.5, "source": "assumed"}, "threshold_pp_per_1m": {"s0": 2.662916193475118, "s1": 1.6275716859384677}, "verdict": {"s0": {"winner": "legacy", "margin_pct": 3208.6499774999966}, "s1": {"winner": "legacy", "margin_pct": 1961.1236231399982}}}, {"model": "minimax-m3", "workload": "long_generation", "level": "T2", "reps": [{"rep": 1, "batch_id": "d55ab5deef66318b", "settle_exit": "stable", "attempted": 5, "completed": 3, "tokens_in": 7703, "tokens_out": 117050, "tokens_total": 124753, "dpp_weekly": 0.0, "dpp_session": 0.5000000000000004, "pp_per_1m": 0.0, "cost_task_attempted_usd": 0.0, "cost_task_completed_usd": 0.0, "cost_task_attempted_usd_session": 0.003700154296434165, "cost_task_completed_usd_session": 0.006166923827390276}], "attempted": 5, "completed": 3, "pass_rate": 0.6, "tok_in_median": 1541, "tok_out_median": 24874, "pp_per_1m": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_task_usd": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_completed_usd": {"median": 0.0, "p25": 0.0, "p75": 0.0, "p95": 0.0}, "legacy_cost_task_usd_session": {"median": 0.003700154296434165, "p25": 0.003700154296434165, "p75": 0.003700154296434165, "p95": 0.003700154296434165}, "legacy_cost_completed_usd_session": {"median": 0.006166923827390276, "p25": 0.006166923827390276, "p75": 0.006166923827390276, "p95": 0.006166923827390276}, "new_cost_task_s0_usd": 0.060622199999999994, "new_cost_task_s1_usd": 0.06025236, "s_effective": {"s": 0.5, "source": "assumed"}, "threshold_pp_per_1m": {"s0": 9.971737989778532, "s1": 9.910903055082336}, "verdict": {"s0": {"winner": "legacy", "margin_pct": 1638.369514979998}, "s1": {"winner": "legacy", "margin_pct": 1628.3742561239983}}}, {"model": "minimax-m3", "workload": "ratio_in", "level": "T2", "reps": [{"rep": 1, "batch_id": "874ea99727604e25", "settle_exit": "stable", "attempted": 5, "completed": 0, "tokens_in": 321072, "tokens_out": 450, "tokens_total": 321522, "dpp_weekly": 0.10000000000000009, "dpp_session": 0.30000000000000027, "pp_per_1m": 0.31102070775872287, "cost_task_attempted_usd": 0.004602991944764101, "cost_task_completed_usd": null, "cost_task_attempted_usd_session": 0.002220092577860499, "cost_task_completed_usd_session": null}], "attempted": 5, "completed": 0, "pass_rate": 0.0, "tok_in_median": 64217, "tok_out_median": 90, "pp_per_1m": {"median": 0.31102070775872287, "p25": 0.31102070775872287, "p75": 0.31102070775872287, "p95": 0.31102070775872287}, "legacy_cost_task_usd": {"median": 0.004602991944764101, "p25": 0.004602991944764101, "p75": 0.004602991944764101, "p95": 0.004602991944764101}, "legacy_cost_completed_usd": null, "legacy_cost_task_usd_session": {"median": 0.002220092577860499, "p25": 0.002220092577860499, "p75": 0.002220092577860499, "p95": 0.002220092577860499}, "legacy_cost_completed_usd_session": null, "new_cost_task_s0_usd": 0.038746199999999995, "new_cost_task_s1_usd": 0.02333412, "s_effective": {"s": 0.5, "source": "assumed"}, "threshold_pp_per_1m": {"s0": 2.617945775732035, "s1": 1.5766052124963066}, "verdict": {"s0": {"winner": "legacy", "margin_pct": 741.761194999999}, "s1": {"winner": "legacy", "margin_pct": 406.93375699999956}}}], "paper_discounts": [], "notes": "computed from the raw runs/*.jsonl + batches/*.jsonl lines alone (k=1 cells are the derivatives' baseline; k>1 cells and the calibration/probe workstreams stay out of the cells). The threshold pp/1M prices each cell's OWN measured token mix on the table: an unmeasured cell reports no data and never borrows a threshold. A verdict is {winner, margin_pct}, the margin (loser - winner)/winner: a real margin is >2 meter ticks or >5 % of the cheaper cost; a sub-tick winner (weekly reads 0.0) prices with its session-derived weekly-equivalent, falling back to the loser's own cost (exactly 100 %) with no session reading either; the per-rep quantiles carry the full uncertainty. Both windows ship per bracket: weekly is the primary (the anchor); the session is the secondary signal, session figures are the derived secondary signal, unanchored — never an independent anchor: session $/pp = weekly $/pp / R (R = session:weekly ticks, live verification 6.22, expected range 5-7); the weekly window remains the study's unit of account and its only anchor. Pooled brackets (workload null) are never cells: their per-workload legacy sits in 'pooled' as token-share allocations, marked allocated and never verdicted, and who-wins counts only measured verdicts.", "pooled": [{"batch_id": "a20e91092bcb1e67", "run_id": "T2-20260902T051123Z-ebf685c7", "level": "T2", "model": "glm-5.3-flash", "workloads": ["multi_turn", "tool_calling", "reasoning"], "reps": 5, "dpp_session": 0.10000000000000009, "dpp_weekly": 0.0, "allocations": {"multi_turn": {"tokens_total": 16938, "share": 0.45911148456346734, "dpp_session": 0.04591114845634677, "dpp_weekly": 0.0, "attempted": 40, "completed": 40, "reading": "allocated", "verdict": null, "cost_task_attempted_usd": 0.0, "cost_task_completed_usd": 0.0, "cost_task_attempted_usd_session": 4.246958330374454e-05, "cost_task_completed_usd_session": 4.246958330374454e-05}, "tool_calling": {"tokens_total": 14773, "share": 0.4004282655246253, "dpp_session": 0.040042826552462565, "dpp_weekly": 0.0, "attempted": 30, "completed": 15, "reading": "allocated", "verdict": null, "cost_task_attempted_usd": 0.0, "cost_task_completed_usd": 0.0, "cost_task_attempted_usd_session": 4.9388212236487434e-05, "cost_task_completed_usd_session": 9.877642447297487e-05}, "reasoning": {"tokens_total": 5182, "share": 0.14046024991190742, "dpp_session": 0.014046024991190755, "dpp_weekly": 0.0, "attempted": 5, "completed": 5, "reading": "allocated", "verdict": null, "cost_task_attempted_usd": 0.0, "cost_task_completed_usd": 0.0, "cost_task_attempted_usd_session": 0.00010394491943795216, "cost_task_completed_usd_session": 0.00010394491943795216}}}, {"batch_id": "2ef97d94554c166c", "run_id": "T2-20260902T051123Z-ebf685c7", "level": "T2", "model": "gpt-oss:20b", "workloads": ["multi_turn", "tool_calling", "reasoning"], "reps": 5, "dpp_session": 0.0, "dpp_weekly": 0.0, "allocations": {"multi_turn": {"tokens_total": 22194, "share": 0.47717744189546557, "dpp_session": 0.0, "dpp_weekly": 0.0, "attempted": 40, "completed": 39, "reading": "allocated", "verdict": null, "cost_task_attempted_usd": 0.0, "cost_task_completed_usd": 0.0, "cost_task_attempted_usd_session": 0.0, "cost_task_completed_usd_session": 0.0}, "tool_calling": {"tokens_total": 18314, "share": 0.3937563157102621, "dpp_session": 0.0, "dpp_weekly": 0.0, "attempted": 30, "completed": 4, "reading": "allocated", "verdict": null, "cost_task_attempted_usd": 0.0, "cost_task_completed_usd": 0.0, "cost_task_attempted_usd_session": 0.0, "cost_task_completed_usd_session": 0.0}, "reasoning": {"tokens_total": 6003, "share": 0.12906624239427233, "dpp_session": 0.0, "dpp_weekly": 0.0, "attempted": 5, "completed": 5, "reading": "allocated", "verdict": null, "cost_task_attempted_usd": 0.0, "cost_task_completed_usd": 0.0, "cost_task_attempted_usd_session": 0.0, "cost_task_completed_usd_session": 0.0}}}, {"batch_id": "370bc2cca6f97135", "run_id": "T2-20260902T051123Z-ebf685c7", "level": "T2", "model": "deepseek-v4-flash", "workloads": ["multi_turn", "tool_calling", "reasoning"], "reps": 5, "dpp_session": 0.0, "dpp_weekly": 0.0, "allocations": {"multi_turn": {"tokens_total": 17338, "share": 0.4276130814383663, "dpp_session": 0.0, "dpp_weekly": 0.0, "attempted": 40, "completed": 40, "reading": "allocated", "verdict": null, "cost_task_attempted_usd": 0.0, "cost_task_completed_usd": 0.0, "cost_task_attempted_usd_session": 0.0, "cost_task_completed_usd_session": 0.0}, "tool_calling": {"tokens_total": 17669, "share": 0.43577664874463573, "dpp_session": 0.0, "dpp_weekly": 0.0, "attempted": 30, "completed": 11, "reading": "allocated", "verdict": null, "cost_task_attempted_usd": 0.0, "cost_task_completed_usd": 0.0, "cost_task_attempted_usd_session": 0.0, "cost_task_completed_usd_session": 0.0}, "reasoning": {"tokens_total": 5539, "share": 0.13661026981699798, "dpp_session": 0.0, "dpp_weekly": 0.0, "attempted": 5, "completed": 5, "reading": "allocated", "verdict": null, "cost_task_attempted_usd": 0.0, "cost_task_completed_usd": 0.0, "cost_task_attempted_usd_session": 0.0, "cost_task_completed_usd_session": 0.0}}}, {"batch_id": "2b6010304d04f4e4", "run_id": "T2-20260902T051123Z-ebf685c7", "level": "T2", "model": "minimax-m3", "workloads": ["multi_turn", "tool_calling", "reasoning"], "reps": 5, "dpp_session": 0.10000000000000009, "dpp_weekly": 0.0, "allocations": {"multi_turn": {"tokens_total": 24289, "share": 0.4800766889354469, "dpp_session": 0.048007668893544735, "dpp_weekly": 0.0, "attempted": 40, "completed": 37, "reading": "allocated", "verdict": null, "cost_task_attempted_usd": 0.0, "cost_task_completed_usd": 0.0, "cost_task_attempted_usd_session": 4.440894557955956e-05, "cost_task_completed_usd_session": 4.800967089682114e-05}, "tool_calling": {"tokens_total": 20411, "share": 0.4034272838676523, "dpp_session": 0.04034272838676526, "dpp_weekly": 0.0, "attempted": 30, "completed": 10, "reading": "allocated", "verdict": null, "cost_task_attempted_usd": 0.0, "cost_task_completed_usd": 0.0, "cost_task_attempted_usd_session": 4.97581065900553e-05, "cost_task_completed_usd_session": 0.0001492743197701659}, "reasoning": {"tokens_total": 5894, "share": 0.11649602719690082, "dpp_session": 0.011649602719690092, "dpp_weekly": 0.0, "attempted": 5, "completed": 5, "reading": "allocated", "verdict": null, "cost_task_attempted_usd": 0.0, "cost_task_completed_usd": 0.0, "cost_task_attempted_usd_session": 8.621065511002478e-05, "cost_task_completed_usd_session": 8.621065511002478e-05}}}, {"batch_id": "a5bd461ca175e40b", "run_id": "T2-20260902T051123Z-ebf685c7", "level": "T2", "model": "glm-5.3", "workloads": ["multi_turn", "tool_calling", "reasoning"], "reps": 5, "dpp_session": 0.20000000000000018, "dpp_weekly": 0.10000000000000009, "allocations": {"multi_turn": {"tokens_total": 17931, "share": 0.42822343753731523, "dpp_session": 0.08564468750746311, "dpp_weekly": 0.042822343753731555, "attempted": 40, "completed": 40, "reading": "allocated", "verdict": null, "cost_task_attempted_usd": 0.00024638862919293186, "cost_task_completed_usd": 0.00024638862919293186, "cost_task_attempted_usd_session": 7.922463961187521e-05, "cost_task_completed_usd_session": 7.922463961187521e-05}, "tool_calling": {"tokens_total": 18415, "share": 0.4397821985527667, "dpp_session": 0.08795643971055342, "dpp_weekly": 0.04397821985527671, "attempted": 30, "completed": 15, "reading": "allocated", "verdict": null, "cost_task_attempted_usd": 0.00033738565289817194, "cost_task_completed_usd": 0.0006747713057963439, "cost_task_attempted_usd_session": 0.00010848413276468553, "cost_task_completed_usd_session": 0.00021696826552937106}, "reasoning": {"tokens_total": 5527, "share": 0.1319943639099181, "dpp_session": 0.02639887278198364, "dpp_weekly": 0.01319943639099182, "attempted": 5, "completed": 5, "reading": "allocated", "verdict": null, "cost_task_attempted_usd": 0.0006075689938316144, "cost_task_completed_usd": 0.0006075689938316144, "cost_task_attempted_usd_session": 0.00019535980509055123, "cost_task_completed_usd_session": 0.00019535980509055123}}}, {"batch_id": "cf201837a3cb2de0", "run_id": "T2-20260902T051123Z-ebf685c7", "level": "T2", "model": "kimi-k3", "workloads": ["multi_turn", "tool_calling", "reasoning"], "reps": 5, "dpp_session": 1.7000000000000002, "dpp_weekly": 0.20000000000000018, "allocations": {"multi_turn": {"tokens_total": 25056, "share": 0.48612781809010125, "dpp_session": 0.8264172907531723, "dpp_weekly": 0.09722556361802034, "attempted": 40, "completed": 40, "reading": "allocated", "verdict": null, "cost_task_attempted_usd": 0.0005594106076986211, "cost_task_completed_usd": 0.0005594106076986211, "cost_task_attempted_usd_session": 0.0007644678722569575, "cost_task_completed_usd_session": 0.0007644678722569575}, "tool_calling": {"tokens_total": 20555, "share": 0.39880097784331225, "dpp_session": 0.677961662333631, "dpp_weekly": 0.07976019556866253, "attempted": 30, "completed": 13, "reading": "allocated", "verdict": null, "cost_task_attempted_usd": 0.0006118925628589377, "cost_task_completed_usd": 0.0014120597604437024, "cost_task_attempted_usd_session": 0.0008361875859004771, "cost_task_completed_usd_session": 0.0019296636597703315}, "reasoning": {"tokens_total": 5931, "share": 0.11507120406658647, "dpp_session": 0.195621046913197, "dpp_weekly": 0.023014240813317315, "attempted": 5, "completed": 5, "reading": "allocated", "verdict": null, "cost_task_attempted_usd": 0.0010593436507856072, "cost_task_completed_usd": 0.0010593436507856072, "cost_task_attempted_usd_session": 0.0014476561144176293, "cost_task_completed_usd_session": 0.0014476561144176293}}}], "who_wins": [{"workload": "long_context", "level": "T2", "s0": {"legacy": 5, "new": 0, "tie": 0, "unmeasured": 0}, "s1": {"legacy": 5, "new": 0, "tie": 0, "unmeasured": 0}}, {"workload": "long_generation", "level": "T2", "s0": {"legacy": 5, "new": 0, "tie": 0, "unmeasured": 0}, "s1": {"legacy": 5, "new": 0, "tie": 0, "unmeasured": 0}}, {"workload": "ratio_in", "level": "T2", "s0": {"legacy": 5, "new": 0, "tie": 0, "unmeasured": 0}, "s1": {"legacy": 5, "new": 0, "tie": 0, "unmeasured": 0}}, {"workload": "ratio_out", "level": "T2", "s0": {"legacy": 5, "new": 0, "tie": 0, "unmeasured": 0}, "s1": {"legacy": 5, "new": 0, "tie": 0, "unmeasured": 0}}], "dp_tokens_curve": [{"model": "deepseek-v4-flash", "workload": "long_context", "level": "T2", "k": 1, "rep": null, "batch_id": "062dc476d28891ce", "tokens_total": 196845, "dpp_weekly": 0.10000000000000009, "dpp_session": 0.20000000000000018}, {"model": "glm-5.3", "workload": "long_context", "level": "T2", "k": 1, "rep": null, "batch_id": "60e0dfabca21ac53", "tokens_total": 204056, "dpp_weekly": 0.10000000000000009, "dpp_session": 0.7000000000000006}, {"model": "glm-5.3-flash", "workload": "long_context", "level": "T2", "k": 1, "rep": null, "batch_id": "5dba9ca292c7b297", "tokens_total": 204000, "dpp_weekly": 0.0, "dpp_session": 0.10000000000000009}, {"model": "gpt-oss:20b", "workload": "long_context", "level": "T2", "k": 1, "rep": null, "batch_id": "5aa6ac6fa18cd7fe", "tokens_total": 197231, "dpp_weekly": 0.0, "dpp_session": 0.0}, {"model": "kimi-k3", "workload": "long_context", "level": "T2", "k": 1, "rep": null, "batch_id": "5ac03ad5935e1d7a", "tokens_total": 195922, "dpp_weekly": 0.40000000000000036, "dpp_session": 2.6999999999999966}, {"model": "minimax-m3", "workload": "long_context", "level": "T2", "k": 1, "rep": null, "batch_id": "271827b8ffc1f62f", "tokens_total": 193716, "dpp_weekly": 0.0, "dpp_session": 0.10000000000000009}, {"model": "deepseek-v4-flash", "workload": "long_generation", "level": "T2", "k": 1, "rep": null, "batch_id": "ded6128f86fc558d", "tokens_total": 182318, "dpp_weekly": 0.10000000000000009, "dpp_session": 0.30000000000000027}, {"model": "glm-5.3", "workload": "long_generation", "level": "T2", "k": 1, "rep": null, "batch_id": "1a637b20e4acd30c", "tokens_total": 191261, "dpp_weekly": 0.30000000000000027, "dpp_session": 1.8000000000000016}, {"model": "glm-5.3-flash", "workload": "long_generation", "level": "T2", "k": 1, "rep": null, "batch_id": "bf7746f48dd1c642", "tokens_total": 127163, "dpp_weekly": 0.0, "dpp_session": 0.30000000000000027}, {"model": "gpt-oss:20b", "workload": "long_generation", "level": "T2", "k": 1, "rep": null, "batch_id": "dbd67e1cb9f20129", "tokens_total": 68944, "dpp_weekly": 0.0, "dpp_session": 0.0}, {"model": "kimi-k3", "workload": "long_generation", "level": "T2", "k": 1, "rep": null, "batch_id": "4311a422ec2c3c91", "tokens_total": 152818, "dpp_weekly": 1.4999999999999902, "dpp_session": 9.799999999999997}, {"model": "minimax-m3", "workload": "long_generation", "level": "T2", "k": 1, "rep": null, "batch_id": "d55ab5deef66318b", "tokens_total": 124753, "dpp_weekly": 0.0, "dpp_session": 0.5000000000000004}, {"model": "deepseek-v4-flash", "workload": "ratio_in", "level": "T2", "k": 1, "rep": null, "batch_id": "ad3a178820eaf54d", "tokens_total": 325689, "dpp_weekly": 0.0, "dpp_session": 0.20000000000000018}, {"model": "glm-5.3", "workload": "ratio_in", "level": "T2", "k": 1, "rep": null, "batch_id": "67f57bfb4e19150c", "tokens_total": 336893, "dpp_weekly": 0.10000000000000009, "dpp_session": 1.100000000000001}, {"model": "glm-5.3-flash", "workload": "ratio_in", "level": "T2", "k": 1, "rep": null, "batch_id": "7f30cb304996e0e1", "tokens_total": 336974, "dpp_weekly": 0.0, "dpp_session": 0.20000000000000018}, {"model": "gpt-oss:20b", "workload": "ratio_in", "level": "T2", "k": 1, "rep": null, "batch_id": "afad62d210cb7cb1", "tokens_total": 329534, "dpp_weekly": 0.0, "dpp_session": 0.0}, {"model": "kimi-k3", "workload": "ratio_in", "level": "T2", "k": 1, "rep": null, "batch_id": "d39430a4b07fec0b", "tokens_total": 324961, "dpp_weekly": 0.7000000000000006, "dpp_session": 4.300000000000004}, {"model": "minimax-m3", "workload": "ratio_in", "level": "T2", "k": 1, "rep": null, "batch_id": "874ea99727604e25", "tokens_total": 321522, "dpp_weekly": 0.10000000000000009, "dpp_session": 0.30000000000000027}, {"model": "deepseek-v4-flash", "workload": "ratio_out", "level": "T2", "k": 1, "rep": null, "batch_id": "5295695a58ba961b", "tokens_total": 152068, "dpp_weekly": 0.10000000000000009, "dpp_session": 0.20000000000000018}, {"model": "glm-5.3", "workload": "ratio_out", "level": "T2", "k": 1, "rep": null, "batch_id": "2c76b03fb77d1ae9", "tokens_total": 205195, "dpp_weekly": 0.30000000000000027, "dpp_session": 2.0}, {"model": "glm-5.3-flash", "workload": "ratio_out", "level": "T2", "k": 1, "rep": null, "batch_id": "9aa9051819a23dca", "tokens_total": 160082, "dpp_weekly": 0.0, "dpp_session": 0.40000000000000036}, {"model": "gpt-oss:20b", "workload": "ratio_out", "level": "T2", "k": 1, "rep": null, "batch_id": "16b336fbd73abbe0", "tokens_total": 119560, "dpp_weekly": 0.0, "dpp_session": 0.10000000000000009}, {"model": "kimi-k3", "workload": "ratio_out", "level": "T2", "k": 1, "rep": null, "batch_id": "baeffdf63ccef93e", "tokens_total": 145080, "dpp_weekly": 1.3000000000000012, "dpp_session": 8.5}, {"model": "minimax-m3", "workload": "ratio_out", "level": "T2", "k": 1, "rep": null, "batch_id": "1b9d150893fe2e3f", "tokens_total": 139233, "dpp_weekly": 0.0, "dpp_session": -55.2}], "sensitivity": {"rates": {"factors": [0.8, 1.2], "cells": {"0.8": [{"model": "deepseek-v4-flash", "workload": "long_context", "new_cost_task_usd": 0.014239808000000001, "threshold_pp_per_1m": 1.5691596692873446, "verdict": {"winner": "legacy", "margin_pct": 209.35982879999972}}, {"model": "deepseek-v4-flash", "workload": "long_generation", "new_cost_task_usd": 0.029375808000000003, "threshold_pp_per_1m": 4.434950860319667, "verdict": {"winner": "legacy", "margin_pct": 538.1894287999994}}, {"model": "deepseek-v4-flash", "workload": "ratio_in", "new_cost_task_usd": 0.022949696000000002, "threshold_pp_per_1m": 1.5316953261036528, "verdict": {"winner": "legacy", "margin_pct": 1550.5904728159985}}, {"model": "deepseek-v4-flash", "workload": "ratio_out", "new_cost_task_usd": 0.0007791520000000001, "threshold_pp_per_1m": 4.282625477545857, "verdict": {"winner": "legacy", "margin_pct": 238.54154399999973}}, {"model": "glm-5.3", "workload": "long_context", "new_cost_task_usd": 0.046276, "threshold_pp_per_1m": 4.923340352595494, "verdict": {"winner": "legacy", "margin_pct": 905.346099999999}}, {"model": "glm-5.3", "workload": "long_generation", "new_cost_task_usd": 0.12405472000000002, "threshold_pp_per_1m": 14.86084636210747, "verdict": {"winner": "legacy", "margin_pct": 798.362930666666}}, {"model": "glm-5.3", "workload": "ratio_in", "new_cost_task_usd": 0.07566783999999999, "threshold_pp_per_1m": 4.878934583821804, "verdict": {"winner": "legacy", "margin_pct": 1543.8838239999982}}, {"model": "glm-5.3", "workload": "ratio_out", "new_cost_task_usd": 0.0062286400000000006, "threshold_pp_per_1m": 14.79280721508609, "verdict": {"winner": "legacy", "margin_pct": 802.1146933333325}}, {"model": "glm-5.3-flash", "workload": "long_context", "new_cost_task_usd": 0.004935640000000001, "threshold_pp_per_1m": 0.5260856589147286, "verdict": {"winner": "legacy", "margin_pct": 666.9505653799994}}, {"model": "glm-5.3-flash", "workload": "long_generation", "new_cost_task_usd": 0.009002439999999999, "threshold_pp_per_1m": 1.660184279105301, "verdict": {"winner": "legacy", "margin_pct": 405.4984053266662}}, {"model": "glm-5.3-flash", "workload": "ratio_in", "new_cost_task_usd": 0.00811204, "threshold_pp_per_1m": 0.5229885570146153, "verdict": {"winner": "legacy", "margin_pct": 548.0879545899993}}, {"model": "glm-5.3-flash", "workload": "ratio_out", "new_cost_task_usd": 0.0005863600000000001, "threshold_pp_per_1m": 1.6679110965630113, "verdict": {"winner": "legacy", "margin_pct": 396.1726680999996}}, {"model": "gpt-oss:20b", "workload": "ratio_out", "new_cost_task_usd": 0.000241232, "threshold_pp_per_1m": 0.9408914183123877, "verdict": {"winner": "legacy", "margin_pct": 651.9511908799993}}, {"model": "kimi-k3", "workload": "long_context", "new_cost_task_usd": 0.0968568, "threshold_pp_per_1m": 10.747575044053427, "verdict": {"winner": "legacy", "margin_pct": 426.0534949999996}}, {"model": "kimi-k3", "workload": "long_generation", "new_cost_task_usd": 0.34480320000000003, "threshold_pp_per_1m": 49.932339154779356, "verdict": {"winner": "legacy", "margin_pct": 399.38996800000325}}, {"model": "kimi-k3", "workload": "ratio_in", "new_cost_task_usd": 0.1569, "threshold_pp_per_1m": 10.490905313697429, "verdict": {"winner": "legacy", "margin_pct": 386.9503571428567}}, {"model": "kimi-k3", "workload": "ratio_out", "new_cost_task_usd": 0.015148800000000002, "threshold_pp_per_1m": 45.83672423398329, "verdict": {"winner": "legacy", "margin_pct": 406.3195076923073}}, {"model": "minimax-m3", "workload": "long_context", "new_cost_task_usd": 0.018996, "threshold_pp_per_1m": 2.1303329547800947, "verdict": {"winner": "legacy", "margin_pct": 2566.919981999997}}, {"model": "minimax-m3", "workload": "long_generation", "new_cost_task_usd": 0.04849776, "threshold_pp_per_1m": 7.977390391822826, "verdict": {"winner": "legacy", "margin_pct": 1310.6956119839988}}, {"model": "minimax-m3", "workload": "ratio_in", "new_cost_task_usd": 0.030996959999999997, "threshold_pp_per_1m": 2.094356620585628, "verdict": {"winner": "legacy", "margin_pct": 573.4089559999993}}], "1.2": [{"model": "deepseek-v4-flash", "workload": "long_context", "new_cost_task_usd": 0.021359712, "threshold_pp_per_1m": 2.353739503931017, "verdict": {"winner": "legacy", "margin_pct": 364.0397431999995}}, {"model": "deepseek-v4-flash", "workload": "long_generation", "new_cost_task_usd": 0.044063712000000005, "threshold_pp_per_1m": 6.6524262904795, "verdict": {"winner": "legacy", "margin_pct": 857.2841431999992}}, {"model": "deepseek-v4-flash", "workload": "ratio_in", "new_cost_task_usd": 0.034424544, "threshold_pp_per_1m": 2.297542989155479, "verdict": {"winner": "legacy", "margin_pct": 2325.8857092239978}}, {"model": "deepseek-v4-flash", "workload": "ratio_out", "new_cost_task_usd": 0.001168728, "threshold_pp_per_1m": 6.423938216318786, "verdict": {"winner": "legacy", "margin_pct": 407.8123159999995}}, {"model": "glm-5.3", "workload": "long_context", "new_cost_task_usd": 0.06941399999999999, "threshold_pp_per_1m": 7.38501052889324, "verdict": {"winner": "legacy", "margin_pct": 1408.0191499999983}}, {"model": "glm-5.3", "workload": "long_generation", "new_cost_task_usd": 0.18608208, "threshold_pp_per_1m": 22.291269543161203, "verdict": {"winner": "legacy", "margin_pct": 1247.5443959999986}}, {"model": "glm-5.3", "workload": "ratio_in", "new_cost_task_usd": 0.11350175999999998, "threshold_pp_per_1m": 7.318401875732706, "verdict": {"winner": "legacy", "margin_pct": 2365.825735999997}}, {"model": "glm-5.3", "workload": "ratio_out", "new_cost_task_usd": 0.009342959999999999, "threshold_pp_per_1m": 22.189210822629132, "verdict": {"winner": "legacy", "margin_pct": 1253.1720399999986}}, {"model": "glm-5.3-flash", "workload": "long_context", "new_cost_task_usd": 0.00740346, "threshold_pp_per_1m": 0.7891284883720929, "verdict": {"winner": "legacy", "margin_pct": 1000.425848069999}}, {"model": "glm-5.3-flash", "workload": "long_generation", "new_cost_task_usd": 0.013503659999999999, "threshold_pp_per_1m": 2.490276418657951, "verdict": {"winner": "legacy", "margin_pct": 608.2476079899994}}, {"model": "glm-5.3-flash", "workload": "ratio_in", "new_cost_task_usd": 0.01216806, "threshold_pp_per_1m": 0.7844828355219229, "verdict": {"winner": "legacy", "margin_pct": 822.1319318849991}}, {"model": "glm-5.3-flash", "workload": "ratio_out", "new_cost_task_usd": 0.0008795399999999999, "threshold_pp_per_1m": 2.5018666448445166, "verdict": {"winner": "legacy", "margin_pct": 594.2590021499993}}, {"model": "gpt-oss:20b", "workload": "ratio_out", "new_cost_task_usd": 0.00036184799999999995, "threshold_pp_per_1m": 1.4113371274685813, "verdict": {"winner": "legacy", "margin_pct": 977.9267863199989}}, {"model": "kimi-k3", "workload": "long_context", "new_cost_task_usd": 0.1452852, "threshold_pp_per_1m": 16.121362566080137, "verdict": {"winner": "legacy", "margin_pct": 689.0802424999993}}, {"model": "kimi-k3", "workload": "long_generation", "new_cost_task_usd": 0.5172048, "threshold_pp_per_1m": 74.89850873216903, "verdict": {"winner": "legacy", "margin_pct": 649.0849520000049}}, {"model": "kimi-k3", "workload": "ratio_in", "new_cost_task_usd": 0.23534999999999998, "threshold_pp_per_1m": 15.736357970546141, "verdict": {"winner": "legacy", "margin_pct": 630.4255357142849}}, {"model": "kimi-k3", "workload": "ratio_out", "new_cost_task_usd": 0.022723200000000002, "threshold_pp_per_1m": 68.75508635097493, "verdict": {"winner": "legacy", "margin_pct": 659.479261538461}}, {"model": "minimax-m3", "workload": "long_context", "new_cost_task_usd": 0.028494, "threshold_pp_per_1m": 3.1954994321701418, "verdict": {"winner": "legacy", "margin_pct": 3850.379972999996}}, {"model": "minimax-m3", "workload": "long_generation", "new_cost_task_usd": 0.07274663999999999, "threshold_pp_per_1m": 11.966085587734238, "verdict": {"winner": "legacy", "margin_pct": 1966.0434179759975}}, {"model": "minimax-m3", "workload": "ratio_in", "new_cost_task_usd": 0.04649543999999999, "threshold_pp_per_1m": 3.1415349308784415, "verdict": {"winner": "legacy", "margin_pct": 910.113433999999}}]}, "flips": {"0.8": [], "1.2": []}, "note": "every table rate scaled by the factor; the legacy side is meter-native and cannot move. Flips are read against the S0 baseline verdict."}, "cache": {"s_values": [0.0, 0.25, 0.5, 0.9], "cells": {"0": [{"model": "deepseek-v4-flash", "workload": "long_context", "new_cost_task_usd": 0.01779976, "verdict": {"winner": "legacy", "margin_pct": 286.6997859999997}}, {"model": "deepseek-v4-flash", "workload": "long_generation", "new_cost_task_usd": 0.036719760000000004, "verdict": {"winner": "legacy", "margin_pct": 697.7367859999993}}, {"model": "deepseek-v4-flash", "workload": "ratio_in", "new_cost_task_usd": 0.02868712, "verdict": {"winner": "legacy", "margin_pct": 1938.2380910199981}}, {"model": "deepseek-v4-flash", "workload": "ratio_out", "new_cost_task_usd": 0.0009739400000000001, "verdict": {"winner": "legacy", "margin_pct": 323.1769299999997}}, {"model": "glm-5.3", "workload": "long_context", "new_cost_task_usd": 0.057844999999999994, "verdict": {"winner": "legacy", "margin_pct": 1156.6826249999986}}, {"model": "glm-5.3", "workload": "long_generation", "new_cost_task_usd": 0.15506840000000002, "verdict": {"winner": "legacy", "margin_pct": 1022.9536633333325}}, {"model": "glm-5.3", "workload": "ratio_in", "new_cost_task_usd": 0.09458479999999998, "verdict": {"winner": "legacy", "margin_pct": 1954.8547799999976}}, {"model": "glm-5.3", "workload": "ratio_out", "new_cost_task_usd": 0.0077858, "verdict": {"winner": "legacy", "margin_pct": 1027.6433666666655}}, {"model": "glm-5.3-flash", "workload": "long_context", "new_cost_task_usd": 0.00616955, "verdict": {"winner": "legacy", "margin_pct": 833.6882067249992}}, {"model": "glm-5.3-flash", "workload": "long_generation", "new_cost_task_usd": 0.011253049999999999, "verdict": {"winner": "legacy", "margin_pct": 506.87300665833277}}, {"model": "glm-5.3-flash", "workload": "ratio_in", "new_cost_task_usd": 0.01014005, "verdict": {"winner": "legacy", "margin_pct": 685.1099432374992}}, {"model": "glm-5.3-flash", "workload": "ratio_out", "new_cost_task_usd": 0.00073295, "verdict": {"winner": "legacy", "margin_pct": 495.21583512499944}}, {"model": "gpt-oss:20b", "workload": "ratio_out", "new_cost_task_usd": 0.00030154, "verdict": {"winner": "legacy", "margin_pct": 814.9389885999991}}, {"model": "kimi-k3", "workload": "long_context", "new_cost_task_usd": 0.121071, "verdict": {"winner": "legacy", "margin_pct": 557.5668687499995}}, {"model": "kimi-k3", "workload": "long_generation", "new_cost_task_usd": 0.431004, "verdict": {"winner": "legacy", "margin_pct": 524.237460000004}}, {"model": "kimi-k3", "workload": "ratio_in", "new_cost_task_usd": 0.196125, "verdict": {"winner": "legacy", "margin_pct": 508.68794642857085}}, {"model": "kimi-k3", "workload": "ratio_out", "new_cost_task_usd": 0.018936, "verdict": {"winner": "legacy", "margin_pct": 532.8993846153841}}, {"model": "minimax-m3", "workload": "long_context", "new_cost_task_usd": 0.023745, "verdict": {"winner": "legacy", "margin_pct": 3208.6499774999966}}, {"model": "minimax-m3", "workload": "long_generation", "new_cost_task_usd": 0.060622199999999994, "verdict": {"winner": "legacy", "margin_pct": 1638.369514979998}}, {"model": "minimax-m3", "workload": "ratio_in", "new_cost_task_usd": 0.038746199999999995, "verdict": {"winner": "legacy", "margin_pct": 741.761194999999}}], "0.25": [{"model": "deepseek-v4-flash", "workload": "long_context", "new_cost_task_usd": 0.013654993, "verdict": {"winner": "legacy", "margin_pct": 196.65472292499973}}, {"model": "deepseek-v4-flash", "workload": "long_generation", "new_cost_task_usd": 0.0365660805, "verdict": {"winner": "legacy", "margin_pct": 694.3980988624992}}, {"model": "deepseek-v4-flash", "workload": "ratio_in", "new_cost_task_usd": 0.021758869, "verdict": {"winner": "legacy", "margin_pct": 1470.1325442677485}}, {"model": "deepseek-v4-flash", "workload": "ratio_out", "new_cost_task_usd": 0.0009655265, "verdict": {"winner": "legacy", "margin_pct": 319.52126424999966}}, {"model": "glm-5.3", "workload": "long_context", "new_cost_task_usd": 0.046269155, "verdict": {"winner": "legacy", "margin_pct": 905.197392374999}}, {"model": "glm-5.3", "workload": "long_generation", "new_cost_task_usd": 0.15463862000000003, "verdict": {"winner": "legacy", "margin_pct": 1019.8413398333325}}, {"model": "glm-5.3", "workload": "ratio_in", "new_cost_task_usd": 0.07540258999999998, "verdict": {"winner": "legacy", "margin_pct": 1538.121267749998}}, {"model": "glm-5.3", "workload": "ratio_out", "new_cost_task_usd": 0.0077607200000000005, "verdict": {"winner": "legacy", "margin_pct": 1024.0109466666656}}, {"model": "glm-5.3-flash", "workload": "long_context", "new_cost_task_usd": 0.004951339999999999, "verdict": {"winner": "legacy", "margin_pct": 669.0720985299993}}, {"model": "glm-5.3-flash", "workload": "long_generation", "new_cost_task_usd": 0.01120784, "verdict": {"winner": "legacy", "margin_pct": 504.8366050933328}}, {"model": "glm-5.3-flash", "workload": "ratio_in", "new_cost_task_usd": 0.008120839999999999, "verdict": {"winner": "legacy", "margin_pct": 548.6825243899995}}, {"model": "glm-5.3-flash", "workload": "ratio_out", "new_cost_task_usd": 0.00073031, "verdict": {"winner": "legacy", "margin_pct": 493.4321257249994}}, {"model": "gpt-oss:20b", "workload": "ratio_out", "new_cost_task_usd": 0.00030029749999999994, "verdict": {"winner": "legacy", "margin_pct": 811.581020524999}}, {"model": "kimi-k3", "workload": "long_context", "new_cost_task_usd": 0.094842525, "verdict": {"winner": "legacy", "margin_pct": 415.11346390624954}}, {"model": "kimi-k3", "workload": "long_generation", "new_cost_task_usd": 0.4299321, "verdict": {"winner": "legacy", "margin_pct": 522.684991500004}}, {"model": "kimi-k3", "workload": "ratio_in", "new_cost_task_usd": 0.152327625, "verdict": {"winner": "legacy", "margin_pct": 372.7596647321424}}, {"model": "kimi-k3", "workload": "ratio_out", "new_cost_task_usd": 0.018789525, "verdict": {"winner": "legacy", "margin_pct": 528.0037394230765}}, {"model": "minimax-m3", "workload": "long_context", "new_cost_task_usd": 0.019128959999999997, "verdict": {"winner": "legacy", "margin_pct": 2584.886800319997}}, {"model": "minimax-m3", "workload": "long_generation", "new_cost_task_usd": 0.060437279999999996, "verdict": {"winner": "legacy", "margin_pct": 1633.3718855519983}}, {"model": "minimax-m3", "workload": "ratio_in", "new_cost_task_usd": 0.031040159999999997, "verdict": {"winner": "legacy", "margin_pct": 574.3474759999992}}], "0.5": [{"model": "deepseek-v4-flash", "workload": "long_context", "new_cost_task_usd": 0.009510226, "verdict": {"winner": "legacy", "margin_pct": 106.60965984999982}}, {"model": "deepseek-v4-flash", "workload": "long_generation", "new_cost_task_usd": 0.036412401000000004, "verdict": {"winner": "legacy", "margin_pct": 691.0594117249993}}, {"model": "deepseek-v4-flash", "workload": "ratio_in", "new_cost_task_usd": 0.014830618, "verdict": {"winner": "legacy", "margin_pct": 1002.026997515499}}, {"model": "deepseek-v4-flash", "workload": "ratio_out", "new_cost_task_usd": 0.0009571130000000001, "verdict": {"winner": "legacy", "margin_pct": 315.8655984999997}}, {"model": "glm-5.3", "workload": "long_context", "new_cost_task_usd": 0.03469331, "verdict": {"winner": "legacy", "margin_pct": 653.7121597499993}}, {"model": "glm-5.3", "workload": "long_generation", "new_cost_task_usd": 0.15420884, "verdict": {"winner": "legacy", "margin_pct": 1016.7290163333323}}, {"model": "glm-5.3", "workload": "ratio_in", "new_cost_task_usd": 0.05622038, "verdict": {"winner": "legacy", "margin_pct": 1121.387755499999}}, {"model": "glm-5.3", "workload": "ratio_out", "new_cost_task_usd": 0.00773564, "verdict": {"winner": "legacy", "margin_pct": 1020.3785266666655}}, {"model": "glm-5.3-flash", "workload": "long_context", "new_cost_task_usd": 0.0037331300000000003, "verdict": {"winner": "legacy", "margin_pct": 504.4559903349995}}, {"model": "glm-5.3-flash", "workload": "long_generation", "new_cost_task_usd": 0.01116263, "verdict": {"winner": "legacy", "margin_pct": 502.8002035283328}}, {"model": "glm-5.3-flash", "workload": "ratio_in", "new_cost_task_usd": 0.006101629999999999, "verdict": {"winner": "legacy", "margin_pct": 412.25510554249956}}, {"model": "glm-5.3-flash", "workload": "ratio_out", "new_cost_task_usd": 0.0007276699999999999, "verdict": {"winner": "legacy", "margin_pct": 491.64841632499946}}, {"model": "gpt-oss:20b", "workload": "ratio_out", "new_cost_task_usd": 0.00029905499999999995, "verdict": {"winner": "legacy", "margin_pct": 808.2230524499989}}, {"model": "kimi-k3", "workload": "long_context", "new_cost_task_usd": 0.06861405000000001, "verdict": {"winner": "legacy", "margin_pct": 272.66005906249967}}, {"model": "kimi-k3", "workload": "long_generation", "new_cost_task_usd": 0.4288602, "verdict": {"winner": "legacy", "margin_pct": 521.1325230000041}}, {"model": "kimi-k3", "workload": "ratio_in", "new_cost_task_usd": 0.10853025, "verdict": {"winner": "legacy", "margin_pct": 236.83138303571397}}, {"model": "kimi-k3", "workload": "ratio_out", "new_cost_task_usd": 0.018643049999999998, "verdict": {"winner": "legacy", "margin_pct": 523.1080942307686}}, {"model": "minimax-m3", "workload": "long_context", "new_cost_task_usd": 0.01451292, "verdict": {"winner": "legacy", "margin_pct": 1961.1236231399982}}, {"model": "minimax-m3", "workload": "long_generation", "new_cost_task_usd": 0.06025236, "verdict": {"winner": "legacy", "margin_pct": 1628.3742561239983}}, {"model": "minimax-m3", "workload": "ratio_in", "new_cost_task_usd": 0.02333412, "verdict": {"winner": "legacy", "margin_pct": 406.93375699999956}}], "0.9": [{"model": "deepseek-v4-flash", "workload": "long_context", "new_cost_task_usd": 0.0028785988, "verdict": {"winner": "new", "margin_pct": 59.90390688567303}}, {"model": "deepseek-v4-flash", "workload": "long_generation", "new_cost_task_usd": 0.0361665138, "verdict": {"winner": "legacy", "margin_pct": 685.7175123049993}}, {"model": "deepseek-v4-flash", "workload": "ratio_in", "new_cost_task_usd": 0.0037454164, "verdict": {"winner": "legacy", "margin_pct": 253.05812271189973}}, {"model": "deepseek-v4-flash", "workload": "ratio_out", "new_cost_task_usd": 0.0009436514000000001, "verdict": {"winner": "legacy", "margin_pct": 310.01653329999965}}, {"model": "glm-5.3", "workload": "long_context", "new_cost_task_usd": 0.016171958, "verdict": {"winner": "legacy", "margin_pct": 251.33578754999965}}, {"model": "glm-5.3", "workload": "long_generation", "new_cost_task_usd": 0.153521192, "verdict": {"winner": "legacy", "margin_pct": 1011.7492987333324}}, {"model": "glm-5.3", "workload": "ratio_in", "new_cost_task_usd": 0.025528844, "verdict": {"winner": "legacy", "margin_pct": 454.61413589999944}}, {"model": "glm-5.3", "workload": "ratio_out", "new_cost_task_usd": 0.007695512000000001, "verdict": {"winner": "legacy", "margin_pct": 1014.5666546666657}}, {"model": "glm-5.3-flash", "workload": "long_context", "new_cost_task_usd": 0.001783994, "verdict": {"winner": "legacy", "margin_pct": 241.07021722299976}}, {"model": "glm-5.3-flash", "workload": "long_generation", "new_cost_task_usd": 0.011090294, "verdict": {"winner": "legacy", "margin_pct": 499.54196102433286}}, {"model": "glm-5.3-flash", "workload": "ratio_in", "new_cost_task_usd": 0.0028708939999999997, "verdict": {"winner": "legacy", "margin_pct": 193.97123538649979}}, {"model": "glm-5.3-flash", "workload": "ratio_out", "new_cost_task_usd": 0.000723446, "verdict": {"winner": "legacy", "margin_pct": 488.79448128499945}}, {"model": "gpt-oss:20b", "workload": "ratio_out", "new_cost_task_usd": 0.0002970669999999999, "verdict": {"winner": "legacy", "margin_pct": 802.8503035299989}}, {"model": "kimi-k3", "workload": "long_context", "new_cost_task_usd": 0.026648489999999997, "verdict": {"winner": "legacy", "margin_pct": 44.734611312499844}}, {"model": "kimi-k3", "workload": "long_generation", "new_cost_task_usd": 0.42714515999999997, "verdict": {"winner": "legacy", "margin_pct": 518.648573400004}}, {"model": "kimi-k3", "workload": "ratio_in", "new_cost_task_usd": 0.038454449999999994, "verdict": {"winner": "legacy", "margin_pct": 19.346132321428442}}, {"model": "kimi-k3", "workload": "ratio_out", "new_cost_task_usd": 0.01840869, "verdict": {"winner": "legacy", "margin_pct": 515.2750619230762}}, {"model": "minimax-m3", "workload": "long_context", "new_cost_task_usd": 0.007127256, "verdict": {"winner": "legacy", "margin_pct": 963.1025396519991}}, {"model": "minimax-m3", "workload": "long_generation", "new_cost_task_usd": 0.059956487999999995, "verdict": {"winner": "legacy", "margin_pct": 1620.3780490391982}}, {"model": "minimax-m3", "workload": "ratio_in", "new_cost_task_usd": 0.011004455999999998, "verdict": {"winner": "legacy", "margin_pct": 139.07180659999972}}]}, "flips": {"0": [], "0.25": [], "0.5": [], "0.9": [{"model": "deepseek-v4-flash", "workload": "long_context", "verdict": {"winner": "new", "margin_pct": 59.90390688567303}}]}, "note": "the hit rate applied uniformly to every model the table discounts (the baseline cells use each model's effective S: measured where the calibration was conclusive, assumed otherwise). Flips read against S0."}, "ancla": {"factors": [0.7, 1.0, 1.3], "cells": {"0.7": [{"model": "deepseek-v4-flash", "workload": "long_context", "legacy_cost_task_usd": 0.0032220943613348704, "pp_per_1m": 0.508013919581397, "verdict": {"winner": "legacy", "margin_pct": 452.42826571428526}}, {"model": "deepseek-v4-flash", "workload": "long_generation", "legacy_cost_task_usd": 0.0032220943613348704, "pp_per_1m": 0.5484921949560663, "verdict": {"winner": "legacy", "margin_pct": 1039.6239799999992}}, {"model": "deepseek-v4-flash", "workload": "ratio_in", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 1938.2380910199981}}, {"model": "deepseek-v4-flash", "workload": "ratio_out", "legacy_cost_task_usd": 0.0001611047180667435, "pp_per_1m": 0.6576005471236558, "verdict": {"winner": "legacy", "margin_pct": 504.53847142857103}}, {"model": "glm-5.3", "workload": "long_context", "legacy_cost_task_usd": 0.0032220943613348704, "pp_per_1m": 0.4900615517308978, "verdict": {"winner": "legacy", "margin_pct": 1695.2608928571412}}, {"model": "glm-5.3", "workload": "long_generation", "legacy_cost_task_usd": 0.009666283084004612, "pp_per_1m": 1.5685372344597188, "verdict": {"winner": "legacy", "margin_pct": 1504.2195190476177}}, {"model": "glm-5.3", "workload": "ratio_in", "legacy_cost_task_usd": 0.0032220943613348704, "pp_per_1m": 0.2968301508193999, "verdict": {"winner": "legacy", "margin_pct": 2835.506828571425}}, {"model": "glm-5.3", "workload": "ratio_out", "legacy_cost_task_usd": 0.0004833141542002306, "pp_per_1m": 1.4620239284582972, "verdict": {"winner": "legacy", "margin_pct": 1510.9190952380939}}, {"model": "glm-5.3-flash", "workload": "long_context", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 833.6882067249992}}, {"model": "glm-5.3-flash", "workload": "long_generation", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 506.87300665833277}}, {"model": "glm-5.3-flash", "workload": "ratio_in", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 685.1099432374992}}, {"model": "glm-5.3-flash", "workload": "ratio_out", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 495.21583512499944}}, {"model": "gpt-oss:20b", "workload": "ratio_out", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 814.9389885999991}}, {"model": "kimi-k3", "workload": "long_context", "legacy_cost_task_usd": 0.012888377445339482, "pp_per_1m": 2.041628811465789, "verdict": {"winner": "legacy", "margin_pct": 839.3812410714278}}, {"model": "kimi-k3", "workload": "long_generation", "legacy_cost_task_usd": 0.0483314154200227, "pp_per_1m": 9.815597639021517, "verdict": {"winner": "legacy", "margin_pct": 791.7678000000059}}, {"model": "kimi-k3", "workload": "ratio_in", "legacy_cost_task_usd": 0.022554660529344094, "pp_per_1m": 2.154104646403724, "verdict": {"winner": "legacy", "margin_pct": 769.5542091836726}}, {"model": "kimi-k3", "workload": "ratio_out", "legacy_cost_task_usd": 0.0020943613348676656, "pp_per_1m": 8.960573476702518, "verdict": {"winner": "legacy", "margin_pct": 804.1419780219775}}, {"model": "minimax-m3", "workload": "long_context", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 3208.6499774999966}}, {"model": "minimax-m3", "workload": "long_generation", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 1638.369514979998}}, {"model": "minimax-m3", "workload": "ratio_in", "legacy_cost_task_usd": 0.0032220943613348704, "pp_per_1m": 0.31102070775872287, "verdict": {"winner": "legacy", "margin_pct": 1102.5159928571416}}], "1": [{"model": "deepseek-v4-flash", "workload": "long_context", "legacy_cost_task_usd": 0.004602991944764101, "pp_per_1m": 0.508013919581397, "verdict": {"winner": "legacy", "margin_pct": 286.6997859999997}}, {"model": "deepseek-v4-flash", "workload": "long_generation", "legacy_cost_task_usd": 0.004602991944764101, "pp_per_1m": 0.5484921949560663, "verdict": {"winner": "legacy", "margin_pct": 697.7367859999993}}, {"model": "deepseek-v4-flash", "workload": "ratio_in", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 1938.2380910199981}}, {"model": "deepseek-v4-flash", "workload": "ratio_out", "legacy_cost_task_usd": 0.00023014959723820504, "pp_per_1m": 0.6576005471236558, "verdict": {"winner": "legacy", "margin_pct": 323.1769299999997}}, {"model": "glm-5.3", "workload": "long_context", "legacy_cost_task_usd": 0.004602991944764101, "pp_per_1m": 0.4900615517308978, "verdict": {"winner": "legacy", "margin_pct": 1156.6826249999986}}, {"model": "glm-5.3", "workload": "long_generation", "legacy_cost_task_usd": 0.013808975834292303, "pp_per_1m": 1.5685372344597188, "verdict": {"winner": "legacy", "margin_pct": 1022.9536633333325}}, {"model": "glm-5.3", "workload": "ratio_in", "legacy_cost_task_usd": 0.004602991944764101, "pp_per_1m": 0.2968301508193999, "verdict": {"winner": "legacy", "margin_pct": 1954.8547799999976}}, {"model": "glm-5.3", "workload": "ratio_out", "legacy_cost_task_usd": 0.0006904487917146152, "pp_per_1m": 1.4620239284582972, "verdict": {"winner": "legacy", "margin_pct": 1027.6433666666655}}, {"model": "glm-5.3-flash", "workload": "long_context", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 833.6882067249992}}, {"model": "glm-5.3-flash", "workload": "long_generation", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 506.87300665833277}}, {"model": "glm-5.3-flash", "workload": "ratio_in", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 685.1099432374992}}, {"model": "glm-5.3-flash", "workload": "ratio_out", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 495.21583512499944}}, {"model": "gpt-oss:20b", "workload": "ratio_out", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 814.9389885999991}}, {"model": "kimi-k3", "workload": "long_context", "legacy_cost_task_usd": 0.018411967779056404, "pp_per_1m": 2.041628811465789, "verdict": {"winner": "legacy", "margin_pct": 557.5668687499995}}, {"model": "kimi-k3", "workload": "long_generation", "legacy_cost_task_usd": 0.069044879171461, "pp_per_1m": 9.815597639021517, "verdict": {"winner": "legacy", "margin_pct": 524.237460000004}}, {"model": "kimi-k3", "workload": "ratio_in", "legacy_cost_task_usd": 0.03222094361334871, "pp_per_1m": 2.154104646403724, "verdict": {"winner": "legacy", "margin_pct": 508.68794642857085}}, {"model": "kimi-k3", "workload": "ratio_out", "legacy_cost_task_usd": 0.0029919447640966656, "pp_per_1m": 8.960573476702518, "verdict": {"winner": "legacy", "margin_pct": 532.8993846153841}}, {"model": "minimax-m3", "workload": "long_context", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 3208.6499774999966}}, {"model": "minimax-m3", "workload": "long_generation", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 1638.369514979998}}, {"model": "minimax-m3", "workload": "ratio_in", "legacy_cost_task_usd": 0.004602991944764101, "pp_per_1m": 0.31102070775872287, "verdict": {"winner": "legacy", "margin_pct": 741.761194999999}}], "1.3": [{"model": "deepseek-v4-flash", "workload": "long_context", "legacy_cost_task_usd": 0.005983889528193331, "pp_per_1m": 0.508013919581397, "verdict": {"winner": "legacy", "margin_pct": 197.46137384615358}}, {"model": "deepseek-v4-flash", "workload": "long_generation", "legacy_cost_task_usd": 0.005983889528193331, "pp_per_1m": 0.5484921949560663, "verdict": {"winner": "legacy", "margin_pct": 513.643681538461}}, {"model": "deepseek-v4-flash", "workload": "ratio_in", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 1938.2380910199981}}, {"model": "deepseek-v4-flash", "workload": "ratio_out", "legacy_cost_task_usd": 0.00029919447640966657, "pp_per_1m": 0.6576005471236558, "verdict": {"winner": "legacy", "margin_pct": 225.5207153846151}}, {"model": "glm-5.3", "workload": "long_context", "legacy_cost_task_usd": 0.005983889528193331, "pp_per_1m": 0.4900615517308978, "verdict": {"winner": "legacy", "margin_pct": 866.6789423076914}}, {"model": "glm-5.3", "workload": "long_generation", "legacy_cost_task_usd": 0.017951668584579996, "pp_per_1m": 1.5685372344597188, "verdict": {"winner": "legacy", "margin_pct": 763.8105102564094}}, {"model": "glm-5.3", "workload": "ratio_in", "legacy_cost_task_usd": 0.005983889528193331, "pp_per_1m": 0.2968301508193999, "verdict": {"winner": "legacy", "margin_pct": 1480.6575230769215}}, {"model": "glm-5.3", "workload": "ratio_out", "legacy_cost_task_usd": 0.0008975834292289998, "pp_per_1m": 1.4620239284582972, "verdict": {"winner": "legacy", "margin_pct": 767.4179743589734}}, {"model": "glm-5.3-flash", "workload": "long_context", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 833.6882067249992}}, {"model": "glm-5.3-flash", "workload": "long_generation", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 506.87300665833277}}, {"model": "glm-5.3-flash", "workload": "ratio_in", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 685.1099432374992}}, {"model": "glm-5.3-flash", "workload": "ratio_out", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 495.21583512499944}}, {"model": "gpt-oss:20b", "workload": "ratio_out", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 814.9389885999991}}, {"model": "kimi-k3", "workload": "long_context", "legacy_cost_task_usd": 0.023935558112773325, "pp_per_1m": 2.041628811465789, "verdict": {"winner": "legacy", "margin_pct": 405.8206682692303}}, {"model": "kimi-k3", "workload": "long_generation", "legacy_cost_task_usd": 0.0897583429228993, "pp_per_1m": 9.815597639021517, "verdict": {"winner": "legacy", "margin_pct": 380.18266153846463}}, {"model": "kimi-k3", "workload": "ratio_in", "legacy_cost_task_usd": 0.04188722669735332, "pp_per_1m": 2.154104646403724, "verdict": {"winner": "legacy", "margin_pct": 368.2214972527468}}, {"model": "kimi-k3", "workload": "ratio_out", "legacy_cost_task_usd": 0.0038895281933256655, "pp_per_1m": 8.960573476702518, "verdict": {"winner": "legacy", "margin_pct": 386.84568047337234}}, {"model": "minimax-m3", "workload": "long_context", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 3208.6499774999966}}, {"model": "minimax-m3", "workload": "long_generation", "legacy_cost_task_usd": 0.0, "pp_per_1m": 0.0, "verdict": {"winner": "legacy", "margin_pct": 1638.369514979998}}, {"model": "minimax-m3", "workload": "ratio_in", "legacy_cost_task_usd": 0.005983889528193331, "pp_per_1m": 0.31102070775872287, "verdict": {"winner": "legacy", "margin_pct": 547.5086115384609}}]}, "flips": {"0.7": [], "1": [], "1.3": []}, "note": "the anchor (P_LEGADO, USD/month) scaled by the factor: every legacy dollar and the pp/1M threshold move with it; the measured pp/1M is meter-native and cannot move. Flips read against the baseline verdict."}, "k_axis": {"models": [], "note": "effective cost per task = dpp_weekly x USD/pp / tasks, per attempted and per completed task (the concurrency workstream's metric, recomputed here from raw with the current anchor). Outcome codes: invariant cost -> squeeze, growing -> overhead, anything else -> mixed."}}}</script>
+<script id="rates-data" type="application/json">{"per": 1000000, "rates": {"deepseek-v4-flash": {"input": 0.44, "cached_input": 0.014, "output": 1.32, "has_cache_discount": true}, "glm-5.3": {"input": 1.4, "cached_input": 0.26, "output": 4.4, "has_cache_discount": true}, "glm-5.3-flash": {"input": 0.15, "cached_input": 0.03, "output": 0.5, "has_cache_discount": true}, "gpt-oss:20b": {"input": 0.07, "cached_input": 0.035, "output": 0.3, "has_cache_discount": true}, "kimi-k3": {"input": 3.0, "cached_input": 0.3, "output": 15.0, "has_cache_discount": true}, "minimax-m3": {"input": 0.6, "cached_input": 0.12, "output": 2.4, "has_cache_discount": true}}}</script>
+<script>
+"use strict";
+var DATA = JSON.parse(document.getElementById("analysis-data").textContent);
+var RATES = JSON.parse(document.getElementById("rates-data").textContent);
+var BP = DATA.base_params;
+var USDPP = BP.usd_per_pp;   // the anchor: USD per weekly pp
+var TICKUSD = BP.tick_usd;   // one meter tick, in USD
+var PER = RATES.per || 1000000;
+var SLIDER_DEFAULT = Math.round((typeof BP.s === "number" ? BP.s : 0.5) * 100);
+// the token scenario: input and output are priced at their own rates; the
+// defaults make the columns read a 4:1 agent-style scenario at 1.25M tokens
+var TOKENS_IN_DEFAULT = 1000000, TOKENS_OUT_DEFAULT = 250000;
+var estado = { model: "", slider: SLIDER_DEFAULT, tin: TOKENS_IN_DEFAULT, tout: TOKENS_OUT_DEFAULT };
+
+function $(id) { return document.getElementById(id); }
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+function isNum(x) { return typeof x === "number" && isFinite(x); }
+function isNull(x) { return x === null || x === undefined; }
+function money(x) { return isNull(x) ? "no data" : "$" + Number(x).toPrecision(6); }
+
+function cellsFiltered() {
+  return DATA.cells.filter(function (c) { return !estado.model || c.model === estado.model; });
+}
+function rateOf(model) { return (RATES && RATES.rates) ? RATES.rates[model] || null : null; }
+function sPerModel(model) { return (DATA.s_per_model || {})[model] || null; }
+function measuredS(model) {
+  var spm = sPerModel(model);
+  return spm && spm.source === "measured" && isNum(spm.s) ? spm.s : null;
+}
+function effectiveS(model) {
+  // measured keeps precedence: the slider governs only the assumed models
+  var m = measuredS(model);
+  return m === null ? estado.slider / 100 : m;
+}
+function newCostAt(cell) {
+  var r = rateOf(cell.model);
+  if (!r || isNull(cell.tok_in_median) || isNull(cell.tok_out_median)) return null;
+  var s = effectiveS(cell.model);
+  if (!r.has_cache_discount) s = 0;  // no published discount: S(x) is S0, the slider cannot move it
+  return (cell.tok_in_median * (1 - s) * r.input +
+          cell.tok_in_median * s * r.cached_input +
+          cell.tok_out_median * r.output) / PER;
+}
+function thresholdAt(cell) {
+  // the threshold exists only for a MEASURED cell (the same rule as the
+  // persisted `_cell_doc`): without a readable legacy bracket there is no
+  // comparison to draw, and no line is invented for the bars
+  if (!cell.legacy_cost_task_usd) return null;
+  var cost = newCostAt(cell);
+  var tokens = isNull(cell.tok_in_median) || isNull(cell.tok_out_median)
+    ? null : cell.tok_in_median + cell.tok_out_median;
+  if (!isNum(cost) || !tokens) return null;
+  return cost / (tokens / 1e6) / USDPP;
+}
+function verdictOf(legacy, nuevo, tickUsd, legacySession) {
+  // the same rule as the persisted verdicts: the tie band is the MINIMUM of
+  // 2 ticks and 5 % of the cheaper cost; margin_pct = (loser - winner) / winner.
+  // A sub-tick winner (weekly reads 0.0) prices with its session-derived
+  // weekly-equivalent; with no session reading either, the loser's own cost
+  // (a free winner saves the whole bill: exactly 100 %)
+  if (isNull(legacy) || isNull(nuevo)) return { winner: "no data", margin_pct: null };
+  var band = Math.min(2 * tickUsd, 0.05 * Math.min(legacy, nuevo));
+  if (Math.abs(legacy - nuevo) <= band) return { winner: "tie", margin_pct: null };
+  if (legacy < nuevo) {
+    var winnerCost = legacy || legacySession || nuevo;
+    return { winner: "legacy", margin_pct: (nuevo - legacy) / winnerCost * 100 };
+  }
+  return { winner: "new", margin_pct: (legacy - nuevo) / (nuevo || legacy) * 100 };
+}
+function verdictAt(cell) {
+  var legacy = cell.legacy_cost_task_usd ? cell.legacy_cost_task_usd.median : null;
+  var legacySession = cell.legacy_cost_task_usd_session ? cell.legacy_cost_task_usd_session.median : null;
+  return verdictOf(legacy, newCostAt(cell), TICKUSD, legacySession);
+}
+function taskTokens(cell) {
+  // the rep's median token mix: the denominator that turns a per-task price
+  // into a per-1M price (linear in tokens)
+  if (isNull(cell.tok_in_median) || isNull(cell.tok_out_median)) return null;
+  var t = cell.tok_in_median + cell.tok_out_median;
+  return t > 0 ? t : null;
+}
+function legacyPerTask(cell) {
+  // the weekly window is the unit of account; a sub-tick weekly read (0.0)
+  // prices with its session-derived weekly-equivalent, marked — the same
+  // fallback the verdict uses. No readable bracket either: no data.
+  var weekly = cell.legacy_cost_task_usd ? cell.legacy_cost_task_usd.median : null;
+  if (isNum(weekly) && weekly > 0) return { usd: weekly, derived: false };
+  var session = cell.legacy_cost_task_usd_session ? cell.legacy_cost_task_usd_session.median : null;
+  if (isNum(session) && session > 0) return { usd: session, derived: true };
+  return null;
+}
+function legacyPer1M(cell) {
+  // the cell's measured meter read, normalized to USD per 1M tokens. The
+  // legacy meter emits one pp read per bracket (no in/out decomposition —
+  // the GPU-time rate was never published), so this price belongs to the
+  // cell's measured mix; a custom scenario only scales it with its total
+  var leg = legacyPerTask(cell);
+  var t = taskTokens(cell);
+  if (!leg || !t) return null;
+  return leg.usd / t * 1e6;
+}
+function newCostAt2(tin, tout, model) {
+  // the official table priced exactly at the scenario's in/out split
+  var r = rateOf(model);
+  if (!r || !(tin > 0) || !(tout > 0)) return null;
+  var s = effectiveS(model);
+  if (!r.has_cache_discount) s = 0;  // no published discount: S(x) is S0, the slider cannot move it
+  return (tin * (1 - s) * r.input + tin * s * r.cached_input + tout * r.output) / PER;
+}
+function compactTokens(n) {
+  // 1000000 -> "1M", 1500000 -> "1.5M", 500000 -> "500k", 750 -> "750"
+  if (n >= 1e6) return (Math.round(n / 1e5) / 10) + "M";
+  if (n >= 1000) return Math.round(n / 1000) + "k";
+  return String(n);
+}
+
+function chip(v) {
+  if (!v || v.winner === "no data") return '<span class="chip nodata">no data</span>';
+  if (v.winner === "tie") return '<span class="chip tie">tie</span>';
+  // the margin reads as +X %: how much more expensive the loser is than the
+  // chip's winner (a minus sign would read as a negative value)
+  return '<span class="chip ' + v.winner + '"><span class="dot"></span>' + v.winner +
+    " &middot; +" + Number(v.margin_pct).toFixed(1) + "%</span>";
+}
+function marginBar(v) {
+  if (!v || v.winner === "no data" || v.winner === "tie") return '<span class="note">&mdash;</span>';
+  return '<span class="mbar"><span class="track"><span class="fill ' + v.winner +
+    '" style="width:' + Math.min(100, v.margin_pct).toFixed(2) + '%"></span></span><b class="mono">' +
+    Number(v.margin_pct).toFixed(1) + "%</b></span>";
+}
+
+function medianOf(vals) {
+  // statistics.median's convention: the middle value, or the mean of the two
+  // middles for an even count — the same median the persisted doc uses
+  if (!vals.length) return null;
+  var a = vals.slice().sort(function (x, y) { return x - y; });
+  var m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+function renderReco() {
+  var grupos = {};
+  cellsFiltered().forEach(function (c) {
+    var v = verdictAt(c);
+    if (v.winner === "no data") return;
+    (grupos[c.workload] = grupos[c.workload] || []).push(v);
+  });
+  var workloads = Object.keys(grupos).sort();
+  var newWl = 0, legWl = 0, decided = 0;
+  var pills = workloads.map(function (wl) {
+    var xs = grupos[wl];
+    var nw = 0, lw = 0;
+    xs.forEach(function (v) {
+      if (v.winner === "new") nw++;
+      else if (v.winner === "legacy") lw++;
+    });
+    // the pill's side is the cells' majority; a workload whose cells all tie
+    // renders the tie chip, never a fabricated winner with a fake margin
+    var win = nw > lw ? "new" : lw > nw ? "legacy" : "tie";
+    // the margin is the median over the WINNING side's cells only
+    var side = win === "tie" ? [] : xs.filter(function (v) { return v.winner === win; })
+      .map(function (v) { return v.margin_pct; }).filter(function (x) { return x !== null; });
+    if (win === "new") { newWl++; decided++; }
+    else if (win === "legacy") { legWl++; decided++; }
+    return '<div class="pill"><b>' + esc(wl) + "</b>" +
+      chip({ winner: win, margin_pct: medianOf(side) }) + "</div>";
+  }).join("");
+  var headline;
+  if (!workloads.length) headline = "No measured verdict under this filter";
+  else if (!decided) headline = "Every measured workload ties inside the band";
+  else if (newWl && !legWl) headline = 'The <span class="h-new">new plan</span> wins every decided workload';
+  else if (legWl && !newWl) headline = 'The <span class="h-legacy">legacy plan</span> wins every decided workload';
+  else headline = 'Split: the <span class="h-legacy">legacy</span> plan wins ' + legWl + " of " +
+    decided + " decided workloads";
+  $("reco-headline").innerHTML = headline;
+  $("reco-pills").innerHTML = pills || '<p class="note">no measured cell under this filter</p>';
+  $("reco-sub").textContent =
+    "The margin is the saving from picking the winner. Anchor: $" + BP.ancla + "/mo = " +
+    Number(USDPP).toFixed(6) + " USD per weekly pp (tick $" + Number(TICKUSD).toFixed(6) + ").";
+}
+
+function renderTable() {
+  var filas = cellsFiltered().map(function (c) {
+    var v = verdictAt(c);
+    var r = rateOf(c.model);
+    var measuredBadge = measuredS(c.model) !== null ? ' <span class="badge">measured S</span>' : "";
+    var s0Badge = r && !r.has_cache_discount ? ' <span class="badge">S(x) &equiv; S0</span>' : "";
+    // scenario prices: the new side prices the user's in/out exactly on the
+    // official table; the legacy side applies the cell's measured pp/1M (one
+    // bracket read, no in/out decomposition) to the scenario's total. The
+    // meter read (pp/1M) and the per-task prices ride in the tooltips
+    var leg1m = legacyPer1M(c);
+    var leg = legacyPerTask(c);
+    var legPrice = isNum(leg1m) ? leg1m * (estado.tin + estado.tout) / 1e6 : null;
+    var legTip = !leg ? "no measured legacy bracket"
+      : "legacy per task: " + money(leg.usd) + (leg.derived ? " (session-derived)" : " (weekly)") +
+        (c.pp_per_1m && isNum(c.pp_per_1m.median)
+          ? " · measured " + c.pp_per_1m.median + " pp/1M × $" + Number(USDPP).toFixed(6) + "/pp"
+          : "") +
+        " · applied to your in+out total at the cell's measured mix";
+    var newPrice = newCostAt2(estado.tin, estado.tout, c.model);
+    var newPerTask = newCostAt(c);
+    var newTip = "priced at your in/out scenario at S(x)=" +
+      Math.round(effectiveS(c.model) * 100) + "%" +
+      (isNum(newPerTask) ? " · per task (measured mix): " + money(newPerTask) : "");
+    return '<tr><td class="mono">' + esc(c.model) + measuredBadge + "</td>" +
+      "<td>" + esc(c.workload) + "</td>" +
+      "<td>" + esc(isNull(c.level) ? "—" : c.level) + "</td>" +
+      '<td class="num mono" title="' + esc(legTip) + '">' + money(legPrice) +
+        (leg && leg.derived ? ' <span class="badge">session</span>' : "") + "</td>" +
+      '<td class="num mono" title="' + esc(newTip) + '">' + money(newPrice) + s0Badge + "</td>" +
+      '<td class="num mono">' + (isNull(c.pass_rate) ? "no data" : Math.round(c.pass_rate * 100) + "%") + "</td>" +
+      "<td>" + chip(v) + "</td>" +
+      "<td>" + marginBar(v) + "</td></tr>";
+  }).join("");
+  $("tabla-cuerpo").innerHTML = filas;
+}
+
+function usdLabel(x) { return "$" + Number(x).toPrecision(3); }
+function renderThreshold() {
+  // the pp/1M threshold comparison, translated at the anchor into hard
+  // dollars per 1M tokens: legacy $/1M (the measured meter read, with the
+  // session fallback the table uses) against the new-plan $/1M priced on the
+  // cell's own mix — the same rule as the persisted threshold, readable unit
+  var cont = $("chart-threshold");
+  var medidas = cellsFiltered().filter(function (c) {
+    return legacyPer1M(c) !== null && thresholdAt(c) !== null;
+  }).map(function (c) {
+    var leg = legacyPerTask(c);
+    return {
+      c: c,
+      legacyUsd: legacyPer1M(c),
+      derived: leg && leg.derived,
+      newUsd: thresholdAt(c) * USDPP
+    };
+  }).sort(function (a, b) { return b.legacyUsd - a.legacyUsd; });
+  if (!medidas.length) {
+    cont.innerHTML = '<p class="note">no measured cell under this filter</p>';
+    return;
+  }
+  var top = 0;
+  medidas.forEach(function (m) {
+    top = Math.max(top, m.legacyUsd, m.newUsd);
+  });
+  top *= 1.05;
+  if (!(top > 0)) top = 1;  // an all-zero scale must not divide into NaN widths
+  var W = 720, labelW = 320, right = 90, rowH = 24;
+  var plotW = W - labelW - right, baseY = medidas.length * rowH + 8, H = baseY + 44;
+  // the scale finally carries an axis: a baseline, ticks at 0 / mid / data max
+  // and faint gridlines the rows cross, so the new-price tick's position reads
+  // against numbers (the same tick pattern the dp-tokens curve uses)
+  var ejes = '<line x1="' + labelW + '" y1="' + baseY + '" x2="' + (W - right) + '" y2="' +
+    baseY + '" stroke="var(--axis)" stroke-width="1"/>';
+  var grid = "";
+  var dataMax = top / 1.05;
+  [0, dataMax / 2, dataMax].forEach(function (v) {
+    var x = labelW + v / top * plotW;
+    grid += '<line x1="' + x.toFixed(2) + '" y1="4" x2="' + x.toFixed(2) + '" y2="' + baseY +
+      '" stroke="var(--grid)" stroke-width="1"/>';
+    ejes += '<text x="' + x.toFixed(2) + '" y="' + (baseY + 16) + '" text-anchor="middle" ' +
+      'font-size="10" fill="var(--muted)" font-family="ui-monospace,Menlo,monospace">' +
+      "$" + v.toFixed(2) + "</text>";
+  });
+  ejes += '<text x="' + ((labelW + W - right) / 2).toFixed(1) + '" y="' + (H - 6) +
+    '" text-anchor="middle" font-size="10" fill="var(--muted)">$ per 1M tokens</text>';
+  var rows = "";
+  medidas.forEach(function (m, i) {
+    var y = i * rowH + 10;
+    var c = m.c;
+    // the meter can recalculate a bracket downward (negative median): such a
+    // read prices as nothing, so legacyPer1M already filtered it out
+    var bw = Math.max(0, m.legacyUsd / top * plotW);
+    var tx = m.newUsd / top * plotW;
+    // a full-width track keeps the near-zero rows visible as "measured at
+    // zero" rather than empty, and the value reads in a fixed right column:
+    // it can never land on the new-price tick, wherever that price falls
+    rows += '<text x="' + (labelW - 8) + '" y="' + (y + 10) + '" text-anchor="end" font-size="11" ' +
+      'fill="var(--ink-2)" font-family="ui-monospace,Menlo,monospace">' +
+      esc(c.model) + " &middot; " + esc(c.workload) + (m.derived ? " (session)" : "") + "</text>" +
+      '<rect x="' + labelW + '" y="' + y + '" width="' + plotW + '" height="14" rx="3" ' +
+      'fill="var(--grid)" fill-opacity="0.55"><title>' + esc(c.model) + " (" + esc(c.workload) +
+      "): legacy " + usdLabel(m.legacyUsd) + " per 1M tokens</title></rect>" +
+      '<rect x="' + labelW + '" y="' + y + '" width="' + bw.toFixed(2) + '" height="14" rx="3" ' +
+      'fill="var(--legacy)"><title>' + esc(c.model) + " (" + esc(c.workload) + "): legacy " +
+      usdLabel(m.legacyUsd) + " per 1M tokens" + (m.derived ? " (session-derived weekly-equivalent)" : "") +
+      " · measured " + c.pp_per_1m.median + " pp/1M</title></rect>" +
+      '<rect x="' + (labelW + tx - 1.5).toFixed(2) + '" y="' + (y - 3) + '" width="3" height="20" ' +
+      'rx="1.5" fill="var(--new)"><title>' + esc(c.model) + " (" + esc(c.workload) +
+      "): new " + usdLabel(m.newUsd) + " per 1M tokens at S(x)=" +
+      Math.round(effectiveS(c.model) * 100) + "% (threshold " +
+      Number(thresholdAt(c)).toPrecision(6) + " pp/1M)</title></rect>" +
+      '<text x="' + (W - 8) + '" y="' + (y + 10) + '" text-anchor="end" font-size="10" ' +
+      'fill="var(--ink-2)" font-family="ui-monospace,Menlo,monospace">' +
+      usdLabel(m.legacyUsd) + "</text>";
+  });
+  cont.innerHTML = '<svg viewBox="0 0 ' + W + " " + H +
+    '" role="img" aria-label="legacy dollars per 1M tokens against the new-plan dollars per ' +
+    '1M tokens">' + grid + rows + ejes + "</svg>";
+}
+
+function renderMargins() {
+  var cont = $("chart-margins");
+  var filas = cellsFiltered().filter(function (c) { return c.legacy_cost_task_usd; });
+  if (!filas.length) {
+    cont.innerHTML = '<p class="note">no measured cell under this filter</p>';
+    return;
+  }
+  var verdicts = filas.map(function (c) { return { c: c, v: verdictAt(c) }; });
+  // the strongest verdict leads; ties and no-data rows read at the bottom
+  verdicts.sort(function (a, b) {
+    var ra = a.v.margin_pct === null ? 1 : 0, rb = b.v.margin_pct === null ? 1 : 0;
+    return ra - rb || (b.v.margin_pct || 0) - (a.v.margin_pct || 0);
+  });
+  // the scale caps at 100 % — the same cap the cells table's margin bar
+  // applies — so a 1000 % outlier no longer flattens every other row; a bar
+  // past the cap ends in a chevron and keeps its true value in the label and
+  // the tooltip. Each half reserves a label gutter so the "+X %" always fits
+  // outside its bar: no text can land on a row label or cross the center
+  var CAP = 100, labelRoom = 64;
+  var W = 720, labelW = 252, rowH = 26;
+  var plot = (W - labelW - 16) / 2, half = plot - labelRoom;
+  var cx = labelW + plot, baseY = verdicts.length * rowH + 6, H = baseY + 42;
+  var svg = '<line x1="' + cx + '" y1="6" x2="' + cx + '" y2="' + baseY +
+    '" stroke="var(--axis)" stroke-width="1"/>' +
+    '<line x1="' + labelW + '" y1="' + baseY + '" x2="' + (W - 16) + '" y2="' + baseY +
+    '" stroke="var(--axis)" stroke-width="1"/>';
+  // % ticks and faint gridlines on both sides: the 100 % cap reads as a cap
+  [50, CAP].forEach(function (v) {
+    [cx - v / CAP * half, cx + v / CAP * half].forEach(function (x) {
+      svg += '<line x1="' + x.toFixed(2) + '" y1="6" x2="' + x.toFixed(2) + '" y2="' + baseY +
+        '" stroke="var(--grid)" stroke-width="1"/>';
+    });
+  });
+  [0, 50, CAP].forEach(function (v) {
+    [cx - v / CAP * half, cx + v / CAP * half].forEach(function (x, side) {
+      if (v === 0 && side === 0) return;  // the center 0 gets a single label
+      svg += '<text x="' + x.toFixed(2) + '" y="' + (baseY + 16) + '" text-anchor="middle" ' +
+        'font-size="10" fill="var(--muted)" font-family="ui-monospace,Menlo,monospace">' +
+        v + (v === CAP ? " %" : "") + "</text>";
+    });
+  });
+  svg += '<text x="' + (cx - plot / 2).toFixed(1) + '" y="' + (H - 6) +
+      '" text-anchor="middle" font-size="10" fill="var(--muted)">&larr; legacy cheaper</text>' +
+    '<text x="' + (cx + plot / 2).toFixed(1) + '" y="' + (H - 6) +
+      '" text-anchor="middle" font-size="10" fill="var(--muted)">new cheaper &rarr;</text>';
+  verdicts.forEach(function (x, i) {
+    var y = i * rowH + 14;
+    svg += '<text x="' + (labelW - 8) + '" y="' + (y + 4) + '" text-anchor="end" font-size="11" ' +
+      'fill="var(--ink-2)" font-family="ui-monospace,Menlo,monospace">' +
+      esc(x.c.model) + " &middot; " + esc(x.c.workload) + "</text>";
+    if (x.v.winner === "no data") {
+      svg += '<text x="' + cx + '" y="' + (y + 4) + '" text-anchor="middle" font-size="10" ' +
+        'fill="var(--muted)">no data</text>';
+      return;
+    }
+    if (x.v.winner === "tie") {
+      svg += '<circle cx="' + cx + '" cy="' + y + '" r="4" fill="var(--tie)"><title>tie: inside ' +
+        'the band (2 meter ticks or 5 % of the cheaper cost)</title></circle>';
+      return;
+    }
+    var pct = x.v.margin_pct;
+    var len = Math.min(pct, CAP) / CAP * half;
+    var over = pct > CAP;
+    var isLegacy = x.v.winner === "legacy";
+    var tip = esc(x.c.model) + " (" + esc(x.c.workload) + "): " + x.v.winner + " by " +
+      Number(pct).toFixed(2) + "%" + (over ? " (bar capped at 100 %)" : "");
+    var barX = (isLegacy ? cx - len : cx).toFixed(2);
+    svg += '<rect x="' + barX + '" y="' + (y - 7) +
+      '" width="' + len.toFixed(2) + '" height="14" rx="3" fill="var(--' + x.v.winner +
+      ')"><title>' + tip + "</title></rect>";
+    if (over) {
+      // the chevron at the capped end: the real margin goes beyond the scale
+      var tipX = isLegacy ? cx - len : cx + len;
+      var dir = isLegacy ? -1 : 1;
+      svg += '<path d="M ' + tipX.toFixed(2) + " " + (y - 10) + " L " + (tipX + dir * 7).toFixed(2) +
+        " " + y + " L " + tipX.toFixed(2) + " " + (y + 10) + " Z" + '" fill="var(--' + x.v.winner +
+        ')"><title>' + tip + "</title></path>";
+    }
+    // past the chevron (7 px) when the bar capped, clear of it otherwise
+    svg += '<text x="' + (isLegacy ? cx - len - (over ? 13 : 6) : cx + len + (over ? 13 : 6)).toFixed(2) +
+      '" y="' + (y + 4) +
+      '" text-anchor="' + (isLegacy ? "end" : "start") + '" font-size="10" fill="var(--ink-2)" ' +
+      'font-family="ui-monospace,Menlo,monospace">' + Number(pct).toFixed(1) + "%</text>";
+  });
+  cont.innerHTML = '<svg viewBox="0 0 ' + W + " " + H +
+    '" role="img" aria-label="verdict margin by cell: legacy left, new right, tie dot">' +
+    svg + "</svg>";
+}
+
+function renderDp() {
+  var cont = $("chart-dp");
+  var puntos = DATA.dp_tokens_curve || [];
+  if (!puntos.length) {
+    cont.innerHTML = '<p class="note">no measured bracket</p>';
+    return;
+  }
+  var maxX = Math.max.apply(null, puntos.map(function (p) { return p.tokens_total; })) * 1.05;
+  var maxY = Math.max.apply(null, puntos.map(function (p) { return p.dpp_weekly; })) * 1.05;
+  // an all-zero axis (every readable bracket below the tick) must not divide
+  // by zero into NaN coordinates: the dots sit on the baseline instead
+  if (!(maxX > 0)) maxX = 1;
+  if (!(maxY > 0)) maxY = 1;
+  var W = 660, H = 280, padL = 52, padB = 34, padT = 20, padR = 12;
+  function kfmt(v) {  // compact tick label: 336000 -> "336k", sub-k keeps one decimal
+    return v >= 1000 ? Math.round(v / 1000) + "k" : String(Math.round(v * 10) / 10);
+  }
+  var ejes = '<line x1="' + padL + '" y1="' + (H - padB) + '" x2="' + (W - padR) + '" y2="' +
+    (H - padB) + '" stroke="var(--axis)" stroke-width="1"/>' +
+    '<line x1="' + padL + '" y1="' + padT + '" x2="' + padL + '" y2="' + (H - padB) +
+    '" stroke="var(--axis)" stroke-width="1"/>';
+  // the scale was implied before: now the axes carry tick labels and captions
+  // (ticks sit at 0 / mid / data max, inside the padded plot, never on the rim)
+  var dataMaxX = maxX / 1.05, dataMaxY = maxY / 1.05;
+  var ticks = "";
+  [0, dataMaxX / 2, dataMaxX].forEach(function (v) {
+    var x = padL + v / maxX * (W - padL - padR);
+    ticks += '<text x="' + x.toFixed(1) + '" y="' + (H - padB + 14) + '" text-anchor="middle" ' +
+      'font-size="10" fill="var(--muted)" font-family="ui-monospace,Menlo,monospace">' +
+      kfmt(v) + "</text>";
+  });
+  [0, dataMaxY / 2, dataMaxY].forEach(function (v) {
+    var y = H - padB - v / maxY * (H - padB - padT);
+    ticks += '<text x="' + (padL - 6) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end" ' +
+      'font-size="10" fill="var(--muted)" font-family="ui-monospace,Menlo,monospace">' +
+      kfmt(v) + "</text>";
+  });
+  ejes += '<text x="' + padL + '" y="10" font-size="10" fill="var(--muted)">legacy weekly ' +
+      '&Delta;pp</text>' +
+    '<text x="' + ((padL + W - padR) / 2).toFixed(1) + '" y="' + (H - 4) +
+      '" text-anchor="middle" font-size="10" fill="var(--muted)">billed tokens</text>';
+  var dots = puntos.map(function (p) {
+    var x = padL + p.tokens_total / maxX * (W - padL - padR);
+    var y = H - padB - p.dpp_weekly / maxY * (H - padB - padT);
+    return '<circle cx="' + x.toFixed(2) + '" cy="' + y.toFixed(2) + '" r="4" fill="var(--legacy)" ' +
+      'fill-opacity="0.85"><title>' + esc(p.model) + " &middot; " +
+      esc(isNull(p.workload) ? "pooled" : p.workload) + ": " + p.dpp_weekly + " weekly pp / " +
+      p.tokens_total + " tokens</title></circle>";
+  }).join("");
+  cont.innerHTML = '<svg viewBox="0 0 ' + W + " " + H +
+    '" role="img" aria-label="legacy weekly quota delta versus billed tokens">' + ejes + ticks +
+    dots +
+    "</svg>" +
+    '<p class="note">one dot per measured bracket: legacy weekly &Delta;pp vs billed tokens ' +
+    "(the legacy side never moves with the slider)</p>";
+}
+
+function renderStatus() {
+  var scene = compactTokens(estado.tin) + " in + " + compactTokens(estado.tout) + " out";
+  $("estado-filtro").textContent = (estado.model || "all models") +
+    " - cache slider at " + estado.slider + "% - prices at " + scene;
+  Array.prototype.forEach.call(document.querySelectorAll(".hdr-tokens"), function (el) {
+    el.textContent = compactTokens(estado.tin) + "+" + compactTokens(estado.tout);
+  });
+}
+function renderAll() {
+  renderReco();
+  renderTable();
+  renderThreshold();
+  renderMargins();
+  renderStatus();
+}
+
+$("filter-model").addEventListener("change", function (e) {
+  estado.model = e.target.value;
+  renderAll();
+});
+var slider = $("slider-s");
+slider.value = String(SLIDER_DEFAULT);
+slider.addEventListener("input", function () {
+  estado.slider = Number(slider.value);
+  $("slider-val").textContent = estado.slider + "%";
+  renderAll();
+});
+$("slider-val").textContent = SLIDER_DEFAULT + "%";
+function bindTokens(id, clave, porDefecto) {
+  var input = $(id);
+  input.value = String(porDefecto);
+  input.addEventListener("input", function () {
+    var n = Math.floor(Number(input.value));
+    // empty or garbage input falls back to the field's default instead of pricing nothing
+    estado[clave] = isFinite(n) && n >= 1 ? n : porDefecto;
+    renderAll();
+  });
+}
+bindTokens("input-tokens-in", "tin", TOKENS_IN_DEFAULT);
+bindTokens("input-tokens-out", "tout", TOKENS_OUT_DEFAULT);
+Array.prototype.forEach.call(document.querySelectorAll("button.preset"), function (b) {
+  b.addEventListener("click", function () {
+    estado.tin = Number(b.getAttribute("data-in"));
+    estado.tout = Number(b.getAttribute("data-out"));
+    $("input-tokens-in").value = String(estado.tin);
+    $("input-tokens-out").value = String(estado.tout);
+    renderAll();
+  });
+});
+
+function applyTheme(t) {
+  if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  else document.documentElement.removeAttribute("data-theme");
+}
+Array.prototype.forEach.call(document.querySelectorAll('input[name="theme"]'), function (radio) {
+  radio.addEventListener("change", function (e) {
+    applyTheme(e.target.value);
+    try { localStorage.setItem("dashboard-theme", e.target.value); } catch (err) { /* unavailable */ }
+  });
+});
+(function initTheme() {
+  var guardado = null;
+  try { guardado = localStorage.getItem("dashboard-theme"); } catch (err) { /* unavailable */ }
+  if (guardado !== "light" && guardado !== "dark") guardado = "system";
+  var radio = document.querySelector('input[name="theme"][value="' + guardado + '"]');
+  if (radio) radio.checked = true;
+  applyTheme(guardado);
+})();
+
+renderDp();
+renderAll();
+</script>
+</body>
+</html>

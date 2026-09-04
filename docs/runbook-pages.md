@@ -2,7 +2,7 @@
 
 Operational runbook for the release → analysis → gh-pages publication flow.
 It mirrors `.github/workflows/pages.yml` (release published / workflow_dispatch)
-and documents the manual, fully-offline equivalent used when the `gh` CLI is
+and documents the manual equivalent (zero API quota) used when the `gh` CLI is
 unavailable. All analysis steps run with zero API quota: a release dataset is
 priced by its own table snapshot and never re-measures.
 
@@ -32,7 +32,7 @@ priced by its own table snapshot and never re-measures.
    jq -r .table_version releases/$TAG/metadata-*.json
    ```
 
-4. **Re-derive the pages from the release** (offline, writes
+4. **Re-derive the pages from the release** (zero API calls; writes
    `releases/$TAG/analysis/dashboard.html` and
    `releases/$TAG/analysis/calculator.html`):
 
@@ -45,6 +45,10 @@ priced by its own table snapshot and never re-measures.
    copy): open `releases/$TAG/analysis/dashboard.html` and
    `releases/$TAG/analysis/calculator.html` or grep for the sections you
    expect.
+
+   The rendered pages load their styling from CDNs at view time
+   (Pages-first), so checking them in a browser requires internet; the
+   derivation itself stays offline.
 
 6. **Push `main`** (the code the page is rendered by):
 

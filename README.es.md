@@ -82,22 +82,21 @@ inmutable) y, conforme avanza el trabajo, manifiestos de corrida, `analysis/`
 | `probe-concurrency --model X [--k-max K]` | Lanza andanadas cortas con k creciente para medir el corte real por key (429/encolamiento) y luego ejecuta las celdas k∈{1,4,8} re-ancladas a él (un k planificado por encima del corte corre EN el corte, documentado en el dataset). |
 | `calibrate-cache [--model X] [--spaced-gaps 5 30 90]` | Re-repite un prefijo fijo de ~20K por modelo del slate T2 (referencia fría, r=4 intra-lote, re-envíos espaciados); cuando es concluyente, el hit-rate medido reemplaza el supuesto S1 por modelo, con S0 como piso. |
 | `predict [--phase blind\|informed ...] [--report]` | El flujo de predictibilidad (§8): las 14 celdas del conjunto medible (las cuatro fuertes de T2 + T3, re-alcance v1.1) estimadas a ciegas (solo la descripción pública del fixture + las tarifas), bloqueadas con timestamp y hash antes de que la celda corra; re-estimación informada después; `--report` emite el MAPE comparativo (pp legado vs $ nuevo, bootstrap CI), anclado al par S0/S1 persistido, excluyendo las celdas sub-resolución y marcándolas. Cuota cero. |
-| `analyze [--ancla P] [--s S] [--table-version V] [--level L] [--model M]` | **El re-correr sin re-medir**: todas las derivadas (medianas con p25–p75/p95 por modelo×workload, costes por tarea S0/S1, umbral crítico pp/1M, quién-gana-por-perfil, la curva Δpp-tokens, los 4 barridos de sensibilidad), regeneradas solo desde el raw, sin red, como un paquete de tres archivos — `analysis.json` más dos páginas autocontenidas enlazadas por una barra de navegación: el dashboard (`dashboard.html`: veredicto primero, la tabla de celdas, gráficos de break-even y márgenes con tokens de tema, el deslizador de cache) y la calculator (`calculator.html`: las matrices del presupuesto de tokens por plan para los 19 modelos de la tabla, multi-select de filtrado, presets de cache + un valor custom, exportación de las tablas como imagen (PNG / portapapeles)). Un `--s` custom sella su propio conjunto `analysis-s<x>/` (versión de metodología en el encabezado) y nunca edita la referencia S0/S1 persistida. |
+| `analyze [--ancla P] [--s S] [--table-version V] [--level L] [--model M]` | **El re-correr sin re-medir**: todas las derivadas (medianas con p25–p75/p95 por modelo×workload, costes por tarea S0/S1, umbral crítico pp/1M, quién-gana-por-perfil, la curva Δpp-tokens, los 4 barridos de sensibilidad), regeneradas solo desde el raw, sin red, como un paquete de tres archivos — `analysis.json` más dos páginas enlazadas por una barra de navegación (datos incrustados como JSON, estilo desde CDNs): el dashboard (`dashboard.html`: veredicto primero, la tabla de celdas, gráficos de break-even y márgenes con tokens de tema, el deslizador de cache) y la calculator (`calculator.html`: las matrices del presupuesto de tokens por plan para los 19 modelos de la tabla, multi-select de filtrado, presets de cache + un valor custom, exportación de las tablas como imagen (PNG / portapapeles)). Un `--s` custom sella su propio conjunto `analysis-s<x>/` (versión de metodología en el encabezado) y nunca edita la referencia S0/S1 persistida. |
 | `analyze --release <tag> [--repo owner/name]` | El mismo análisis sobre una release de dataset descargada, verificada contra su mapa sha256 del metadata y valorada con la tabla de la propia release. |
 | `status [--level L]` | Lotes pending/done/aborted/in-flight y la cuota consumida por nivel, leídos solo de los manifiestos. |
 | `release --run <run_id> [--repo owner/name]` | Empaqueta el dataset de una corrida: requests + batches + el manifiesto que los liga + la instantánea de la tabla de precios + un `metadata.json` (commit del código, versión de tabla + sha256, versión de protocolo, un mapa sha256 de cada archivo), y lo publica como release de GitHub. **Una release por corrida, nunca reescrita**; la key viva de la API (y cualquier cadena con forma de bearer token) no puede aparecer en ningún byte empaquetado o la release se niega. |
 
-### El estilo vendorizado de las páginas (incrustado, sin red)
+### El estilo Pages-first de las páginas
 
-Ambas páginas llevan el estilo shadcn/ui con tokens zinc mediante una hoja Tailwind
-compilada y vendorizada (Tailwind v4.3.3, MIT) y los iconos Lucide (lucide-static
-v1.40.0, ISC). Las fuentes viven en `src/ocharness/web/` (las plantillas HTML, el
-input de build `_estilo_input.css`, las hojas compiladas en `vendor/` y el generador
-de iconos `tools/lucide_css.py`); el CSS compilado y las clases de iconos se incrustan
-al renderizar, así que las dos páginas siguen siendo totalmente autocontenidas: sin
-fetches remotos, sin CDNs, funcionan sin red. Reconstruir la hoja (un comando) está
-documentado en el propio `_estilo_input.css`; regenerar los iconos: `python3
-src/ocharness/web/tools/lucide_css.py`.
+Ambas páginas incrustan sus datos como JSON (bloques script `analysis-data` /
+`rates-data`) y llevan la capa de tokens graphite estilo shadcn incrustada en cada
+plantilla bajo `src/ocharness/web/` — sin pasos de build, nada que regenerar. El
+estilo, en cambio, se carga desde CDNs al ver las páginas: el build de navegador
+de Tailwind v4 vía jsdelivr, las fuentes Inter e IBM Plex Mono vía Google
+Fonts y los iconos Lucide vía el build UMD de unpkg fijado en 1.40.0
+(`data-lucide` + `lucide.createIcons()`). Ver las páginas publicadas (GitHub Pages
+las sirve en línea) requiere por tanto internet; licencias: Tailwind MIT, Lucide ISC.
 
 ### Re-correr cuando cambian los precios (cuota cero)
 

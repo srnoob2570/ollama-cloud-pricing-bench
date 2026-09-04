@@ -12,3 +12,4 @@ runs/
 # Credenciales — jamás en el repo
 .env*
 *.key
+.claude/

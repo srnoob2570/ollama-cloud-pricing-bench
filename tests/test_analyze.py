@@ -423,19 +423,24 @@ def test_dashboard_loads_the_pages_contract_from_the_cdn(tmp_path):
             )
         ), url
     assert 'id="filter-model"' in html  # the model filter
-    assert 'id="slider-s"' in html  # the cache slider (the scenario control's successor)
+    assert 'id="cache-s"' in html  # the free S(x) input (the slider's successor)
+    assert "button.cache-preset" in html  # and the quick presets that drive it
     assert 'id="input-tokens-in"' in html  # the token scenario: input...
     assert 'id="input-tokens-out"' in html  # ...and output, priced at their own rates
     assert "data-in" in html  # the ratio presets that set both fields
     assert 'name="theme"' in html  # the theme radios survive inside the segmented control
     # the cells table prices nominally at N tokens: the meter-native columns
-    # left the thead (they survive in tooltips and the threshold chart)
+    # left the thead (they survive in tooltips)
     assert "pp/1M</th>" not in html and "/task</th>" not in html
     assert html.count('class="hdr-tokens') == 2  # legacy + new price headers
     # the markup/CSS/JS live in the template file, not a Python string
     plantilla = pathlib.Path(analyze_module.__file__).parent / "web" / "dashboard_template.html"
     assert plantilla.exists()
-    assert "__RESUMEN__" in plantilla.read_text(encoding="utf-8")
+    texto_plantilla = plantilla.read_text(encoding="utf-8")
+    # the readout strips left the pages in the chrome slim-down: the template
+    # still carries exactly the three fills render_dashboard makes
+    for nombre in ("OPCIONES", "DATOS", "RATES"):
+        assert f"__{nombre}__" in texto_plantilla
     # the data rides inside the file (no sibling fetch): it parses back
     marcador = '<script id="analysis-data" type="application/json">'
     assert marcador in html
@@ -480,9 +485,7 @@ def test_dashboard_v2_charts_are_theme_token_svgs_and_pngs_leave_the_bundle(tmp_
     from theme tokens, and the bundle ships no pngs/ folder at all."""
     html = render_dashboard_v2(tmp_path)
     assert not (tmp_path / "analysis" / "pngs").exists()
-    assert (
-        html.count("<svg") >= 2
-    )  # threshold, diverging margins (dp curve left with the robustness section)
+    assert html.count("<svg") >= 2  # diverging margins (dp curve left with the robustness section)
     # zero hardcoded chart colors: every SVG fill/stroke is a CSS variable, and
     # the validated palette lives ONLY in the theme token definitions
     assert 'fill="#' not in html and "stroke='#" not in html
@@ -519,18 +522,17 @@ def test_dashboard_v2_verdict_band_leads_and_margins_ride_everywhere(tmp_path):
     # the cells table carries a margin column; the diverging chart exists
     assert ">margin (paid $)</th>" in html
     assert 'id="chart-margins"' in html
-    assert 'id="chart-threshold"' in html
     # the verdict chips and the diverging bars both draw from margin_pct
     assert "margin_pct" in html
 
 
-def test_dashboard_v2_slider_recomputes_from_embedded_rates(tmp_path):
-    """The amendment v1.2: a presentation-layer slider (0-100 %, default 85 %)
-    recomputes new-plan costs, the critical threshold and the verdict margins
+def test_dashboard_v2_cache_recomputes_from_embedded_rates(tmp_path):
+    """The amendment v1.2: a free cache-percentage input (0-100, default 85)
+    plus quick presets recompute new-plan costs and the verdict margins
     in live JS from the embedded per-cell tokens + rates + anchor. Nothing
     persisted changes: the rates ride only in the dashboard."""
     html = render_dashboard_v2(tmp_path)
-    # the slider exists, spans 0-100 and defaults to 85 % (measured agent
+    # the free S(x) input spans 0-100 and defaults to 85 % (measured agent
     # traffic runs ~90 % of input as cache reads; 85 is the conservative pick)
     marcador = '<script id="rates-data" type="application/json">'
     assert marcador in html
@@ -540,17 +542,14 @@ def test_dashboard_v2_slider_recomputes_from_embedded_rates(tmp_path):
     for modelo, t in tarifas["rates"].items():
         assert set(t) == {"input", "cached_input", "output", "has_cache_discount"}
     assert tarifas["rates"]["beta"]["has_cache_discount"] is False  # cached=input
-    deslizador = html[html.index('id="slider-s"') : html.index('id="slider-s"') + 200]
-    assert 'min="0"' in deslizador and 'max="100"' in deslizador and 'value="85"' in deslizador
-    # quick cache % presets ride the slider panel: floor, versioned S1, default, real high
+    entrada = html[html.index('id="cache-s"') : html.index('id="cache-s"') + 400]
+    assert 'min="0"' in entrada and 'max="100"' in entrada and 'value="85"' in entrada
+    # quick cache % presets ride the cache control: floor, versioned S1, default, real high
     assert "cache-preset" in html and 'data-s="85"' in html
-    # they carry their own binding (which moves the slider) and are excluded
+    # they carry their own binding (which sets the input) and are excluded
     # from the token presets' data-in/data-out binding, which would zero the scenario
     assert "button.cache-preset" in html
     assert "button.preset:not(.cache-preset)" in html
-    # presentation-layer only: the note says so
-    assert "presentation" in html.lower()
-    assert "Nothing persisted changes" in html
 
 
 def test_dashboard_v2_marks_measured_s_and_notes_the_s0_models(tmp_path):
@@ -651,8 +650,8 @@ def _bloque_tokens(ruta: pathlib.Path) -> str:
     first base rule — the block every page of the bundle must share verbatim."""
     cuerpo = ruta.read_text(encoding="utf-8")
     inicio = cuerpo.index("/* three-state theme tokens")
-    fin = cuerpo.index("* { box-sizing: border-box; }")
-    return cuerpo[inicio:fin]
+    caja = cuerpo.index("box-sizing", inicio)
+    return cuerpo[inicio : cuerpo.index("}", caja) + 1]
 
 
 def test_calculator_loads_the_pages_contract_from_the_cdn(tmp_path):
@@ -821,7 +820,7 @@ def test_calculator_prices_every_model_the_table_lists(tmp_path):
     # the picker's default state: the hidden multi-select carries every
     # embedded-rate model as an option, and the JS state starts with ALL of
     # them selected
-    assert '<select id="filter-model" multiple' in calc
+    assert re.search(r'<select(?=[^>]*\bid="filter-model")(?=[^>]*\bmultiple\b)[^>]*>', calc)
     assert "var ALL_MODELS = Object.keys(RATES.rates" in calc
     assert "models: ALL_MODELS.slice()" in calc
     # the dashboard's payload stays cells-derived: delta is nowhere on it
@@ -1075,7 +1074,7 @@ def test_a_pooled_workload_without_token_reports_is_unattributable_not_free(tmp_
 def test_both_windows_ship_per_bracket_and_the_session_ships_unanchored(tmp_path):
     """Weekly is the primary (the anchor); the session window rides as the
     secondary signal, priced with the derived $/pp (weekly / R, R = 6.22) and
-    carrying its unanchored caveat in the doc, the notes and the dashboard.
+    carrying its unanchored caveat in the doc and the notes.
 
     Hand math (alpha/qa_short, dpp 0.2 both windows, 2 tasks): session
     $/task = 0.2 * (U/6.22) / 2."""
@@ -1104,10 +1103,9 @@ def test_both_windows_ship_per_bracket_and_the_session_ships_unanchored(tmp_path
     # every curve point (one per bracket) reports both windows
     puntos = [p for p in doc["dp_tokens_curve"] if p["batch_id"] == "bA1"]
     assert puntos and puntos[0]["dpp_weekly"] == 0.2 and puntos[0]["dpp_session"] == 0.2
-    # the caveat ships in the doc's notes and the rendered dashboard
+    # the caveat ships in the doc's notes (the dashboard no longer renders
+    # the notes footer, so the doc is the caveat's carrier)
     assert "unanchored" in doc["notes"]
-    html = (tmp_path / "analysis" / "dashboard.html").read_text(encoding="utf-8")
-    assert "unanchored" in html
 
 
 def test_sweep_rates_plus20_flips_the_borderline_cell(tmp_path):

@@ -26,10 +26,10 @@ its own `analysis-s<x>/` set and never edits the persisted s0/s1 reference):
   back to the session-derived equivalent, marked) — the legacy meter emits one
   pp read per bracket with no in/out decomposition, so no billing model is
   invented; the meter-native pp/1M and the per-task prices ride in the
-  tooltips and the threshold chart, and the verdict chips stay measured.
+  tooltips, and the verdict chips stay measured.
   The v1.2 cache slider is presentation-layer only: from the embedded
-  per-cell tokens + rates + anchor it recomputes new-plan costs, the
-  critical threshold and the verdict margins in live JS — nothing persisted
+  per-cell tokens + rates + anchor it recomputes new-plan costs and the
+  verdict margins in live JS — nothing persisted
   changes, measured hit rates keep precedence (visibly marked), and models
   without a published discount are noted as unmoved (S(x) ≡ S0). No
   matplotlib PNGs: the charts are SVG and leave the bundle with them.
@@ -1186,32 +1186,20 @@ def _plantilla_calculator() -> str:
 def render_dashboard(doc: dict, rates: dict | None = None) -> str:
     """The dashboard page of the Pages bundle: the analysis doc rides inside
     it as JSON (a single file, no sibling fetches), the model filter, the
-    three-state theme and the cache slider are plain DOM, and every value
+    three-state theme and the cache control are plain DOM, and every value
     escapes through textContent, html.escape or the JS esc() helper. Styling
     loads from the CDN — GitHub Pages serves online, so the Pages-first
     contract ships no vendored sheet. `rates` (from `rates_map`) rides in its
-    own JSON block: the slider's live recomputation needs them; analysis.json
-    never does."""
-    bp = doc["base_params"]
-    bruto = doc["raw"]
+    own JSON block: the cache control's live recomputation needs them;
+    analysis.json never does."""
     opciones = "".join(
         f'<option value="{html.escape(m)}">{html.escape(m)}</option>'
         for m in sorted({c["model"] for c in doc["cells"]})
     )
-    resumen = (
-        f"table {html.escape(bp['table_version'])} | anchor ${bp['ancla']:g}/mo = "
-        f"{bp['usd_per_pp']:.6f} USD/pp (tick {bp['tick_usd']:.6f} USD) | "
-        f"S1 assumed {bp['s'] * 100:g}% | generated "
-        f"{time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(doc['generated_at']))} UTC | "
-        f"raw: {bruto['request_lines']} request lines, {bruto['batch_lines']} batch lines "
-        f"({', '.join(bruto['run_ids']) or 'no runs'}) | protocol {doc['protocol_version']}"
-    )
     tarifas = rates if rates is not None else {"per": 1_000_000, "rates": {}}
     return (
         _plantilla_dashboard()
-        .replace("__RESUMEN__", html.escape(resumen))
         .replace("__OPCIONES__", opciones)
-        .replace("__NOTAS__", html.escape(doc["notes"]))
         .replace(
             "__RATES__",
             json.dumps(tarifas, ensure_ascii=False).replace("</", "<\\/"),
@@ -1232,22 +1220,13 @@ def render_calculator(doc: dict, rates: dict | None = None) -> str:
     JSON (its base_params and per-model S drive the pricing); same rules as
     render_dashboard: a single file with no sibling fetches, CDN styling,
     every value escaped through html.escape or the JS esc() helper."""
-    bp = doc["base_params"]
     tarifas = rates if rates is not None else {"per": 1_000_000, "rates": {}}
     opciones = "".join(
         f'<option value="{html.escape(m)}">{html.escape(m)}</option>'
         for m in sorted(tarifas["rates"])
     )
-    resumen = (
-        # No anchor here: the calculator prices credits at face value from the
-        # table, so the legacy USD/pp anchor is dashboard-only provenance.
-        f"table {html.escape(bp['table_version'])} | "
-        f"S1 assumed {bp['s'] * 100:g}% | generated "
-        f"{time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(doc['generated_at']))} UTC"
-    )
     return (
         _plantilla_calculator()
-        .replace("__RESUMEN__", html.escape(resumen))
         .replace("__OPCIONES__", opciones)
         .replace(
             "__RATES__",

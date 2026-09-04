@@ -1,1015 +1,2081 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Plan token calculator — Ollama Cloud</title>
-<meta name="description" content="How many tokens the Pro and Max plans' monthly credits buy, per model, at any in : out token split — priced live on the official Ollama Cloud table.">
-<link rel="canonical" href="https://srnoob2570.github.io/ollama-cloud-pricing-bench/calculator.html">
-<meta property="og:url" content="https://srnoob2570.github.io/ollama-cloud-pricing-bench/calculator.html">
-<meta property="og:type" content="website">
-<meta property="og:site_name" content="ocharness">
-<meta property="og:title" content="Plan token calculator — Ollama Cloud">
-<meta property="og:description" content="How many tokens the Pro and Max plans' monthly credits buy, per model, at any in : out token split — priced live on the official Ollama Cloud table.">
-<meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="Plan token calculator — Ollama Cloud">
-<meta name="twitter:description" content="How many tokens the Pro and Max plans' monthly credits buy, per model, at any in : out token split — priced live on the official Ollama Cloud table.">
-<meta name="theme-color" content="#f2f4f7" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0d1217" media="(prefers-color-scheme: dark)">
-<!-- resolve theme before first paint to prevent FOUC; transitions are
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Plan token calculator — Ollama Cloud</title>
+        <meta
+            name="description"
+            content="How many tokens the Pro and Max plans' monthly credits buy, per model, at any in : out token split — priced live on the official Ollama Cloud table."
+        />
+        <link
+            rel="canonical"
+            href="https://srnoob2570.github.io/ollama-cloud-pricing-bench/calculator.html"
+        />
+        <meta
+            property="og:url"
+            content="https://srnoob2570.github.io/ollama-cloud-pricing-bench/calculator.html"
+        />
+        <meta property="og:type" content="website" />
+        <meta property="og:site_name" content="ocharness" />
+        <meta
+            property="og:title"
+            content="Plan token calculator — Ollama Cloud"
+        />
+        <meta
+            property="og:description"
+            content="How many tokens the Pro and Max plans' monthly credits buy, per model, at any in : out token split — priced live on the official Ollama Cloud table."
+        />
+        <meta name="twitter:card" content="summary" />
+        <meta
+            name="twitter:title"
+            content="Plan token calculator — Ollama Cloud"
+        />
+        <meta
+            name="twitter:description"
+            content="How many tokens the Pro and Max plans' monthly credits buy, per model, at any in : out token split — priced live on the official Ollama Cloud table."
+        />
+        <meta
+            name="theme-color"
+            content="#f2f4f7"
+            media="(prefers-color-scheme: light)"
+        />
+        <meta
+            name="theme-color"
+            content="#0d1217"
+            media="(prefers-color-scheme: dark)"
+        />
+        <!-- resolve theme before first paint to prevent FOUC; transitions are
      suppressed until the page finishes initialising the radios -->
-<script>
-(function() {
-  var stored = "system";
-  try { stored = localStorage.getItem("dashboard-theme") || "system"; } catch (e) { /* unavailable */ }
-  if (stored !== "light" && stored !== "dark") stored = "system";
-  var theme = stored === "system"
-    ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
-    : stored;
-  document.documentElement.setAttribute("data-theme", theme);
-  document.documentElement.classList.add("no-theme-transition");
-})();
-</script>
-<!-- Pages-first styling: Tailwind browser CDN + Google Fonts + Lucide icons (online serving) -->
-<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://unpkg.com/lucide@1.40.0/dist/umd/lucide.min.js"></script>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23161d25'/><rect x='7' y='14' width='6' height='12' rx='2' fill='%233987e5'/><rect x='19' y='6' width='6' height='20' rx='2' fill='%23d95926'/></svg>">
-<style>
-/* three-state theme tokens: system is the default (no attribute), light and
+        <script>
+            (function () {
+                var stored = "system";
+                try {
+                    stored =
+                        localStorage.getItem("dashboard-theme") || "system";
+                } catch (e) {
+                    /* unavailable */
+                }
+                if (stored !== "light" && stored !== "dark") stored = "system";
+                var theme =
+                    stored === "system"
+                        ? window.matchMedia("(prefers-color-scheme: dark)")
+                              .matches
+                            ? "dark"
+                            : "light"
+                        : stored;
+                document.documentElement.setAttribute("data-theme", theme);
+                document.documentElement.classList.add("no-theme-transition");
+            })();
+        </script>
+        <!-- Pages-first styling: Tailwind browser CDN + Google Fonts + Lucide icons (online serving) -->
+        <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+            rel="stylesheet"
+        />
+        <script src="https://unpkg.com/lucide@1.40.0/dist/umd/lucide.min.js"></script>
+        <link
+            rel="icon"
+            href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23161d25'/><rect x='7' y='14' width='6' height='12' rx='2' fill='%233987e5'/><rect x='19' y='6' width='6' height='20' rx='2' fill='%23d95926'/></svg>"
+        />
+        <style>
+            /* three-state theme tokens: system is the default (no attribute), light and
    dark are selectable. Chart colors NEVER appear here outside these tokens. */
-:root {
-  color-scheme: light;
-  --plane: #f2f4f7; --surface: #fbfcfd; --ink: #11161c; --ink-2: #333d47; --muted: #5f6b76;
-  --grid: #dde3e8; --axis: #b9c3cc; --ring: rgba(17,22,28,.16);
-  --hover: rgba(17,22,28,.05);
-  /* shadows tinted with the palette's cool graphite, not warm brown */
-  --panel-shadow: 0 1px 2px rgba(15,23,32,.05), 0 14px 34px -18px rgba(15,23,32,.22);
-  --legacy: #2a78d6; --new: #eb6834;            /* series: legacy / new (validated) */
-  --legacy-soft: rgba(42,120,214,.13); --new-soft: rgba(235,104,52,.14);
-  --tie: #5f6b76;
-  --radius: 0.75rem;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-    --plane: #0d1217; --surface: #151b22; --ink: #e8edf2; --ink-2: #b6c1cc; --muted: #7d8994;
-    --grid: #232c35; --axis: #39434e; --ring: rgba(232,237,242,.14);
-    --hover: rgba(232,237,242,.055);
-    --panel-shadow: 0 1px 2px rgba(0,0,0,.45), 0 16px 40px -18px rgba(0,0,0,.55);
-    --legacy: #3987e5; --new: #d95926;
-    --legacy-soft: rgba(57,135,229,.17); --new-soft: rgba(217,89,38,.17);
-    --tie: #7d8994;
-  }
-}
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --plane: #0d1217; --surface: #151b22; --ink: #e8edf2; --ink-2: #b6c1cc; --muted: #7d8994;
-  --grid: #232c35; --axis: #39434e; --ring: rgba(232,237,242,.14);
-  --hover: rgba(232,237,242,.055);
-  --panel-shadow: 0 1px 2px rgba(0,0,0,.45), 0 16px 40px -18px rgba(0,0,0,.55);
-  --legacy: #3987e5; --new: #d95926;
-  --legacy-soft: rgba(57,135,229,.17); --new-soft: rgba(217,89,38,.17);
-  --tie: #7d8994;
-}
-* { box-sizing: border-box; }
-/* shadcn zinc shell tokens (values refined to the ocharness graphite shell;
+            :root {
+                color-scheme: light;
+                --plane: #f2f4f7;
+                --surface: #fbfcfd;
+                --ink: #11161c;
+                --ink-2: #333d47;
+                --muted: #5f6b76;
+                --grid: #dde3e8;
+                --axis: #b9c3cc;
+                --ring: rgba(17, 22, 28, 0.16);
+                --hover: rgba(17, 22, 28, 0.05);
+                /* shadows tinted with the palette's cool graphite, not warm brown */
+                --panel-shadow:
+                    0 1px 2px rgba(15, 23, 32, 0.05),
+                    0 14px 34px -18px rgba(15, 23, 32, 0.22);
+                --legacy: #2a78d6;
+                --new: #eb6834; /* series: legacy / new (validated) */
+                --legacy-soft: rgba(42, 120, 214, 0.13);
+                --new-soft: rgba(235, 104, 52, 0.14);
+                --tie: #5f6b76;
+                --radius: 0.75rem;
+            }
+            @media (prefers-color-scheme: dark) {
+                :root:not([data-theme="light"]) {
+                    color-scheme: dark;
+                    --plane: #0d1217;
+                    --surface: #151b22;
+                    --ink: #e8edf2;
+                    --ink-2: #b6c1cc;
+                    --muted: #7d8994;
+                    --grid: #232c35;
+                    --axis: #39434e;
+                    --ring: rgba(232, 237, 242, 0.14);
+                    --hover: rgba(232, 237, 242, 0.055);
+                    --panel-shadow:
+                        0 1px 2px rgba(0, 0, 0, 0.45),
+                        0 16px 40px -18px rgba(0, 0, 0, 0.55);
+                    --legacy: #3987e5;
+                    --new: #d95926;
+                    --legacy-soft: rgba(57, 135, 229, 0.17);
+                    --new-soft: rgba(217, 89, 38, 0.17);
+                    --tie: #7d8994;
+                }
+            }
+            :root[data-theme="dark"] {
+                color-scheme: dark;
+                --plane: #0d1217;
+                --surface: #151b22;
+                --ink: #e8edf2;
+                --ink-2: #b6c1cc;
+                --muted: #7d8994;
+                --grid: #232c35;
+                --axis: #39434e;
+                --ring: rgba(232, 237, 242, 0.14);
+                --hover: rgba(232, 237, 242, 0.055);
+                --panel-shadow:
+                    0 1px 2px rgba(0, 0, 0, 0.45),
+                    0 16px 40px -18px rgba(0, 0, 0, 0.55);
+                --legacy: #3987e5;
+                --new: #d95926;
+                --legacy-soft: rgba(57, 135, 229, 0.17);
+                --new-soft: rgba(217, 89, 38, 0.17);
+                --tie: #7d8994;
+            }
+            * {
+                box-sizing: border-box;
+            }
+            /* shadcn zinc shell tokens (values refined to the ocharness graphite shell;
    --muted resolves to the theme slice's chart gray, --ring is the focus hue.
    Values ride rgb() so no raw hex lands on a background property) */
-:root{--radius-sm:calc(var(--radius) * .6);--radius-md:calc(var(--radius) * .8);--radius-lg:var(--radius)}
-:root{--radius:.75rem;--background:rgb(242 244 247);--foreground:rgb(17 22 28);--card:rgb(251 252 253);--card-foreground:rgb(17 22 28);--popover:rgb(251 252 253);--popover-foreground:rgb(17 22 28);--primary:rgb(22 32 43);--primary-foreground:rgb(242 245 248);--secondary:rgb(231 235 239);--secondary-foreground:rgb(17 22 28);--muted:rgb(95 107 118);--muted-foreground:rgb(95 107 118);--accent:rgb(227 232 237);--accent-foreground:rgb(17 22 28);--destructive:rgb(179 54 43);--border:rgb(216 222 229);--input:rgb(204 212 219);--ring:rgb(74 131 201)}[data-theme=dark]{--background:rgb(13 18 23);--foreground:rgb(232 237 242);--card:rgb(21 27 34);--card-foreground:rgb(232 237 242);--popover:rgb(22 29 37);--popover-foreground:rgb(232 237 242);--primary:rgb(215 222 229);--primary-foreground:rgb(16 22 28);--secondary:rgb(29 37 46);--secondary-foreground:rgb(232 237 242);--muted:rgb(125 137 148);--muted-foreground:rgb(141 153 165);--accent:rgb(33 42 52);--accent-foreground:rgb(232 237 242);--destructive:rgb(229 100 76);--border:rgb(38 48 58);--input:rgb(46 57 68);--ring:rgb(127 169 221)}@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--background:rgb(13 18 23);--foreground:rgb(232 237 242);--card:rgb(21 27 34);--card-foreground:rgb(232 237 242);--popover:rgb(22 29 37);--popover-foreground:rgb(232 237 242);--primary:rgb(215 222 229);--primary-foreground:rgb(16 22 28);--secondary:rgb(29 37 46);--secondary-foreground:rgb(232 237 242);--muted:rgb(125 137 148);--muted-foreground:rgb(141 153 165);--accent:rgb(33 42 52);--accent-foreground:rgb(232 237 242);--destructive:rgb(229 100 76);--border:rgb(38 48 58);--input:rgb(46 57 68);--ring:rgb(127 169 221)}}
+            :root {
+                --radius-sm: calc(var(--radius) * 0.6);
+                --radius-md: calc(var(--radius) * 0.8);
+                --radius-lg: var(--radius);
+            }
+            :root {
+                --radius: 0.75rem;
+                --background: rgb(242 244 247);
+                --foreground: rgb(17 22 28);
+                --card: rgb(251 252 253);
+                --card-foreground: rgb(17 22 28);
+                --popover: rgb(251 252 253);
+                --popover-foreground: rgb(17 22 28);
+                --primary: rgb(22 32 43);
+                --primary-foreground: rgb(242 245 248);
+                --secondary: rgb(231 235 239);
+                --secondary-foreground: rgb(17 22 28);
+                --muted: rgb(95 107 118);
+                --muted-foreground: rgb(95 107 118);
+                --accent: rgb(227 232 237);
+                --accent-foreground: rgb(17 22 28);
+                --destructive: rgb(179 54 43);
+                --border: rgb(216 222 229);
+                --input: rgb(204 212 219);
+                --ring: rgb(74 131 201);
+            }
+            [data-theme="dark"] {
+                --background: rgb(13 18 23);
+                --foreground: rgb(232 237 242);
+                --card: rgb(21 27 34);
+                --card-foreground: rgb(232 237 242);
+                --popover: rgb(22 29 37);
+                --popover-foreground: rgb(232 237 242);
+                --primary: rgb(215 222 229);
+                --primary-foreground: rgb(16 22 28);
+                --secondary: rgb(29 37 46);
+                --secondary-foreground: rgb(232 237 242);
+                --muted: rgb(125 137 148);
+                --muted-foreground: rgb(141 153 165);
+                --accent: rgb(33 42 52);
+                --accent-foreground: rgb(232 237 242);
+                --destructive: rgb(229 100 76);
+                --border: rgb(38 48 58);
+                --input: rgb(46 57 68);
+                --ring: rgb(127 169 221);
+            }
+            @media (prefers-color-scheme: dark) {
+                :root:not([data-theme="light"]) {
+                    --background: rgb(13 18 23);
+                    --foreground: rgb(232 237 242);
+                    --card: rgb(21 27 34);
+                    --card-foreground: rgb(232 237 242);
+                    --popover: rgb(22 29 37);
+                    --popover-foreground: rgb(232 237 242);
+                    --primary: rgb(215 222 229);
+                    --primary-foreground: rgb(16 22 28);
+                    --secondary: rgb(29 37 46);
+                    --secondary-foreground: rgb(232 237 242);
+                    --muted: rgb(125 137 148);
+                    --muted-foreground: rgb(141 153 165);
+                    --accent: rgb(33 42 52);
+                    --accent-foreground: rgb(232 237 242);
+                    --destructive: rgb(229 100 76);
+                    --border: rgb(38 48 58);
+                    --input: rgb(46 57 68);
+                    --ring: rgb(127 169 221);
+                }
+            }
 
-
-/* page chrome: shadcn-style token names for the shell; Pages-first, the data
+            /* page chrome: shadcn-style token names for the shell; Pages-first, the data
    rides inline as JSON and the styling loads from the CDN head block above.
    Voice: Inter carries prose and chrome, IBM Plex Mono carries every number. */
-html { scroll-behavior: smooth; }
-body { margin: 0; padding: 0 24px 72px; background: var(--background); color: var(--foreground);
-  font: 14.5px/1.6 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; }
-::selection { background: var(--new-soft); }
-@media (prefers-reduced-motion: reduce) {
-  html { scroll-behavior: auto; }
-  *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
-}
-html.no-theme-transition, html.no-theme-transition *,
-html.no-theme-transition *::before, html.no-theme-transition *::after {
-  transition: none !important; }
+            html {
+                scroll-behavior: smooth;
+            }
+            body {
+                margin: 0;
+                padding: 0 24px 72px;
+                background: var(--background);
+                color: var(--foreground);
+                font:
+                    14.5px/1.6 "Inter",
+                    ui-sans-serif,
+                    system-ui,
+                    -apple-system,
+                    "Segoe UI",
+                    sans-serif;
+                text-rendering: optimizeLegibility;
+                -webkit-font-smoothing: antialiased;
+            }
+            ::selection {
+                background: var(--new-soft);
+            }
+            @media (prefers-reduced-motion: reduce) {
+                html {
+                    scroll-behavior: auto;
+                }
+                *,
+                *::before,
+                *::after {
+                    transition-duration: 0.01ms !important;
+                    animation-duration: 0.01ms !important;
+                }
+            }
+            html.no-theme-transition,
+            html.no-theme-transition *,
+            html.no-theme-transition *::before,
+            html.no-theme-transition *::after {
+                transition: none !important;
+            }
 
-/* the one orchestrated motion moment: the plan matrices reveal once on load */
-@media (prefers-reduced-motion: no-preference) {
-  .hero-in { animation: hero-in .55s cubic-bezier(.16, .7, .3, 1) .04s both; }
-  @keyframes hero-in {
-    from { opacity: 0; transform: translateY(12px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-}
+            /* the one orchestrated motion moment: the plan matrices reveal once on load */
+            @media (prefers-reduced-motion: no-preference) {
+                .hero-in {
+                    animation: hero-in 0.55s cubic-bezier(0.16, 0.7, 0.3, 1)
+                        0.04s both;
+                }
+                @keyframes hero-in {
+                    from {
+                        opacity: 0;
+                        transform: translateY(12px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+            }
 
-.wrap { max-width: 1240px; margin: 0 auto; padding-top: clamp(28px, 5vh, 52px); }
-.skip { position: absolute; left: -9999px; }
-.skip:focus { left: 16px; top: 12px; background: var(--card); color: var(--card-foreground);
-  border: 1px solid var(--border); border-radius: var(--radius-md); padding: 6px 10px; z-index: 50; }
+            .wrap {
+                max-width: 1240px;
+                margin: 0 auto;
+                padding-top: clamp(28px, 5vh, 52px);
+            }
+            .skip {
+                position: absolute;
+                left: -9999px;
+            }
+            .skip:focus {
+                left: 16px;
+                top: 12px;
+                background: var(--card);
+                color: var(--card-foreground);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-md);
+                padding: 6px 10px;
+                z-index: 50;
+            }
 
-/* the two-page navbar: relative links only (the bundle ships both pages), the
+            /* the two-page navbar: relative links only (the bundle ships both pages), the
    current page marked with aria-current; brand mark left, theme toggle right */
-.topnav { position: sticky; top: 0; z-index: 40; display: flex; align-items: center;
-  flex-wrap: wrap; gap: 8px 20px; max-width: 1240px; margin: 0 auto; padding: 12px 0;
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in oklab, var(--background) 82%, transparent);
-  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
-.brand { display: flex; align-items: center; gap: 9px; }
-.brand-mark { width: 18px; height: 18px; flex: none; }
-.brand-name { font-weight: 700; font-size: 14.5px; letter-spacing: -.01em; }
-.brand-tag { font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
-  font-size: 11.5px; color: var(--muted-foreground); }
-.page-links { display: flex; gap: 4px; }
-.page-links a { font-size: 13px; color: var(--muted-foreground); text-decoration: none;
-  border-radius: var(--radius-md); padding: 5px 11px; font-weight: 500;
-  transition: background .15s ease, color .15s ease; }
-.page-links a:hover { background: var(--accent); color: var(--accent-foreground); }
-.page-links a[aria-current="page"] { background: var(--accent); color: var(--accent-foreground); font-weight: 600; }
-.topnav fieldset { margin-left: auto; }
-.topnav legend { position: absolute; left: -9999px; }
-@media (max-width: 480px) {
-  .topnav { position: static; gap: 6px 12px; }
-  .brand-tag { display: none; }
-}
+            .topnav {
+                position: sticky;
+                top: 0;
+                z-index: 40;
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 8px 20px;
+                max-width: 1240px;
+                margin: 0 auto;
+                padding: 12px 0;
+                border-bottom: 1px solid var(--border);
+                background: color-mix(
+                    in oklab,
+                    var(--background) 82%,
+                    transparent
+                );
+                backdrop-filter: blur(10px);
+                -webkit-backdrop-filter: blur(10px);
+            }
+            .brand {
+                display: flex;
+                align-items: center;
+                gap: 9px;
+            }
+            .brand-mark {
+                width: 18px;
+                height: 18px;
+                flex: none;
+            }
+            .brand-name {
+                font-weight: 700;
+                font-size: 14.5px;
+                letter-spacing: -0.01em;
+            }
+            .brand-tag {
+                font-family:
+                    "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+                font-size: 11.5px;
+                color: var(--muted-foreground);
+            }
+            .page-links {
+                display: flex;
+                gap: 4px;
+            }
+            .page-links a {
+                font-size: 13px;
+                color: var(--muted-foreground);
+                text-decoration: none;
+                border-radius: var(--radius-md);
+                padding: 5px 11px;
+                font-weight: 500;
+                transition:
+                    background 0.15s ease,
+                    color 0.15s ease;
+            }
+            .page-links a:hover {
+                background: var(--accent);
+                color: var(--accent-foreground);
+            }
+            .page-links a[aria-current="page"] {
+                background: var(--accent);
+                color: var(--accent-foreground);
+                font-weight: 600;
+            }
+            .topnav fieldset {
+                margin-left: auto;
+            }
+            .topnav legend {
+                position: absolute;
+                left: -9999px;
+            }
+            @media (max-width: 480px) {
+                .topnav {
+                    position: static;
+                    gap: 6px 12px;
+                }
+                .brand-tag {
+                    display: none;
+                }
+            }
 
-/* the three-state theme toggle: the selected state reads as a primary pill */
-fieldset { font: inherit; border: 0; padding: 0; margin: 0; }
-.seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-md);
-  overflow: hidden; background: var(--card); padding: 2px; gap: 2px; }
-.seg label { position: relative; display: inline-flex; align-items: center; gap: 5px;
-  padding: 5px 10px; font-size: 12.5px; color: var(--muted-foreground); cursor: pointer;
-  border-radius: var(--radius-sm); transition: background .15s ease, color .15s ease; }
-.seg label + label { border: 0; }
-.seg label:hover { background: var(--accent); color: var(--accent-foreground); }
-.seg input { position: absolute; opacity: 0; pointer-events: none; }
-.seg label:has(input:checked) { background: var(--primary); color: var(--primary-foreground); font-weight: 600; }
-.seg label:has(input:focus-visible) { outline: 2px solid var(--ring); outline-offset: -2px; }
-svg.lucide { width: 1em; height: 1em; flex: none; }
+            /* the three-state theme toggle: the selected state reads as a primary pill */
+            fieldset {
+                font: inherit;
+                border: 0;
+                padding: 0;
+                margin: 0;
+            }
+            .seg {
+                display: inline-flex;
+                border: 1px solid var(--border);
+                border-radius: var(--radius-md);
+                overflow: hidden;
+                background: var(--card);
+                padding: 2px;
+                gap: 2px;
+            }
+            .seg label {
+                position: relative;
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                padding: 5px 10px;
+                font-size: 12.5px;
+                color: var(--muted-foreground);
+                cursor: pointer;
+                border-radius: var(--radius-sm);
+                transition:
+                    background 0.15s ease,
+                    color 0.15s ease;
+            }
+            .seg label + label {
+                border: 0;
+            }
+            .seg label:hover {
+                background: var(--accent);
+                color: var(--accent-foreground);
+            }
+            .seg input {
+                position: absolute;
+                opacity: 0;
+                pointer-events: none;
+            }
+            .seg label:has(input:checked) {
+                background: var(--primary);
+                color: var(--primary-foreground);
+                font-weight: 600;
+            }
+            .seg label:has(input:focus-visible) {
+                outline: 2px solid var(--ring);
+                outline-offset: -2px;
+            }
+            svg.lucide {
+                width: 1em;
+                height: 1em;
+                flex: none;
+            }
 
-:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+            :focus-visible {
+                outline: 2px solid var(--ring);
+                outline-offset: 2px;
+            }
 
-.wrap h1 { font-size: clamp(28px, 4vw, 40px); margin: 0; letter-spacing: -.022em;
-  font-weight: 700; line-height: 1.14; text-wrap: balance; }
+            .wrap h1 {
+                font-size: clamp(28px, 4vw, 40px);
+                margin: 0;
+                letter-spacing: -0.022em;
+                font-weight: 700;
+                line-height: 1.14;
+                text-wrap: balance;
+            }
 
-/* the run's provenance as an instrument readout, not a meta decoration */
-.readout { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 12px; line-height: 1.75; color: var(--muted-foreground);
-  border-left: 2px solid var(--axis); padding: 3px 0 3px 14px; margin: 14px 0 0; }
+            /* the run's provenance as an instrument readout, not a meta decoration */
+            .readout {
+                font-family:
+                    "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas,
+                    monospace;
+                font-size: 12px;
+                line-height: 1.75;
+                color: var(--muted-foreground);
+                border-left: 2px solid var(--axis);
+                padding: 3px 0 3px 14px;
+                margin: 14px 0 0;
+            }
 
-.mono { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  font-variant-numeric: tabular-nums; }
+            .mono {
+                font-family:
+                    "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas,
+                    monospace;
+                font-variant-numeric: tabular-nums;
+            }
 
-.panel { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg);
-  padding: 20px 22px; margin: 0 0 18px;
-  box-shadow: var(--panel-shadow); }
+            .panel {
+                background: var(--card);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-lg);
+                padding: 20px 22px;
+                margin: 0 0 18px;
+                box-shadow: var(--panel-shadow);
+            }
 
-/* controls: one wrapping grid; the model picker takes the wide cell */
-.controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 20px 24px; align-items: start; }
-.ctl { display: flex; flex-direction: column; gap: 6px; }
-.ctl-row { display: flex; gap: 6px; align-items: center; }
-.ctl-model { min-width: 260px; }
-/* one label grammar: the count sits beside its label, never floated across */
-.ctl-head { justify-content: flex-start; gap: 8px; }
-.ctl-count { font-size: 11px; color: var(--muted-foreground); }
-.ctl-label { font-size: 11px; font-weight: 600; letter-spacing: .02em;
-  color: var(--muted-foreground); }
+            /* controls: one wrapping grid; the model picker takes the wide cell */
+            .controls {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                gap: 20px 24px;
+                align-items: start;
+            }
+            .ctl {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+            }
+            .ctl-row {
+                display: flex;
+                gap: 6px;
+                align-items: center;
+            }
+            .ctl-model {
+                min-width: 260px;
+            }
+            /* one label grammar: the count sits beside its label, never floated across */
+            .ctl-head {
+                justify-content: flex-start;
+                gap: 8px;
+            }
+            .ctl-count {
+                font-size: 11px;
+                color: var(--muted-foreground);
+            }
+            .ctl-label {
+                font-size: 11px;
+                font-weight: 600;
+                letter-spacing: 0.02em;
+                color: var(--muted-foreground);
+            }
 
-select, input[type="number"] { font: inherit; font-size: 13px; color: var(--foreground);
-  background: var(--background); border: 1px solid var(--input); border-radius: var(--radius-md);
-  padding: 6px 10px; height: 36px;
-  transition: border-color .15s ease, box-shadow .15s ease; }
-select:hover, input[type="number"]:hover { border-color: var(--axis); }
-select:focus, input[type="number"]:focus { border-color: var(--ring); outline: none;
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 30%, transparent); }
+            select,
+            input[type="number"] {
+                font: inherit;
+                font-size: 13px;
+                color: var(--foreground);
+                background: var(--background);
+                border: 1px solid var(--input);
+                border-radius: var(--radius-md);
+                padding: 6px 10px;
+                height: 36px;
+                transition:
+                    border-color 0.15s ease,
+                    box-shadow 0.15s ease;
+            }
+            select:hover,
+            input[type="number"]:hover {
+                border-color: var(--axis);
+            }
+            select:focus,
+            input[type="number"]:focus {
+                border-color: var(--ring);
+                outline: none;
+                box-shadow: 0 0 0 3px
+                    color-mix(in oklab, var(--ring) 30%, transparent);
+            }
 
-button.preset { font: inherit; font-size: 12px; color: var(--secondary-foreground);
-  background: var(--secondary); border: 1px solid var(--border); border-radius: var(--radius-md);
-  padding: 5px 10px; cursor: pointer; height: 32px;
-  transition: background .15s ease, color .15s ease, border-color .15s ease, transform .05s ease;
-  display: inline-flex; align-items: center; gap: 6px; }
-button.preset:hover { background: var(--accent); color: var(--accent-foreground); border-color: var(--border); }
-button.preset:active { transform: translateY(1px); }
-button.preset.active { background: var(--primary); color: var(--primary-foreground);
-  border-color: var(--primary); font-weight: 600; }
-button.cache-preset { font-variant-numeric: tabular-nums; }
+            button.preset {
+                font: inherit;
+                font-size: 12px;
+                color: var(--secondary-foreground);
+                background: var(--secondary);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-md);
+                padding: 5px 10px;
+                cursor: pointer;
+                height: 32px;
+                transition:
+                    background 0.15s ease,
+                    color 0.15s ease,
+                    border-color 0.15s ease,
+                    transform 0.05s ease;
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+            }
+            button.preset:hover {
+                background: var(--accent);
+                color: var(--accent-foreground);
+                border-color: var(--border);
+            }
+            button.preset:active {
+                transform: translateY(1px);
+            }
+            button.preset.active {
+                background: var(--primary);
+                color: var(--primary-foreground);
+                border-color: var(--primary);
+                font-weight: 600;
+            }
+            button.cache-preset {
+                font-variant-numeric: tabular-nums;
+            }
 
-.icon { font-size: 14px; display: inline-block; vertical-align: -2px; }
-.icon-btn { font-size: 12px; }
+            .icon {
+                font-size: 14px;
+                display: inline-block;
+                vertical-align: -2px;
+            }
+            .icon-btn {
+                font-size: 12px;
+            }
 
-/* model picker: custom multi-select dropdown, search + check list, chips above */
-.model-picker { position: relative; }
-.model-picker-btn { width: 100%; display: flex; align-items: center; justify-content: space-between;
-  gap: 8px; font: inherit; font-size: 13px; color: var(--foreground); background: var(--background);
-  border: 1px solid var(--input); border-radius: var(--radius-md); padding: 6px 10px; cursor: pointer;
-  transition: border-color .15s ease; text-align: left; height: 36px; }
-.model-picker-btn:hover { border-color: var(--axis); }
-.model-picker-btn:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
-.model-picker-dropdown { position: absolute; z-index: 4; top: calc(100% + 6px); left: 0; right: 0;
-  background: var(--popover); color: var(--popover-foreground); border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 6px 16px rgba(2,8,16,.10), 0 20px 44px -12px rgba(2,8,16,.22);
-  padding: 8px; max-height: 320px; overflow: auto; }
-.model-picker-search { display: flex; align-items: center; gap: 6px; padding: 4px 6px;
-  border: 1px solid var(--input); border-radius: var(--radius-md); margin-bottom: 6px; }
-.model-picker-search input { border: 0; background: transparent; padding: 4px 0; width: 100%; font: inherit; color: var(--foreground); outline: none; }
-.model-picker-search .icon { color: var(--muted-foreground); }
-.model-picker-actions { display: flex; gap: 6px; margin-bottom: 6px; }
-.model-picker-actions button { flex: 1; justify-content: center; font-size: 11px; padding: 4px 8px; }
-.model-picker-list { display: flex; flex-direction: column; gap: 1px; }
-.model-picker-item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: var(--radius-sm);
-  cursor: pointer; font-size: 12.5px; color: var(--foreground); transition: background .12s ease; }
-.model-picker-item:hover { background: var(--accent); color: var(--accent-foreground); }
-.model-picker-item:focus { outline: 2px solid var(--ring); outline-offset: -2px; background: var(--accent); color: var(--accent-foreground); }
-.model-picker-item[aria-selected="true"] { background: var(--primary); color: var(--primary-foreground); font-weight: 600; }
-.model-picker-check { width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; flex: none;
-  border: 1px solid var(--border); border-radius: var(--radius-sm); }
-.model-picker-item[aria-selected="true"] .model-picker-check { border-color: transparent; }
-.model-picker-check .icon { font-size: 14px; }
-.model-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
-/* the chips row is an active-selection summary: silent while the default
+            /* model picker: custom multi-select dropdown, search + check list, chips above */
+            .model-picker {
+                position: relative;
+            }
+            .model-picker-btn {
+                width: 100%;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+                font: inherit;
+                font-size: 13px;
+                color: var(--foreground);
+                background: var(--background);
+                border: 1px solid var(--input);
+                border-radius: var(--radius-md);
+                padding: 6px 10px;
+                cursor: pointer;
+                transition: border-color 0.15s ease;
+                text-align: left;
+                height: 36px;
+            }
+            .model-picker-btn:hover {
+                border-color: var(--axis);
+            }
+            .model-picker-btn:focus-visible {
+                outline: 2px solid var(--ring);
+                outline-offset: 2px;
+            }
+            .model-picker-dropdown {
+                position: absolute;
+                z-index: 4;
+                top: calc(100% + 6px);
+                left: 0;
+                right: 0;
+                background: var(--popover);
+                color: var(--popover-foreground);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-lg);
+                box-shadow:
+                    0 6px 16px rgba(2, 8, 16, 0.1),
+                    0 20px 44px -12px rgba(2, 8, 16, 0.22);
+                padding: 8px;
+                max-height: 320px;
+                overflow: auto;
+            }
+            .model-picker-search {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                padding: 4px 6px;
+                border: 1px solid var(--input);
+                border-radius: var(--radius-md);
+                margin-bottom: 6px;
+            }
+            .model-picker-search input {
+                border: 0;
+                background: transparent;
+                padding: 4px 0;
+                width: 100%;
+                font: inherit;
+                color: var(--foreground);
+                outline: none;
+            }
+            .model-picker-search .icon {
+                color: var(--muted-foreground);
+            }
+            .model-picker-actions {
+                display: flex;
+                gap: 6px;
+                margin-bottom: 6px;
+            }
+            .model-picker-actions button {
+                flex: 1;
+                justify-content: center;
+                font-size: 11px;
+                padding: 4px 8px;
+            }
+            .model-picker-list {
+                display: flex;
+                flex-direction: column;
+                gap: 1px;
+            }
+            .model-picker-item {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 5px 8px;
+                border-radius: var(--radius-sm);
+                cursor: pointer;
+                font-size: 12.5px;
+                color: var(--foreground);
+                transition: background 0.12s ease;
+            }
+            .model-picker-item:hover {
+                background: var(--accent);
+                color: var(--accent-foreground);
+            }
+            .model-picker-item:focus {
+                outline: 2px solid var(--ring);
+                outline-offset: -2px;
+                background: var(--accent);
+                color: var(--accent-foreground);
+            }
+            .model-picker-item[aria-selected="true"] {
+                background: var(--primary);
+                color: var(--primary-foreground);
+                font-weight: 600;
+            }
+            .model-picker-check {
+                width: 16px;
+                height: 16px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                flex: none;
+                border: 1px solid var(--border);
+                border-radius: var(--radius-sm);
+            }
+            .model-picker-item[aria-selected="true"] .model-picker-check {
+                border-color: transparent;
+            }
+            .model-picker-check .icon {
+                font-size: 14px;
+            }
+            .model-chips {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 5px;
+                margin-top: 8px;
+            }
+            /* the chips row is an active-selection summary: silent while the default
    (every model) is in force */
-.model-chips:empty { display: none; }
+            .model-chips:empty {
+                display: none;
+            }
 
-/* model chips: neutral — the verdict hues belong to the dashboard's data */
-.chip { display: inline-flex; align-items: center; gap: 5px; font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
-  font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; white-space: nowrap;
-  font-variant-numeric: tabular-nums; background: var(--secondary); color: var(--foreground);
-  border: 1px solid var(--border); }
-.chip.nodata { color: var(--muted-foreground); font-weight: 500; background: transparent; border: 1px dashed var(--axis); }
-.chip-remove { appearance: none; border: 0; background: transparent; padding: 0; margin: 0 0 0 2px;
-  cursor: pointer; color: var(--muted-foreground); display: inline-flex; align-items: center; transition: color .15s ease; line-height: 1; font-size: 12px; }
-.chip-remove:hover { color: var(--foreground); }
+            /* model chips: neutral — the verdict hues belong to the dashboard's data */
+            .chip {
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                font-family:
+                    "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+                font-size: 11px;
+                padding: 2px 8px;
+                border-radius: 999px;
+                font-weight: 600;
+                white-space: nowrap;
+                font-variant-numeric: tabular-nums;
+                background: var(--secondary);
+                color: var(--foreground);
+                border: 1px solid var(--border);
+            }
+            .chip.nodata {
+                color: var(--muted-foreground);
+                font-weight: 500;
+                background: transparent;
+                border: 1px dashed var(--axis);
+            }
+            .chip-remove {
+                appearance: none;
+                border: 0;
+                background: transparent;
+                padding: 0;
+                margin: 0 0 0 2px;
+                cursor: pointer;
+                color: var(--muted-foreground);
+                display: inline-flex;
+                align-items: center;
+                transition: color 0.15s ease;
+                line-height: 1;
+                font-size: 12px;
+            }
+            .chip-remove:hover {
+                color: var(--foreground);
+            }
 
-/* the in : out ratio: one grouped control — the two fields bound inside a
+            /* the in : out ratio: one grouped control — the two fields bound inside a
    shared border, tagged in/out, the separator deliberate */
-.ratio-group { display: inline-flex; align-items: center; gap: 6px; height: 36px;
-  padding: 0 10px; border: 1px solid var(--input); border-radius: var(--radius-md);
-  background: var(--background); align-self: flex-start;
-  transition: border-color .15s ease, box-shadow .15s ease; }
-.ratio-group:focus-within { border-color: var(--ring);
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 30%, transparent); }
-.ratio-tag { font-size: 10px; font-weight: 600; letter-spacing: .04em;
-  color: var(--muted-foreground); }
-.ratio-sep { color: var(--muted-foreground); font-weight: 600; }
-.ratio-group input[type="number"] { border: 0; background: transparent; box-shadow: none;
-  height: 34px; width: 52px; padding: 0; text-align: center; }
-.ratio-group input[type="number"]:hover { border-color: transparent; }
-.ratio-group input[type="number"]:focus { box-shadow: none; }
+            .ratio-group {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                height: 36px;
+                padding: 0 10px;
+                border: 1px solid var(--input);
+                border-radius: var(--radius-md);
+                background: var(--background);
+                align-self: flex-start;
+                transition:
+                    border-color 0.15s ease,
+                    box-shadow 0.15s ease;
+            }
+            .ratio-group:focus-within {
+                border-color: var(--ring);
+                box-shadow: 0 0 0 3px
+                    color-mix(in oklab, var(--ring) 30%, transparent);
+            }
+            .ratio-tag {
+                font-size: 10px;
+                font-weight: 600;
+                letter-spacing: 0.04em;
+                color: var(--muted-foreground);
+            }
+            .ratio-sep {
+                color: var(--muted-foreground);
+                font-weight: 600;
+            }
+            .ratio-group input[type="number"] {
+                border: 0;
+                background: transparent;
+                box-shadow: none;
+                height: 34px;
+                width: 52px;
+                padding: 0;
+                text-align: center;
+            }
+            .ratio-group input[type="number"]:hover {
+                border-color: transparent;
+            }
+            .ratio-group input[type="number"]:focus {
+                box-shadow: none;
+            }
 
-/* the free S(x) value: an underline input field with its unit attached —
+            /* the free S(x) value: an underline input field with its unit attached —
    unmistakably editable next to the boxed preset buttons */
-.cache-presets { flex-wrap: wrap; }
-.s-custom { display: inline-flex; align-items: center; height: 32px; padding: 0 6px 0 2px;
-  border: 0; border-bottom: 2px solid var(--muted); transition: border-color .15s ease;
-  cursor: text; }
-.s-custom:hover { border-bottom-color: var(--ink-2); }
-.s-custom:focus-within { border-bottom-color: var(--ring); }
-.s-custom input[type="number"] { border: 0; background: transparent; box-shadow: none;
-  height: 28px; width: 44px; padding: 0 2px; text-align: right; }
-.s-custom input[type="number"]:hover { border-color: transparent; }
-.s-custom input[type="number"]:focus { box-shadow: none; }
-.s-unit { font-size: 12px; font-weight: 600; color: var(--muted-foreground);
-  font-variant-numeric: tabular-nums; }
+            .cache-presets {
+                flex-wrap: wrap;
+            }
+            .s-custom {
+                display: inline-flex;
+                align-items: center;
+                height: 32px;
+                padding: 0 6px 0 2px;
+                border: 0;
+                border-bottom: 2px solid var(--muted);
+                transition: border-color 0.15s ease;
+                cursor: text;
+            }
+            .s-custom:hover {
+                border-bottom-color: var(--ink-2);
+            }
+            .s-custom:focus-within {
+                border-bottom-color: var(--ring);
+            }
+            .s-custom input[type="number"] {
+                border: 0;
+                background: transparent;
+                box-shadow: none;
+                height: 28px;
+                width: 44px;
+                padding: 0 2px;
+                text-align: right;
+            }
+            .s-custom input[type="number"]:hover {
+                border-color: transparent;
+            }
+            .s-custom input[type="number"]:focus {
+                box-shadow: none;
+            }
+            .s-unit {
+                font-size: 12px;
+                font-weight: 600;
+                color: var(--muted-foreground);
+                font-variant-numeric: tabular-nums;
+            }
 
-/* the plan matrices lead the page: each panel is headed by its credit budget
+            /* the plan matrices lead the page: each panel is headed by its credit budget
    in large mono, the paid price and export actions beside it */
-.plan-card { padding: 20px 22px; }
-.plan-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px;
-  margin: 0 0 14px; }
-.plan-name { font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
-.plan-paid { font-size: 13px; color: var(--muted-foreground); }
-.plan-arrow { color: var(--muted-foreground); }
-.plan-credits { font-size: 22px; font-weight: 600; letter-spacing: -.01em; }
-.plan-export-group { margin-left: auto; display: flex; gap: 6px; }
-.sep-l { border-left: 1px solid var(--border); }
-.ctr { text-align: center; }
-tfoot td { padding-top: 10px; font-size: 11.5px; color: var(--muted-foreground); text-align: left; }
+            .plan-card {
+                padding: 20px 22px;
+            }
+            .plan-head {
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 8px 14px;
+                margin: 0 0 14px;
+            }
+            .plan-name {
+                font-size: 17px;
+                font-weight: 700;
+                letter-spacing: -0.01em;
+            }
+            .plan-paid {
+                font-size: 13px;
+                color: var(--muted-foreground);
+            }
+            .plan-arrow {
+                color: var(--muted-foreground);
+            }
+            .plan-credits {
+                font-size: 22px;
+                font-weight: 600;
+                letter-spacing: -0.01em;
+            }
+            .plan-export-group {
+                margin-left: auto;
+                display: flex;
+                gap: 6px;
+            }
+            .sep-l {
+                border-left: 1px solid var(--border);
+            }
+            .ctr {
+                text-align: center;
+            }
+            tfoot td {
+                padding-top: 10px;
+                font-size: 11.5px;
+                color: var(--muted-foreground);
+                text-align: left;
+            }
 
-table { border-collapse: collapse; width: 100%; font-size: 13px; }
-.scroll-x { overflow: auto; max-height: 72vh; }
-th { position: sticky; top: 0; z-index: 1; background: var(--card);
-  color: var(--muted-foreground); font-size: 11px; font-weight: 600; letter-spacing: .02em;
-  text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--axis); white-space: nowrap;
-  line-height: 1.3; }
-/* the two-row thead sticks as a unit: the sub-header row parks right below
+            table {
+                border-collapse: collapse;
+                width: 100%;
+                font-size: 13px;
+            }
+            .scroll-x {
+                overflow: auto;
+                max-height: 72vh;
+            }
+            th {
+                position: sticky;
+                top: 0;
+                z-index: 1;
+                background: var(--card);
+                color: var(--muted-foreground);
+                font-size: 11px;
+                font-weight: 600;
+                letter-spacing: 0.02em;
+                text-align: left;
+                padding: 8px 10px;
+                border-bottom: 1px solid var(--axis);
+                white-space: nowrap;
+                line-height: 1.3;
+            }
+            /* the two-row thead sticks as a unit: the sub-header row parks right below
    the split-name row instead of stacking on top of it */
-.sub-head th { top: calc(1.3em + 16px); }
-td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-tbody tr { transition: background .12s ease; }
-tbody tr:hover { background: var(--hover); }
-td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-.note { font-size: 12.5px; color: var(--muted-foreground); }
-.panel > p.note, main > p.note { line-height: 1.7; text-wrap: pretty; }
-/* the protocol note: a demoted footnote zone, hairline-separated from the
+            .sub-head th {
+                top: calc(1.3em + 16px);
+            }
+            td {
+                padding: 8px 10px;
+                border-bottom: 1px solid var(--border);
+                vertical-align: middle;
+            }
+            tbody tr {
+                transition: background 0.12s ease;
+            }
+            tbody tr:hover {
+                background: var(--hover);
+            }
+            td.num,
+            th.num {
+                text-align: right;
+                font-variant-numeric: tabular-nums;
+            }
+            .note {
+                font-size: 12.5px;
+                color: var(--muted-foreground);
+            }
+            .panel > p.note,
+            main > p.note {
+                line-height: 1.7;
+                text-wrap: pretty;
+            }
+            /* the protocol note: a demoted footnote zone, hairline-separated from the
    controls it explains; text verbatim, fully visible */
-.note.protocol { margin: 16px 0 0; padding-top: 12px; border-top: 1px solid var(--border);
-  font-size: 11.5px; line-height: 1.6; max-width: 120ch; }
-</style>
-</head>
-<body>
-<a class="skip" href="#main">Skip to content</a>
-<nav class="topnav" aria-label="pages">
-  <div class="brand">
-    <svg class="brand-mark" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><rect x="3" y="9" width="4.5" height="8" rx="1.5" fill="var(--legacy)"/><rect x="10.5" y="3" width="4.5" height="14" rx="1.5" fill="var(--new)"/></svg>
-    <span class="brand-name">ocharness</span>
-    <span class="brand-tag">pricing bench</span>
-  </div>
-  <div class="page-links">
-    <a href="dashboard.html">Dashboard</a>
-    <a href="calculator.html" aria-current="page">Calculator</a>
-  </div>
-  <fieldset>
-    <legend>theme</legend>
-    <div class="seg" role="radiogroup" aria-label="theme">
-      <label><input type="radio" name="theme" value="system" checked><i data-lucide="monitor" aria-hidden="true"></i> system</label>
-      <label><input type="radio" name="theme" value="light"><i data-lucide="sun" aria-hidden="true"></i> light</label>
-      <label><input type="radio" name="theme" value="dark"><i data-lucide="moon" aria-hidden="true"></i> dark</label>
-    </div>
-  </fieldset>
-</nav>
-<main id="main" class="wrap">
-<h1>How many tokens does your plan buy?</h1>
-<p class="readout">__RESUMEN__</p>
+            .note.protocol {
+                margin: 16px 0 0;
+                padding-top: 12px;
+                border-top: 1px solid var(--border);
+                font-size: 11.5px;
+                line-height: 1.6;
+                max-width: 120ch;
+            }
+        </style>
+    </head>
+    <body>
+        <a class="skip" href="#main">Skip to content</a>
+        <nav class="topnav" aria-label="pages">
+            <div class="brand">
+                <svg
+                    class="brand-mark"
+                    viewBox="0 0 20 20"
+                    aria-hidden="true"
+                    focusable="false"
+                >
+                    <rect
+                        x="3"
+                        y="9"
+                        width="4.5"
+                        height="8"
+                        rx="1.5"
+                        fill="var(--legacy)"
+                    />
+                    <rect
+                        x="10.5"
+                        y="3"
+                        width="4.5"
+                        height="14"
+                        rx="1.5"
+                        fill="var(--new)"
+                    />
+                </svg>
+                <span class="brand-name">ocharness</span>
+                <span class="brand-tag">pricing bench</span>
+            </div>
+            <div class="page-links">
+                <a href="dashboard.html">Dashboard</a>
+                <a href="calculator.html" aria-current="page">Calculator</a>
+            </div>
+            <fieldset>
+                <legend>theme</legend>
+                <div class="seg" role="radiogroup" aria-label="theme">
+                    <label
+                        ><input
+                            type="radio"
+                            name="theme"
+                            value="system"
+                            checked
+                        /><i data-lucide="monitor" aria-hidden="true"></i>
+                        system</label
+                    >
+                    <label
+                        ><input type="radio" name="theme" value="light" /><i
+                            data-lucide="sun"
+                            aria-hidden="true"
+                        ></i>
+                        light</label
+                    >
+                    <label
+                        ><input type="radio" name="theme" value="dark" /><i
+                            data-lucide="moon"
+                            aria-hidden="true"
+                        ></i>
+                        dark</label
+                    >
+                </div>
+            </fieldset>
+        </nav>
+        <main id="main" class="wrap">
+            <h1>How many tokens does your plan buy?</h1>
 
-<div class="panel">
-  <div class="controls">
-    <div class="ctl ctl-model">
-      <div class="ctl-row ctl-head">
-        <label class="ctl-label" for="filter-model">model</label>
-        <span id="model-count" class="mono ctl-count">all models</span>
-      </div>
-      <select id="filter-model" multiple style="display:none">__OPCIONES__</select>
-      <div class="model-picker" id="model-picker">
-        <button type="button" class="model-picker-btn" id="model-picker-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="model-picker-dropdown">
-          <span class="model-picker-text" id="model-picker-text">all models</span>
-          <i data-lucide="chevron-down" class="icon" aria-hidden="true"></i>
-        </button>
-        <div class="model-picker-dropdown" id="model-picker-dropdown" role="listbox" aria-multiselectable="true" style="display:none;">
-          <div class="model-picker-search">
-            <i data-lucide="search" class="icon" aria-hidden="true"></i>
-            <input type="text" id="model-search" placeholder="Search models…" autocomplete="off" aria-label="Search models">
-          </div>
-          <div class="model-picker-actions">
-            <button type="button" class="preset" id="model-select-all">all</button>
-            <button type="button" class="preset" id="model-clear-all">none</button>
-          </div>
-          <div class="model-picker-list" id="model-picker-list"></div>
-        </div>
-      </div>
-      <div class="model-chips" id="model-chips"></div>
-    </div>
+            <div class="panel" style="margin-top: 20px;">
+                <div class="controls">
+                    <div class="ctl ctl-model">
+                        <div class="ctl-row ctl-head">
+                            <label class="ctl-label" for="filter-model"
+                                >model</label
+                            >
+                            <span id="model-count" class="mono ctl-count"
+                                >all models</span
+                            >
+                        </div>
+                        <select
+                            id="filter-model"
+                            multiple
+                            style="display: none"
+                        >
+                            __OPCIONES__
+                        </select>
+                        <div class="model-picker" id="model-picker">
+                            <button
+                                type="button"
+                                class="model-picker-btn"
+                                id="model-picker-btn"
+                                aria-haspopup="listbox"
+                                aria-expanded="false"
+                                aria-controls="model-picker-dropdown"
+                            >
+                                <span
+                                    class="model-picker-text"
+                                    id="model-picker-text"
+                                    >all models</span
+                                >
+                                <i
+                                    data-lucide="chevron-down"
+                                    class="icon"
+                                    aria-hidden="true"
+                                ></i>
+                            </button>
+                            <div
+                                class="model-picker-dropdown"
+                                id="model-picker-dropdown"
+                                role="listbox"
+                                aria-multiselectable="true"
+                                style="display: none"
+                            >
+                                <div class="model-picker-search">
+                                    <i
+                                        data-lucide="search"
+                                        class="icon"
+                                        aria-hidden="true"
+                                    ></i>
+                                    <input
+                                        type="text"
+                                        id="model-search"
+                                        placeholder="Search models…"
+                                        autocomplete="off"
+                                        aria-label="Search models"
+                                    />
+                                </div>
+                                <div class="model-picker-actions">
+                                    <button
+                                        type="button"
+                                        class="preset"
+                                        id="model-select-all"
+                                    >
+                                        all
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="preset"
+                                        id="model-clear-all"
+                                    >
+                                        none
+                                    </button>
+                                </div>
+                                <div
+                                    class="model-picker-list"
+                                    id="model-picker-list"
+                                ></div>
+                            </div>
+                        </div>
+                        <div class="model-chips" id="model-chips"></div>
+                    </div>
 
-    <div class="ctl">
-      <span class="ctl-label">custom in : out</span>
-      <div class="ratio-group" role="group" aria-label="custom in : out ratio">
-        <span class="ratio-tag">in</span>
-        <input type="number" id="plan-custom-in" min="0" step="any" value="1" class="mono" aria-label="custom input ratio">
-        <span class="ratio-sep" aria-hidden="true">:</span>
-        <input type="number" id="plan-custom-out" min="0" step="any" value="1" class="mono" aria-label="custom output ratio">
-        <span class="ratio-tag">out</span>
-      </div>
-    </div>
+                    <div class="ctl">
+                        <span class="ctl-label">custom in : out</span>
+                        <div
+                            class="ratio-group"
+                            role="group"
+                            aria-label="custom in : out ratio"
+                        >
+                            <span class="ratio-tag">in</span>
+                            <input
+                                type="number"
+                                id="plan-custom-in"
+                                min="0"
+                                step="any"
+                                value="1"
+                                class="mono"
+                                aria-label="custom input ratio"
+                            />
+                            <span class="ratio-sep" aria-hidden="true">:</span>
+                            <input
+                                type="number"
+                                id="plan-custom-out"
+                                min="0"
+                                step="any"
+                                value="1"
+                                class="mono"
+                                aria-label="custom output ratio"
+                            />
+                            <span class="ratio-tag">out</span>
+                        </div>
+                    </div>
 
-    <div class="ctl">
-      <span class="ctl-label">cache hit-rate S(x)</span>
-      <div class="ctl-row cache-presets">
-        <button type="button" class="preset cache-preset" data-s="0">0%</button>
-        <button type="button" class="preset cache-preset" data-s="50">50%</button>
-        <button type="button" class="preset cache-preset active" data-s="85">85%</button>
-        <button type="button" class="preset cache-preset" data-s="95">95%</button>
-        <label class="s-custom" for="cache-custom">
-          <input type="number" id="cache-custom" min="0" max="100" step="1" value="85" class="mono" aria-label="custom cache percentage">
-          <span class="s-unit">%</span>
-        </label>
-      </div>
-    </div>
-  </div>
+                    <div class="ctl">
+                        <span class="ctl-label">cache hit-rate</span>
+                        <div class="ctl-row cache-presets">
+                            <button
+                                type="button"
+                                class="preset mono cache-preset"
+                                data-s="0"
+                            >
+                                0%
+                            </button>
+                            <button
+                                type="button"
+                                class="preset mono cache-preset"
+                                data-s="50"
+                            >
+                                50%
+                            </button>
+                            <button
+                                type="button"
+                                class="preset mono cache-preset active"
+                                data-s="85"
+                            >
+                                85%
+                            </button>
+                            <button
+                                type="button"
+                                class="preset mono cache-preset"
+                                data-s="95"
+                            >
+                                95%
+                            </button>
+                            <label class="s-custom" for="cache-custom">
+                                <input
+                                    type="number"
+                                    id="cache-custom"
+                                    min="0"
+                                    max="100"
+                                    step="1"
+                                    value="85"
+                                    class="mono"
+                                    aria-label="custom cache percentage"
+                                />
+                                <span class="s-unit">%</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div id="plan-tokens" class="hero-in"></div>
+        </main>
 
-  <p class="note protocol">Credits are priced at face value: the plans&rsquo;
-    &times;3 credit ratio is inherent in the credits (Pro $20 paid &rarr; $60 credits, Max
-    $100 &rarr; $300 credits), so the rows need no paid-dollar division. The
-    plans&rsquo; credits are a monthly grant, so every figure below is a monthly token
-    budget. Each column is an
-    in&nbsp;:&nbsp;out token split from measured runs &mdash; real interactive agent sessions
-    (OpenCode, Claude Code logs) sit at 40:1&ndash;190:1 raw tokens (60:1 is the conservative
-    pick) &mdash; and the custom column prices whatever split you type in the fields above.
-    Real sessions also run ~90% of input as cache reads at a ~0.1x rate, cost-weighting them
-    to ~3:1&ndash;6:1: that discount is what the S(x) control above models. A measured S keeps precedence per model, and models without a published cached-input discount sit at
-    S(x) &equiv; S0. Each cell is the input, output and total tokens the plan&rsquo;s credits buy at
-    that split. This is a presentation-layer estimate: nothing persisted changes.</p>
-</div>
-<div id="plan-tokens" class="hero-in"></div>
-</main>
+        <script id="analysis-data" type="application/json">
+            __DATOS__
+        </script>
+        <script id="rates-data" type="application/json">
+            __RATES__
+        </script>
+        <script>
+            "use strict";
+            // The plan token-budget section's standalone page (the split from the
+            // dashboard): the full pricing table rides in #rates-data — every model the
+            // chosen table prices, not only the analysis cells' models — and the doc's
+            // base params + per-model S ride in #analysis-data. Pages-first: the data
+            // rides inline as JSON; the styling loads from the CDN because Pages serves
+            // online.
+            var DATA = JSON.parse(
+                document.getElementById("analysis-data").textContent,
+            );
+            var RATES = JSON.parse(
+                document.getElementById("rates-data").textContent,
+            );
+            var PER = RATES.per || 1000000;
+            // the presentation default: 85% reflects measured agent traffic (~90% of the
+            // input rides as cache reads); a measured S keeps precedence per model
+            var SLIDER_DEFAULT = 85;
+            // the purchasable plans: money paid and the credits it buys at face value (the
+            // x3 credit ratio is inherent in the credits, so no extra division applies);
+            // each plan renders as its own matrix table, the preset in : out splits below
+            // as its columns; paidLabel/creditsLabel carry the credit figures at face
+            // value so the static file spells them too
+            var PLANES = [
+                {
+                    name: "Pro",
+                    paid: 20,
+                    credits: 60,
+                    paidLabel: "$20 paid",
+                    creditsLabel: "$60 credits",
+                },
+                {
+                    name: "Max",
+                    paid: 100,
+                    credits: 300,
+                    paidLabel: "$100 paid",
+                    creditsLabel: "$300 credits",
+                },
+            ];
+            // the matrix columns: the preset in : out token splits, ordered input-heavy to
+            // output-heavy, bare (the note carries the measured-runs provenance); the
+            // reasoning/generation splits are gone per decision — the custom column prices
+            // any other split
+            var RATIOS = [
+                { ratio: 60, text: "60 : 1" },
+                { ratio: 10, text: "10 : 1" },
+                { ratio: 4, text: "4 : 1" },
+            ];
+            var ALL_MODELS = Object.keys(RATES.rates || {});
+            var estado = {
+                models: ALL_MODELS.slice(),
+                slider: SLIDER_DEFAULT,
+                planCustomIn: 1,
+                planCustomOut: 1,
+            };
 
-<script id="analysis-data" type="application/json">__DATOS__</script>
-<script id="rates-data" type="application/json">__RATES__</script>
-<script>
-"use strict";
-// The plan token-budget section's standalone page (the split from the
-// dashboard): the full pricing table rides in #rates-data — every model the
-// chosen table prices, not only the analysis cells' models — and the doc's
-// base params + per-model S ride in #analysis-data. Pages-first: the data
-// rides inline as JSON; the styling loads from the CDN because Pages serves
-// online.
-var DATA = JSON.parse(document.getElementById("analysis-data").textContent);
-var RATES = JSON.parse(document.getElementById("rates-data").textContent);
-var PER = RATES.per || 1000000;
-// the presentation default: 85% reflects measured agent traffic (~90% of the
-// input rides as cache reads); a measured S keeps precedence per model
-var SLIDER_DEFAULT = 85;
-// the purchasable plans: money paid and the credits it buys at face value (the
-// x3 credit ratio is inherent in the credits, so no extra division applies);
-// each plan renders as its own matrix table, the preset in : out splits below
-// as its columns; paidLabel/creditsLabel carry the credit figures at face
-// value so the static file spells them too
-var PLANES = [
-  {name:'Pro', paid:20, credits:60, paidLabel:'$20 paid', creditsLabel:'$60 credits'},
-  {name:'Max', paid:100, credits:300, paidLabel:'$100 paid', creditsLabel:'$300 credits'}
-];
-// the matrix columns: the preset in : out token splits, ordered input-heavy to
-// output-heavy, bare (the note carries the measured-runs provenance); the
-// reasoning/generation splits are gone per decision — the custom column prices
-// any other split
-var RATIOS = [
-  {ratio:60, text:'60 : 1'},
-  {ratio:10, text:'10 : 1'},
-  {ratio:4, text:'4 : 1'}
-];
-var ALL_MODELS = Object.keys(RATES.rates || {});
-var estado = { models: ALL_MODELS.slice(), slider: SLIDER_DEFAULT, planCustomIn: 1, planCustomOut: 1 };
+            function $(id) {
+                return document.getElementById(id);
+            }
+            // Lucide loads from the CDN (Pages-first styling): replace every
+            // <i data-lucide="..."> placeholder with its inline SVG. Guarded so a blocked
+            // CDN degrades to icon-less markup, never to a thrown error. Call after any
+            // innerHTML injection that carries icons. The CDN <script> is a synchronous
+            // head tag on purpose: it guarantees window.lucide exists by the time this
+            // runs — adding `defer` would make this a silent no-op.
+            function refrescoIconos() {
+                if (window.lucide) lucide.createIcons();
+            }
+            function esc(s) {
+                return String(s).replace(/[&<>"']/g, function (c) {
+                    return {
+                        "&": "&amp;",
+                        "<": "&lt;",
+                        ">": "&gt;",
+                        '"': "&quot;",
+                        "'": "&#39;",
+                    }[c];
+                });
+            }
+            function isNum(x) {
+                return typeof x === "number" && isFinite(x);
+            }
+            function isNull(x) {
+                return x === null || x === undefined;
+            }
+            function rateOf(model) {
+                return RATES && RATES.rates ? RATES.rates[model] || null : null;
+            }
+            function sPerModel(model) {
+                return (DATA.s_per_model || {})[model] || null;
+            }
+            function measuredS(model) {
+                var spm = sPerModel(model);
+                return spm && spm.source === "measured" && isNum(spm.s)
+                    ? spm.s
+                    : null;
+            }
+            function effectiveS(model) {
+                // measured keeps precedence: the custom control governs only the assumed models
+                var m = measuredS(model);
+                return m === null ? estado.slider / 100 : m;
+            }
+            function compactTokens(n) {
+                // 1000000 -> "1M", 1500000 -> "1.5M", 500000 -> "500k", 750 -> "750"
+                if (n >= 1e6) return Math.round(n / 1e5) / 10 + "M";
+                if (n >= 1000) return Math.round(n / 1000) + "k";
+                return String(n);
+            }
+            function planTokens(model, credits, ratio) {
+                // how many tokens a plan's credits buy at a given in : out split: the budget
+                // prices as one weighted read at the official table, the same rules as the
+                // dashboard's newCostAt2 (measured S keeps precedence; no published discount
+                // pins S(x) at S0), with no measured token mix of its own to lean on
+                var r = rateOf(model);
+                if (!r || !(ratio > 0)) return null;
+                var s = effectiveS(model);
+                if (!r.has_cache_discount) s = 0; // no published discount: S(x) is S0, the control cannot move it
+                var wIn = ratio / (1 + ratio),
+                    wOut = 1 / (1 + ratio);
+                var perToken =
+                    (wIn * (1 - s) * r.input +
+                        wIn * s * r.cached_input +
+                        wOut * r.output) /
+                    PER;
+                if (!(perToken > 0)) return null;
+                var total = credits / perToken;
+                return { tin: total * wIn, tout: total * wOut, total: total };
+            }
 
-function $(id) { return document.getElementById(id); }
-// Lucide loads from the CDN (Pages-first styling): replace every
-// <i data-lucide="..."> placeholder with its inline SVG. Guarded so a blocked
-// CDN degrades to icon-less markup, never to a thrown error. Call after any
-// innerHTML injection that carries icons. The CDN <script> is a synchronous
-// head tag on purpose: it guarantees window.lucide exists by the time this
-// runs — adding `defer` would make this a silent no-op.
-function refrescoIconos() {
-  if (window.lucide) lucide.createIcons();
-}
-function esc(s) {
-  return String(s).replace(/[&<>"']/g, function (c) {
-    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
-  });
-}
-function isNum(x) { return typeof x === "number" && isFinite(x); }
-function isNull(x) { return x === null || x === undefined; }
-function rateOf(model) { return (RATES && RATES.rates) ? RATES.rates[model] || null : null; }
-function sPerModel(model) { return (DATA.s_per_model || {})[model] || null; }
-function measuredS(model) {
-  var spm = sPerModel(model);
-  return spm && spm.source === "measured" && isNum(spm.s) ? spm.s : null;
-}
-function effectiveS(model) {
-  // measured keeps precedence: the custom control governs only the assumed models
-  var m = measuredS(model);
-  return m === null ? estado.slider / 100 : m;
-}
-function compactTokens(n) {
-  // 1000000 -> "1M", 1500000 -> "1.5M", 500000 -> "500k", 750 -> "750"
-  if (n >= 1e6) return (Math.round(n / 1e5) / 10) + "M";
-  if (n >= 1000) return Math.round(n / 1000) + "k";
-  return String(n);
-}
-function planTokens(model, credits, ratio) {
-  // how many tokens a plan's credits buy at a given in : out split: the budget
-  // prices as one weighted read at the official table, the same rules as the
-  // dashboard's newCostAt2 (measured S keeps precedence; no published discount
-  // pins S(x) at S0), with no measured token mix of its own to lean on
-  var r = rateOf(model);
-  if (!r || !(ratio > 0)) return null;
-  var s = effectiveS(model);
-  if (!r.has_cache_discount) s = 0;  // no published discount: S(x) is S0, the control cannot move it
-  var wIn = ratio / (1 + ratio), wOut = 1 / (1 + ratio);
-  var perToken = (wIn * (1 - s) * r.input + wIn * s * r.cached_input + wOut * r.output) / PER;
-  if (!(perToken > 0)) return null;
-  var total = credits / perToken;
-  return { tin: total * wIn, tout: total * wOut, total: total };
-}
+            function planColumns() {
+                // the column list shared by the DOM render and the PNG export (raw text, no
+                // esc — HTML emitters wrap th with esc): the three preset splits plus a
+                // trailing custom split from the fields above (an invalid pair prices as no
+                // data and the header drops to a bare "Custom")
+                var customRatio =
+                    estado.planCustomIn > 0 && estado.planCustomOut > 0
+                        ? estado.planCustomIn / estado.planCustomOut
+                        : null;
+                var columnas = RATIOS.map(function (r) {
+                    return { th: r.text, ratio: r.ratio };
+                });
+                columnas.push({
+                    th:
+                        customRatio !== null
+                            ? "Custom " +
+                              estado.planCustomIn +
+                              " : " +
+                              estado.planCustomOut
+                            : "Custom",
+                    ratio: customRatio,
+                });
+                return columnas;
+            }
 
-function planColumns() {
-  // the column list shared by the DOM render and the PNG export (raw text, no
-  // esc — HTML emitters wrap th with esc): the three preset splits plus a
-  // trailing custom split from the fields above (an invalid pair prices as no
-  // data and the header drops to a bare "Custom")
-  var customRatio = estado.planCustomIn > 0 && estado.planCustomOut > 0
-    ? estado.planCustomIn / estado.planCustomOut : null;
-  var columnas = RATIOS.map(function (r) {
-    return { th: r.text, ratio: r.ratio };
-  });
-  columnas.push({
-    th: customRatio !== null
-      ? "Custom " + estado.planCustomIn + " : " + estado.planCustomOut
-      : "Custom",
-    ratio: customRatio
-  });
-  return columnas;
-}
+            function renderPlanTokens() {
+                // the plan budget matrix: one panel per plan, so the two matrices read as
+                // separate blocks; the preset in : out splits as columns plus a trailing
+                // custom split, the same model filter as the dashboard's cells table; the
+                // panel's head carries the plan's paid/credit figures and the PNG/clipboard
+                // export buttons, and each table's tfoot footnotes the live cache % the
+                // S(x) control drives
+                var modelos = Object.keys(RATES.rates).filter(function (m) {
+                    return estado.models.indexOf(m) !== -1;
+                });
+                var columnas = planColumns();
+                var tablas = PLANES.map(function (plane, indice) {
+                    var filas = modelos
+                        .map(function (m) {
+                            var tds = columnas
+                                .map(function (col) {
+                                    var t = planTokens(
+                                        m,
+                                        plane.credits,
+                                        col.ratio,
+                                    );
+                                    return isNull(t)
+                                        ? '<td colspan="3" class="sep-l"><span class="chip nodata">no data</span></td>'
+                                        : '<td class="num mono sep-l">↓' +
+                                              compactTokens(t.tin) +
+                                              '</td><td class="num mono">↑' +
+                                              compactTokens(t.tout) +
+                                              '</td><td class="num mono">' +
+                                              compactTokens(t.total) +
+                                              "</td>";
+                                })
+                                .join("");
+                            return (
+                                '<tr><td class="mono">' +
+                                esc(m) +
+                                "</td>" +
+                                tds +
+                                "</tr>"
+                            );
+                        })
+                        .join("");
+                    var ths = columnas
+                        .map(function (col) {
+                            return (
+                                '<th colspan="3" class="sep-l ctr">' +
+                                esc(col.th) +
+                                "</th>"
+                            );
+                        })
+                        .join("");
+                    var subths = columnas
+                        .map(function () {
+                            return '<th class="sep-l ctr">↓ in</th><th class="ctr">↑ out</th><th class="ctr">total</th>';
+                        })
+                        .join("");
+                    return (
+                        '<div class="panel scroll-x plan-card"><div class="plan-head">' +
+                        '<span class="plan-name">' +
+                        plane.name +
+                        "</span>" +
+                        '<span class="plan-paid mono">' +
+                        plane.paidLabel +
+                        "</span>" +
+                        '<span class="plan-arrow" aria-hidden="true">&rarr;</span>' +
+                        '<span class="plan-credits mono">' +
+                        plane.creditsLabel +
+                        "</span>" +
+                        '<span class="plan-export-group">' +
+                        '<button type="button" class="preset plan-export" data-plane="' +
+                        indice +
+                        '" data-mode="download"><i data-lucide="download" class="icon-btn" aria-hidden="true"></i> PNG</button>' +
+                        '<button type="button" class="preset plan-export" data-plane="' +
+                        indice +
+                        '" data-mode="copy"><i data-lucide="copy" class="icon-btn" aria-hidden="true"></i> Copy</button></span></div>' +
+                        '<table><thead><tr><th class="num">in : out ratio</th>' +
+                        ths +
+                        '</tr><tr class="sub-head"><th>model</th>' +
+                        subths +
+                        "</tr></thead><tbody>" +
+                        filas +
+                        '</tbody><tfoot><tr><td colspan="' +
+                        (1 + columnas.length * 3) +
+                        '">cache hit: ' +
+                        estado.slider +
+                        "% &middot; each cell: ↓ input, ↑ output, then the total</td></tr></tfoot></table></div>"
+                    );
+                }).join("");
+                $("plan-tokens").innerHTML = tablas;
+                refrescoIconos();
+            }
 
-function renderPlanTokens() {
-  // the plan budget matrix: one panel per plan, so the two matrices read as
-  // separate blocks; the preset in : out splits as columns plus a trailing
-  // custom split, the same model filter as the dashboard's cells table; the
-  // panel's head carries the plan's paid/credit figures and the PNG/clipboard
-  // export buttons, and each table's tfoot footnotes the live cache % the
-  // S(x) control drives
-  var modelos = Object.keys(RATES.rates).filter(function (m) {
-    return estado.models.indexOf(m) !== -1;
-  });
-  var columnas = planColumns();
-  var tablas = PLANES.map(function (plane, indice) {
-    var filas = modelos.map(function (m) {
-      var tds = columnas.map(function (col) {
-        var t = planTokens(m, plane.credits, col.ratio);
-        return isNull(t)
-          ? '<td colspan="3" class="sep-l"><span class="chip nodata">no data</span></td>'
-          : '<td class="num mono sep-l">↓' + compactTokens(t.tin) +
-            '</td><td class="num mono">↑' + compactTokens(t.tout) +
-            '</td><td class="num mono">' + compactTokens(t.total) + '</td>';
-      }).join("");
-      return '<tr><td class="mono">' + esc(m) + "</td>" + tds + "</tr>";
-    }).join("");
-    var ths = columnas.map(function (col) {
-      return '<th colspan="3" class="sep-l ctr">' + esc(col.th) + "</th>";
-    }).join("");
-    var subths = columnas.map(function () {
-      return '<th class="sep-l ctr">↓ in</th><th class="ctr">↑ out</th><th class="ctr">total</th>';
-    }).join("");
-    return '<div class="panel scroll-x plan-card"><div class="plan-head">' +
-      '<span class="plan-name">' + plane.name + '</span>' +
-      '<span class="plan-paid mono">' + plane.paidLabel + '</span>' +
-      '<span class="plan-arrow" aria-hidden="true">&rarr;</span>' +
-      '<span class="plan-credits mono">' + plane.creditsLabel + '</span>' +
-      '<span class="plan-export-group">' +
-      '<button type="button" class="preset plan-export" data-plane="' + indice +
-      '" data-mode="download"><i data-lucide="download" class="icon-btn" aria-hidden="true"></i> PNG</button>' +
-      '<button type="button" class="preset plan-export" data-plane="' + indice +
-      '" data-mode="copy"><i data-lucide="copy" class="icon-btn" aria-hidden="true"></i> Copy</button></span></div>' +
-      '<table><thead><tr><th class="num">in : out ratio</th>' + ths +
-      '</tr><tr class="sub-head"><th>model</th>' + subths + "</tr></thead><tbody>" + filas +
-      '</tbody><tfoot><tr><td colspan="' + (1 + columnas.length * 3) + '">cache hit: ' + estado.slider +
-      "% &middot; each cell: ↓ input, ↑ output, then the total</td></tr></tfoot></table></div>";
-  }).join("");
-  $("plan-tokens").innerHTML = tablas;
-  refrescoIconos();
-}
+            function exportPlanImage(planeIndex, mode, btn) {
+                // draws one plan's matrix onto an offscreen canvas using the live theme
+                // tokens and exports it as a PNG: clipboard copy when asked and supported,
+                // file download otherwise; no external library — the canvas API only
+                var plane = PLANES[planeIndex];
+                if (!plane) return;
+                var titulo =
+                    plane.name +
+                    " — $" +
+                    plane.paid +
+                    " paid → $" +
+                    plane.credits +
+                    " credits";
+                var pie =
+                    "cache: " +
+                    estado.slider +
+                    "% — the S(x) control above · each cell: ↓ input, ↑ output, then the total";
+                var modelos = Object.keys(RATES.rates).filter(function (m) {
+                    return estado.models.indexOf(m) !== -1;
+                });
+                var columnas = planColumns();
+                var raiz = getComputedStyle(document.documentElement);
+                function tok(name) {
+                    return raiz.getPropertyValue(name).trim();
+                }
+                var sub = [
+                    {
+                        cab: "↓ in",
+                        valor: function (t) {
+                            return "↓" + compactTokens(t.tin);
+                        },
+                    },
+                    {
+                        cab: "↑ out",
+                        valor: function (t) {
+                            return "↑" + compactTokens(t.tout);
+                        },
+                    },
+                    {
+                        cab: "total",
+                        valor: function (t) {
+                            return compactTokens(t.total);
+                        },
+                    },
+                ];
+                var escala = 2,
+                    edge = 16,
+                    fila = 26,
+                    pad = 10,
+                    cabecera = 46,
+                    tituloH = 24,
+                    pieH = 20;
+                var fuente = getComputedStyle(document.body).fontFamily;
+                var medidas = document.createElement("canvas").getContext("2d");
+                medidas.font = "12px " + fuente;
+                var anchoModelo = 150;
+                var anchos = [];
+                columnas.forEach(function (col) {
+                    sub.forEach(function (s) {
+                        var w = medidas.measureText(s.cab).width;
+                        modelos.forEach(function (m) {
+                            var t = planTokens(m, plane.credits, col.ratio);
+                            if (!isNull(t))
+                                w = Math.max(
+                                    w,
+                                    medidas.measureText(s.valor(t)).width,
+                                );
+                        });
+                        anchos.push(Math.ceil(w) + pad * 2);
+                    });
+                });
+                modelos.forEach(function (m) {
+                    anchoModelo = Math.max(
+                        anchoModelo,
+                        Math.ceil(medidas.measureText(m).width) + pad * 2,
+                    );
+                });
+                var ancho =
+                    Math.ceil(
+                        Math.max(
+                            anchoModelo +
+                                anchos.reduce(function (a, b) {
+                                    return a + b;
+                                }, 0),
+                            medidas.measureText(titulo).width + pad * 2,
+                            medidas.measureText(pie).width + pad * 2,
+                        ),
+                    ) +
+                    edge * 2;
+                var alto =
+                    edge * 2 +
+                    tituloH +
+                    cabecera +
+                    fila * modelos.length +
+                    pieH;
+                var canvas = document.createElement("canvas");
+                canvas.width = ancho * escala;
+                canvas.height = alto * escala;
+                var ctx = canvas.getContext("2d");
+                ctx.scale(escala, escala);
+                ctx.font = "12px " + fuente;
+                ctx.textBaseline = "middle";
+                ctx.fillStyle = tok("--plane");
+                ctx.fillRect(0, 0, ancho, alto);
+                ctx.fillStyle = tok("--ink");
+                ctx.font = "600 13px " + fuente;
+                ctx.textAlign = "left";
+                ctx.fillText(titulo, edge, edge + tituloH / 2);
+                var ys = edge + tituloH,
+                    yIni = ys;
+                ctx.font = "600 12px " + fuente;
+                ctx.fillStyle = tok("--surface");
+                ctx.fillRect(edge, ys, ancho - edge * 2, cabecera);
+                ctx.fillStyle = tok("--ink");
+                ctx.textAlign = "right";
+                ctx.fillText(
+                    "in : out ratio",
+                    edge + anchoModelo - pad,
+                    ys + 14,
+                );
+                ctx.textAlign = "left";
+                ctx.fillText("model", edge + pad, ys + 34);
+                var xs = edge + anchoModelo;
+                var limites = [];
+                columnas.forEach(function (col, i) {
+                    var xs0 = xs;
+                    limites.push(xs0);
+                    var span =
+                        anchos[i * 3] + anchos[i * 3 + 1] + anchos[i * 3 + 2];
+                    ctx.textAlign = "center";
+                    ctx.fillText(col.th, xs0 + span / 2, ys + 14);
+                    var xs1 = xs0;
+                    sub.forEach(function (s, j) {
+                        ctx.textAlign = "center";
+                        ctx.fillText(
+                            s.cab,
+                            xs1 + anchos[i * 3 + j] / 2,
+                            ys + 34,
+                        );
+                        xs1 += anchos[i * 3 + j];
+                    });
+                    xs += span;
+                });
+                ctx.strokeStyle = tok("--grid");
+                ctx.beginPath();
+                ctx.moveTo(edge, ys + cabecera);
+                ctx.lineTo(ancho - edge, ys + cabecera);
+                ctx.stroke();
+                ctx.font = "12px " + fuente;
+                ys += cabecera;
+                modelos.forEach(function (m) {
+                    ctx.textAlign = "left";
+                    ctx.fillStyle = tok("--ink");
+                    ctx.fillText(m, edge + pad, ys + fila / 2);
+                    var xd = edge + anchoModelo;
+                    columnas.forEach(function (col, i) {
+                        var t = planTokens(m, plane.credits, col.ratio);
+                        sub.forEach(function (s, j) {
+                            ctx.textAlign = "right";
+                            ctx.fillText(
+                                isNull(t) ? "no data" : s.valor(t),
+                                xd + anchos[i * 3 + j] - pad,
+                                ys + fila / 2,
+                            );
+                            xd += anchos[i * 3 + j];
+                        });
+                    });
+                    ys += fila;
+                    ctx.strokeStyle = tok("--grid");
+                    ctx.beginPath();
+                    ctx.moveTo(edge, ys);
+                    ctx.lineTo(ancho - edge, ys);
+                    ctx.stroke();
+                });
+                ctx.strokeStyle = tok("--grid");
+                ctx.beginPath();
+                limites.forEach(function (xl) {
+                    ctx.moveTo(xl, yIni);
+                    ctx.lineTo(xl, ys);
+                });
+                ctx.stroke();
+                ctx.fillStyle = tok("--muted");
+                ctx.font = "11px " + fuente;
+                ctx.textAlign = "left";
+                ctx.fillText(pie, edge, ys + pieH / 2);
+                canvas.toBlob(function (blob) {
+                    if (!blob) return;
+                    if (
+                        mode === "copy" &&
+                        navigator.clipboard &&
+                        window.ClipboardItem
+                    ) {
+                        navigator.clipboard
+                            .write([new ClipboardItem({ "image/png": blob })])
+                            .then(
+                                function () {
+                                    aviso(btn, "copied");
+                                },
+                                function () {
+                                    descargarImagen(plane, blob);
+                                    aviso(
+                                        btn,
+                                        "copy failed — downloaded instead",
+                                    );
+                                },
+                            );
+                    } else {
+                        descargarImagen(plane, blob);
+                        aviso(btn, "downloaded");
+                    }
+                }, "image/png");
+            }
+            function descargarImagen(plane, blob) {
+                var a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = "plan-" + plane.name.toLowerCase() + "-tokens.png";
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+            }
+            function aviso(btn, texto) {
+                // transient button feedback, reverted so the label reads normal again
+                if (!btn) return;
+                var previo = btn.innerHTML;
+                btn.innerHTML = texto;
+                setTimeout(function () {
+                    btn.innerHTML = previo;
+                }, 1200);
+            }
 
-function exportPlanImage(planeIndex, mode, btn) {
-  // draws one plan's matrix onto an offscreen canvas using the live theme
-  // tokens and exports it as a PNG: clipboard copy when asked and supported,
-  // file download otherwise; no external library — the canvas API only
-  var plane = PLANES[planeIndex];
-  if (!plane) return;
-  var titulo = plane.name + " — $" + plane.paid + " paid → $" + plane.credits + " credits";
-  var pie = "cache: " + estado.slider + "% — the S(x) control above · each cell: ↓ input, ↑ output, then the total";
-  var modelos = Object.keys(RATES.rates).filter(function (m) {
-    return estado.models.indexOf(m) !== -1;
-  });
-  var columnas = planColumns();
-  var raiz = getComputedStyle(document.documentElement);
-  function tok(name) { return raiz.getPropertyValue(name).trim(); }
-  var sub = [
-    { cab: "↓ in", valor: function (t) { return "↓" + compactTokens(t.tin); } },
-    { cab: "↑ out", valor: function (t) { return "↑" + compactTokens(t.tout); } },
-    { cab: "total", valor: function (t) { return compactTokens(t.total); } }
-  ];
-  var escala = 2, edge = 16, fila = 26, pad = 10, cabecera = 46, tituloH = 24, pieH = 20;
-  var fuente = getComputedStyle(document.body).fontFamily;
-  var medidas = document.createElement("canvas").getContext("2d");
-  medidas.font = "12px " + fuente;
-  var anchoModelo = 150;
-  var anchos = [];
-  columnas.forEach(function (col) {
-    sub.forEach(function (s) {
-      var w = medidas.measureText(s.cab).width;
-      modelos.forEach(function (m) {
-        var t = planTokens(m, plane.credits, col.ratio);
-        if (!isNull(t)) w = Math.max(w, medidas.measureText(s.valor(t)).width);
-      });
-      anchos.push(Math.ceil(w) + pad * 2);
-    });
-  });
-  modelos.forEach(function (m) {
-    anchoModelo = Math.max(anchoModelo, Math.ceil(medidas.measureText(m).width) + pad * 2);
-  });
-  var ancho = Math.ceil(Math.max(
-    anchoModelo + anchos.reduce(function (a, b) { return a + b; }, 0),
-    medidas.measureText(titulo).width + pad * 2,
-    medidas.measureText(pie).width + pad * 2)) + edge * 2;
-  var alto = edge * 2 + tituloH + cabecera + fila * modelos.length + pieH;
-  var canvas = document.createElement("canvas");
-  canvas.width = ancho * escala;
-  canvas.height = alto * escala;
-  var ctx = canvas.getContext("2d");
-  ctx.scale(escala, escala);
-  ctx.font = "12px " + fuente;
-  ctx.textBaseline = "middle";
-  ctx.fillStyle = tok("--plane");
-  ctx.fillRect(0, 0, ancho, alto);
-  ctx.fillStyle = tok("--ink");
-  ctx.font = "600 13px " + fuente;
-  ctx.textAlign = "left";
-  ctx.fillText(titulo, edge, edge + tituloH / 2);
-  var ys = edge + tituloH, yIni = ys;
-  ctx.font = "600 12px " + fuente;
-  ctx.fillStyle = tok("--surface");
-  ctx.fillRect(edge, ys, ancho - edge * 2, cabecera);
-  ctx.fillStyle = tok("--ink");
-  ctx.textAlign = "right";
-  ctx.fillText("in : out ratio", edge + anchoModelo - pad, ys + 14);
-  ctx.textAlign = "left";
-  ctx.fillText("model", edge + pad, ys + 34);
-  var xs = edge + anchoModelo;
-  var limites = [];
-  columnas.forEach(function (col, i) {
-    var xs0 = xs;
-    limites.push(xs0);
-    var span = anchos[i * 3] + anchos[i * 3 + 1] + anchos[i * 3 + 2];
-    ctx.textAlign = "center";
-    ctx.fillText(col.th, xs0 + span / 2, ys + 14);
-    var xs1 = xs0;
-    sub.forEach(function (s, j) {
-      ctx.textAlign = "center";
-      ctx.fillText(s.cab, xs1 + anchos[i * 3 + j] / 2, ys + 34);
-      xs1 += anchos[i * 3 + j];
-    });
-    xs += span;
-  });
-  ctx.strokeStyle = tok("--grid");
-  ctx.beginPath();
-  ctx.moveTo(edge, ys + cabecera);
-  ctx.lineTo(ancho - edge, ys + cabecera);
-  ctx.stroke();
-  ctx.font = "12px " + fuente;
-  ys += cabecera;
-  modelos.forEach(function (m) {
-    ctx.textAlign = "left";
-    ctx.fillStyle = tok("--ink");
-    ctx.fillText(m, edge + pad, ys + fila / 2);
-    var xd = edge + anchoModelo;
-    columnas.forEach(function (col, i) {
-      var t = planTokens(m, plane.credits, col.ratio);
-      sub.forEach(function (s, j) {
-        ctx.textAlign = "right";
-        ctx.fillText(isNull(t) ? "no data" : s.valor(t), xd + anchos[i * 3 + j] - pad, ys + fila / 2);
-        xd += anchos[i * 3 + j];
-      });
-    });
-    ys += fila;
-    ctx.strokeStyle = tok("--grid");
-    ctx.beginPath();
-    ctx.moveTo(edge, ys);
-    ctx.lineTo(ancho - edge, ys);
-    ctx.stroke();
-  });
-  ctx.strokeStyle = tok("--grid");
-  ctx.beginPath();
-  limites.forEach(function (xl) {
-    ctx.moveTo(xl, yIni);
-    ctx.lineTo(xl, ys);
-  });
-  ctx.stroke();
-  ctx.fillStyle = tok("--muted");
-  ctx.font = "11px " + fuente;
-  ctx.textAlign = "left";
-  ctx.fillText(pie, edge, ys + pieH / 2);
-  canvas.toBlob(function (blob) {
-    if (!blob) return;
-    if (mode === "copy" && navigator.clipboard && window.ClipboardItem) {
-      navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]).then(function () {
-        aviso(btn, "copied");
-      }, function () {
-        descargarImagen(plane, blob);
-        aviso(btn, "copy failed — downloaded instead");
-      });
-    } else {
-      descargarImagen(plane, blob);
-      aviso(btn, "downloaded");
-    }
-  }, "image/png");
-}
-function descargarImagen(plane, blob) {
-  var a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "plan-" + plane.name.toLowerCase() + "-tokens.png";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-}
-function aviso(btn, texto) {
-  // transient button feedback, reverted so the label reads normal again
-  if (!btn) return;
-  var previo = btn.innerHTML;
-  btn.innerHTML = texto;
-  setTimeout(function () { btn.innerHTML = previo; }, 1200);
-}
+            function renderAll() {
+                renderPlanTokens();
+                updateModelChips();
+            }
 
-function renderAll() {
-  renderPlanTokens();
-  updateModelChips();
-}
+            /* model multi-select ------------------------------------------------------- */
+            var pickerOpen = false;
+            var pickerFocusIndex = -1;
 
-/* model multi-select ------------------------------------------------------- */
-var pickerOpen = false;
-var pickerFocusIndex = -1;
+            function buildModelPicker() {
+                var select = $("filter-model");
+                var list = $("model-picker-list");
+                var options = Array.prototype.slice.call(select.options);
+                list.innerHTML = options
+                    .map(function (opt, idx) {
+                        var selected = estado.models.indexOf(opt.value) !== -1;
+                        return (
+                            '<label class="model-picker-item" role="option" tabindex="-1" aria-selected="' +
+                            selected +
+                            '" data-value="' +
+                            esc(opt.value) +
+                            '" data-index="' +
+                            idx +
+                            '">' +
+                            '<span class="model-picker-check">' +
+                            (selected
+                                ? '<i data-lucide="check" aria-hidden="true"></i>'
+                                : "") +
+                            "</span>" +
+                            '<span class="model-picker-name">' +
+                            esc(opt.value) +
+                            "</span>" +
+                            "</label>"
+                        );
+                    })
+                    .join("");
+                refrescoIconos();
+                pickerFocusIndex = -1;
+            }
 
-function buildModelPicker() {
-  var select = $("filter-model");
-  var list = $("model-picker-list");
-  var options = Array.prototype.slice.call(select.options);
-  list.innerHTML = options.map(function(opt, idx) {
-    var selected = estado.models.indexOf(opt.value) !== -1;
-    return '<label class="model-picker-item" role="option" tabindex="-1" aria-selected="' + selected + '" data-value="' + esc(opt.value) + '" data-index="' + idx + '">' +
-      '<span class="model-picker-check">' + (selected ? '<i data-lucide="check" aria-hidden="true"></i>' : '') + '</span>' +
-      '<span class="model-picker-name">' + esc(opt.value) + '</span>' +
-      '</label>';
-  }).join("");
-  refrescoIconos();
-  pickerFocusIndex = -1;
-}
+            function getVisiblePickerItems() {
+                return Array.prototype.filter.call(
+                    document.querySelectorAll(".model-picker-item"),
+                    function (item) {
+                        return item.style.display !== "none";
+                    },
+                );
+            }
 
-function getVisiblePickerItems() {
-  return Array.prototype.filter.call(document.querySelectorAll(".model-picker-item"), function(item) {
-    return item.style.display !== "none";
-  });
-}
+            function focusPickerItem(index) {
+                var items = getVisiblePickerItems();
+                if (!items.length) return;
+                if (index < 0) index = 0;
+                if (index >= items.length) index = items.length - 1;
+                pickerFocusIndex = index;
+                items.forEach(function (item, i) {
+                    item.setAttribute("tabindex", i === index ? "0" : "-1");
+                });
+                items[index].focus();
+            }
 
-function focusPickerItem(index) {
-  var items = getVisiblePickerItems();
-  if (!items.length) return;
-  if (index < 0) index = 0;
-  if (index >= items.length) index = items.length - 1;
-  pickerFocusIndex = index;
-  items.forEach(function(item, i) { item.setAttribute("tabindex", i === index ? "0" : "-1"); });
-  items[index].focus();
-}
+            function openModelPicker() {
+                pickerOpen = true;
+                $("model-picker-dropdown").style.display = "block";
+                $("model-picker-btn").setAttribute("aria-expanded", "true");
+                $("model-search").value = "";
+                buildModelPicker();
+                setTimeout(function () {
+                    $("model-search").focus();
+                }, 0);
+            }
 
-function openModelPicker() {
-  pickerOpen = true;
-  $("model-picker-dropdown").style.display = "block";
-  $("model-picker-btn").setAttribute("aria-expanded", "true");
-  $("model-search").value = "";
-  buildModelPicker();
-  setTimeout(function() { $("model-search").focus(); }, 0);
-}
+            function closeModelPicker(focusTrigger) {
+                pickerOpen = false;
+                $("model-picker-dropdown").style.display = "none";
+                $("model-picker-btn").setAttribute("aria-expanded", "false");
+                pickerFocusIndex = -1;
+                if (focusTrigger) $("model-picker-btn").focus();
+            }
 
-function closeModelPicker(focusTrigger) {
-  pickerOpen = false;
-  $("model-picker-dropdown").style.display = "none";
-  $("model-picker-btn").setAttribute("aria-expanded", "false");
-  pickerFocusIndex = -1;
-  if (focusTrigger) $("model-picker-btn").focus();
-}
+            function updateModelChips() {
+                var chips = $("model-chips");
+                if (estado.models.length === ALL_MODELS.length) {
+                    // the default (every model) needs no chip echo: the picker button and the
+                    // count already state it, so the summary row stays silent
+                    chips.innerHTML = "";
+                    $("model-picker-text").textContent = "all models";
+                    $("model-count").textContent = "all " + ALL_MODELS.length;
+                } else if (estado.models.length === 0) {
+                    chips.innerHTML = '<span class="chip">no models</span>';
+                    $("model-picker-text").textContent = "no models";
+                    $("model-count").textContent = "0";
+                } else {
+                    chips.innerHTML = estado.models
+                        .map(function (m) {
+                            return (
+                                '<span class="chip">' +
+                                esc(m) +
+                                '<button type="button" class="chip-remove" data-value="' +
+                                esc(m) +
+                                '" aria-label="Remove ' +
+                                esc(m) +
+                                '">' +
+                                '<i data-lucide="x" aria-hidden="true"></i>' +
+                                "</button></span>"
+                            );
+                        })
+                        .join("");
+                    $("model-picker-text").textContent =
+                        estado.models.length +
+                        " model" +
+                        (estado.models.length === 1 ? "" : "s");
+                    $("model-count").textContent =
+                        estado.models.length + " of " + ALL_MODELS.length;
+                }
+                refrescoIconos();
+            }
 
-function updateModelChips() {
-  var chips = $("model-chips");
-  if (estado.models.length === ALL_MODELS.length) {
-    // the default (every model) needs no chip echo: the picker button and the
-    // count already state it, so the summary row stays silent
-    chips.innerHTML = "";
-    $("model-picker-text").textContent = "all models";
-    $("model-count").textContent = "all " + ALL_MODELS.length;
-  } else if (estado.models.length === 0) {
-    chips.innerHTML = '<span class="chip">no models</span>';
-    $("model-picker-text").textContent = "no models";
-    $("model-count").textContent = "0";
-  } else {
-    chips.innerHTML = estado.models.map(function(m) {
-      return '<span class="chip">' + esc(m) +
-        '<button type="button" class="chip-remove" data-value="' + esc(m) + '" aria-label="Remove ' + esc(m) + '">' +
-        '<i data-lucide="x" aria-hidden="true"></i>' +
-        '</button></span>';
-    }).join("");
-    $("model-picker-text").textContent = estado.models.length + " model" + (estado.models.length === 1 ? "" : "s");
-    $("model-count").textContent = estado.models.length + " of " + ALL_MODELS.length;
-  }
-  refrescoIconos();
-}
+            function toggleModel(val) {
+                var idx = estado.models.indexOf(val);
+                if (idx !== -1) {
+                    estado.models.splice(idx, 1);
+                } else {
+                    estado.models.push(val);
+                    estado.models.sort(function (a, b) {
+                        return ALL_MODELS.indexOf(a) - ALL_MODELS.indexOf(b);
+                    });
+                }
+                buildModelPicker();
+                updateModelChips();
+                renderAll();
+            }
 
-function toggleModel(val) {
-  var idx = estado.models.indexOf(val);
-  if (idx !== -1) {
-    estado.models.splice(idx, 1);
-  } else {
-    estado.models.push(val);
-    estado.models.sort(function(a, b) { return ALL_MODELS.indexOf(a) - ALL_MODELS.indexOf(b); });
-  }
-  buildModelPicker();
-  updateModelChips();
-  renderAll();
-}
+            $("model-picker-btn").addEventListener("click", function (e) {
+                e.stopPropagation();
+                if (pickerOpen) closeModelPicker(true);
+                else openModelPicker();
+            });
 
-$("model-picker-btn").addEventListener("click", function(e) {
-  e.stopPropagation();
-  if (pickerOpen) closeModelPicker(true);
-  else openModelPicker();
-});
+            $("model-picker-btn").addEventListener("keydown", function (e) {
+                if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    if (pickerOpen) closeModelPicker(false);
+                    else openModelPicker();
+                }
+            });
 
-$("model-picker-btn").addEventListener("keydown", function(e) {
-  if (e.key === "Enter" || e.key === " ") {
-    e.preventDefault();
-    if (pickerOpen) closeModelPicker(false);
-    else openModelPicker();
-  }
-});
+            document.addEventListener("click", function (e) {
+                if (!e.target.closest("#model-picker")) {
+                    closeModelPicker(false);
+                }
+            });
 
-document.addEventListener("click", function(e) {
-  if (!e.target.closest("#model-picker")) {
-    closeModelPicker(false);
-  }
-});
+            document.addEventListener("keydown", function (e) {
+                if (e.key === "Escape" && pickerOpen) {
+                    e.preventDefault();
+                    closeModelPicker(true);
+                }
+            });
 
-document.addEventListener("keydown", function(e) {
-  if (e.key === "Escape" && pickerOpen) {
-    e.preventDefault();
-    closeModelPicker(true);
-  }
-});
+            $("model-picker-list").addEventListener("click", function (e) {
+                e.stopPropagation();
+                var item = e.target.closest(".model-picker-item");
+                if (!item) return;
+                var val = item.getAttribute("data-value");
+                toggleModel(val);
+                var selected = estado.models.indexOf(val) !== -1;
+                item.setAttribute("aria-selected", selected);
+                item.querySelector(".model-picker-check").innerHTML = selected
+                    ? '<i data-lucide="check" aria-hidden="true"></i>'
+                    : "";
+                refrescoIconos();
+                // keep the dropdown open so the user can toggle more models
+                if (pickerOpen) $("model-search").focus();
+            });
 
-$("model-picker-list").addEventListener("click", function(e) {
-  e.stopPropagation();
-  var item = e.target.closest(".model-picker-item");
-  if (!item) return;
-  var val = item.getAttribute("data-value");
-  toggleModel(val);
-  var selected = estado.models.indexOf(val) !== -1;
-  item.setAttribute("aria-selected", selected);
-  item.querySelector(".model-picker-check").innerHTML = selected
-    ? '<i data-lucide="check" aria-hidden="true"></i>'
-    : '';
-  refrescoIconos();
-  // keep the dropdown open so the user can toggle more models
-  if (pickerOpen) $("model-search").focus();
-});
+            $("model-picker-dropdown").addEventListener(
+                "keydown",
+                function (e) {
+                    var items = getVisiblePickerItems();
+                    if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        focusPickerItem(pickerFocusIndex + 1);
+                    } else if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        if (pickerFocusIndex <= 0) {
+                            $("model-search").focus();
+                            pickerFocusIndex = -1;
+                        } else {
+                            focusPickerItem(pickerFocusIndex - 1);
+                        }
+                    } else if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        if (pickerFocusIndex >= 0 && items[pickerFocusIndex]) {
+                            items[pickerFocusIndex].click();
+                        }
+                    }
+                },
+            );
 
-$("model-picker-dropdown").addEventListener("keydown", function(e) {
-  var items = getVisiblePickerItems();
-  if (e.key === "ArrowDown") {
-    e.preventDefault();
-    focusPickerItem(pickerFocusIndex + 1);
-  } else if (e.key === "ArrowUp") {
-    e.preventDefault();
-    if (pickerFocusIndex <= 0) {
-      $("model-search").focus();
-      pickerFocusIndex = -1;
-    } else {
-      focusPickerItem(pickerFocusIndex - 1);
-    }
-  } else if (e.key === "Enter" || e.key === " ") {
-    e.preventDefault();
-    if (pickerFocusIndex >= 0 && items[pickerFocusIndex]) {
-      items[pickerFocusIndex].click();
-    }
-  }
-});
+            $("model-search").addEventListener("input", function () {
+                var q = this.value.toLowerCase();
+                Array.prototype.forEach.call(
+                    document.querySelectorAll(".model-picker-item"),
+                    function (item) {
+                        var name = item
+                            .querySelector(".model-picker-name")
+                            .textContent.toLowerCase();
+                        item.style.display =
+                            name.indexOf(q) !== -1 ? "" : "none";
+                    },
+                );
+                pickerFocusIndex = -1;
+            });
 
-$("model-search").addEventListener("input", function() {
-  var q = this.value.toLowerCase();
-  Array.prototype.forEach.call(document.querySelectorAll(".model-picker-item"), function(item) {
-    var name = item.querySelector(".model-picker-name").textContent.toLowerCase();
-    item.style.display = name.indexOf(q) !== -1 ? "" : "none";
-  });
-  pickerFocusIndex = -1;
-});
+            $("model-search").addEventListener("keydown", function (e) {
+                if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    var items = getVisiblePickerItems();
+                    if (items.length) focusPickerItem(0);
+                } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    closeModelPicker(true);
+                }
+            });
 
-$("model-search").addEventListener("keydown", function(e) {
-  if (e.key === "ArrowDown") {
-    e.preventDefault();
-    var items = getVisiblePickerItems();
-    if (items.length) focusPickerItem(0);
-  } else if (e.key === "Escape") {
-    e.preventDefault();
-    closeModelPicker(true);
-  }
-});
+            $("model-select-all").addEventListener("click", function (e) {
+                e.stopPropagation();
+                estado.models = ALL_MODELS.slice();
+                buildModelPicker();
+                updateModelChips();
+                renderAll();
+                if (pickerOpen) $("model-search").focus();
+            });
 
-$("model-select-all").addEventListener("click", function(e) {
-  e.stopPropagation();
-  estado.models = ALL_MODELS.slice();
-  buildModelPicker();
-  updateModelChips();
-  renderAll();
-  if (pickerOpen) $("model-search").focus();
-});
+            $("model-clear-all").addEventListener("click", function (e) {
+                e.stopPropagation();
+                estado.models = [];
+                buildModelPicker();
+                updateModelChips();
+                renderAll();
+                if (pickerOpen) $("model-search").focus();
+            });
 
-$("model-clear-all").addEventListener("click", function(e) {
-  e.stopPropagation();
-  estado.models = [];
-  buildModelPicker();
-  updateModelChips();
-  renderAll();
-  if (pickerOpen) $("model-search").focus();
-});
+            $("model-chips").addEventListener("click", function (e) {
+                var btn = e.target.closest(".chip-remove");
+                if (!btn) return;
+                var val = btn.getAttribute("data-value");
+                var idx = estado.models.indexOf(val);
+                if (idx !== -1) {
+                    estado.models.splice(idx, 1);
+                    updateModelChips();
+                    renderAll();
+                }
+            });
 
-$("model-chips").addEventListener("click", function(e) {
-  var btn = e.target.closest(".chip-remove");
-  if (!btn) return;
-  var val = btn.getAttribute("data-value");
-  var idx = estado.models.indexOf(val);
-  if (idx !== -1) {
-    estado.models.splice(idx, 1);
-    updateModelChips();
-    renderAll();
-  }
-});
+            /* custom in : out ---------------------------------------------------------- */
+            function bindPlanCustom(id, clave) {
+                var input = $(id);
+                input.addEventListener("input", function () {
+                    // empty or garbage input reads as 0: planTokens' guard then prices the
+                    // custom column as no data and the header drops to a bare "Custom"
+                    var n = Number(input.value);
+                    estado[clave] = isFinite(n) ? n : 0;
+                    renderAll();
+                });
+            }
+            bindPlanCustom("plan-custom-in", "planCustomIn");
+            bindPlanCustom("plan-custom-out", "planCustomOut");
 
-/* custom in : out ---------------------------------------------------------- */
-function bindPlanCustom(id, clave) {
-  var input = $(id);
-  input.addEventListener("input", function () {
-    // empty or garbage input reads as 0: planTokens' guard then prices the
-    // custom column as no data and the header drops to a bare "Custom"
-    var n = Number(input.value);
-    estado[clave] = isFinite(n) ? n : 0;
-    renderAll();
-  });
-}
-bindPlanCustom("plan-custom-in", "planCustomIn");
-bindPlanCustom("plan-custom-out", "planCustomOut");
+            /* cache presets + custom --------------------------------------------------- */
+            function updateCachePresetActive() {
+                Array.prototype.forEach.call(
+                    document.querySelectorAll("button.cache-preset"),
+                    function (b) {
+                        var s = Number(b.getAttribute("data-s"));
+                        if (s === estado.slider) {
+                            b.classList.add("active");
+                        } else {
+                            b.classList.remove("active");
+                        }
+                    },
+                );
+            }
 
-/* cache presets + custom --------------------------------------------------- */
-function updateCachePresetActive() {
-  Array.prototype.forEach.call(document.querySelectorAll("button.cache-preset"), function (b) {
-    var s = Number(b.getAttribute("data-s"));
-    if (s === estado.slider) {
-      b.classList.add("active");
-    } else {
-      b.classList.remove("active");
-    }
-  });
-}
+            Array.prototype.forEach.call(
+                document.querySelectorAll("button.cache-preset"),
+                function (b) {
+                    b.addEventListener("click", function () {
+                        estado.slider = Number(b.getAttribute("data-s"));
+                        $("cache-custom").value = String(estado.slider);
+                        updateCachePresetActive();
+                        renderAll();
+                    });
+                },
+            );
 
-Array.prototype.forEach.call(document.querySelectorAll("button.cache-preset"), function (b) {
-  b.addEventListener("click", function () {
-    estado.slider = Number(b.getAttribute("data-s"));
-    $("cache-custom").value = String(estado.slider);
-    updateCachePresetActive();
-    renderAll();
-  });
-});
+            $("cache-custom").addEventListener("input", function () {
+                var n = Number(this.value);
+                if (isFinite(n) && n >= 0 && n <= 100) {
+                    estado.slider = Math.round(n);
+                }
+                updateCachePresetActive();
+                renderAll();
+            });
 
-$("cache-custom").addEventListener("input", function () {
-  var n = Number(this.value);
-  if (isFinite(n) && n >= 0 && n <= 100) {
-    estado.slider = Math.round(n);
-  }
-  updateCachePresetActive();
-  renderAll();
-});
+            // the plan-export buttons re-render on every renderAll: bind once by delegation
+            $("plan-tokens").addEventListener("click", function (e) {
+                var b = e.target.closest("button.plan-export");
+                if (!b) return;
+                exportPlanImage(
+                    Number(b.getAttribute("data-plane")),
+                    b.getAttribute("data-mode"),
+                    b,
+                );
+            });
 
-// the plan-export buttons re-render on every renderAll: bind once by delegation
-$("plan-tokens").addEventListener("click", function (e) {
-  var b = e.target.closest("button.plan-export");
-  if (!b) return;
-  exportPlanImage(Number(b.getAttribute("data-plane")), b.getAttribute("data-mode"), b);
-});
+            // the three-state theme, shared with the dashboard through the same
+            // localStorage key so both pages of the bundle agree on it
+            function resolveTheme(t) {
+                if (t === "light" || t === "dark") return t;
+                return window.matchMedia("(prefers-color-scheme: dark)").matches
+                    ? "dark"
+                    : "light";
+            }
+            function applyTheme(t) {
+                document.documentElement.setAttribute(
+                    "data-theme",
+                    resolveTheme(t),
+                );
+            }
+            Array.prototype.forEach.call(
+                document.querySelectorAll('input[name="theme"]'),
+                function (radio) {
+                    radio.addEventListener("change", function (e) {
+                        applyTheme(e.target.value);
+                        try {
+                            localStorage.setItem(
+                                "dashboard-theme",
+                                e.target.value,
+                            );
+                        } catch (err) {
+                            /* unavailable */
+                        }
+                    });
+                },
+            );
+            (function initTheme() {
+                var guardado = null;
+                try {
+                    guardado = localStorage.getItem("dashboard-theme");
+                } catch (err) {
+                    /* unavailable */
+                }
+                if (guardado !== "light" && guardado !== "dark")
+                    guardado = "system";
+                var radio = document.querySelector(
+                    'input[name="theme"][value="' + guardado + '"]',
+                );
+                if (radio) radio.checked = true;
+                applyTheme(guardado);
+                requestAnimationFrame(function () {
+                    document.documentElement.classList.remove(
+                        "no-theme-transition",
+                    );
+                });
+            })();
+            // keep "system" in sync with the OS preference after load
+            var systemMedia = window.matchMedia("(prefers-color-scheme: dark)");
+            systemMedia.addEventListener("change", function (e) {
+                var guardado = "system";
+                try {
+                    guardado = localStorage.getItem("dashboard-theme");
+                } catch (err) {
+                    /* unavailable */
+                }
+                if (guardado === "system") {
+                    document.documentElement.setAttribute(
+                        "data-theme",
+                        e.matches ? "dark" : "light",
+                    );
+                }
+            });
 
-// the three-state theme, shared with the dashboard through the same
-// localStorage key so both pages of the bundle agree on it
-function resolveTheme(t) {
-  if (t === "light" || t === "dark") return t;
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
-function applyTheme(t) {
-  document.documentElement.setAttribute("data-theme", resolveTheme(t));
-}
-Array.prototype.forEach.call(document.querySelectorAll('input[name="theme"]'), function (radio) {
-  radio.addEventListener("change", function (e) {
-    applyTheme(e.target.value);
-    try { localStorage.setItem("dashboard-theme", e.target.value); } catch (err) { /* unavailable */ }
-  });
-});
-(function initTheme() {
-  var guardado = null;
-  try { guardado = localStorage.getItem("dashboard-theme"); } catch (err) { /* unavailable */ }
-  if (guardado !== "light" && guardado !== "dark") guardado = "system";
-  var radio = document.querySelector('input[name="theme"][value="' + guardado + '"]');
-  if (radio) radio.checked = true;
-  applyTheme(guardado);
-  requestAnimationFrame(function () {
-    document.documentElement.classList.remove("no-theme-transition");
-  });
-})();
-// keep "system" in sync with the OS preference after load
-var systemMedia = window.matchMedia("(prefers-color-scheme: dark)");
-systemMedia.addEventListener("change", function (e) {
-  var guardado = "system";
-  try { guardado = localStorage.getItem("dashboard-theme"); } catch (err) { /* unavailable */ }
-  if (guardado === "system") {
-    document.documentElement.setAttribute("data-theme", e.matches ? "dark" : "light");
-  }
-});
-
-updateCachePresetActive();
-renderAll();
-refrescoIconos();
-</script>
-</body>
+            updateCachePresetActive();
+            renderAll();
+            refrescoIconos();
+        </script>
+    </body>
 </html>

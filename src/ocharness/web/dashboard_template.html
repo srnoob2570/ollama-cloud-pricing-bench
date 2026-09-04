@@ -1,991 +1,2049 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ollama Cloud cost analysis: legacy or new?</title>
-<meta name="description" content="Measured cost analysis of Ollama Cloud plans: per-workload verdicts, break-even thresholds and cache-hit sensitivity, recomputed live in the browser.">
-<link rel="canonical" href="https://srnoob2570.github.io/ollama-cloud-pricing-bench/dashboard.html">
-<meta property="og:url" content="https://srnoob2570.github.io/ollama-cloud-pricing-bench/dashboard.html">
-<meta property="og:type" content="article">
-<meta property="og:site_name" content="ocharness">
-<meta property="og:title" content="Ollama Cloud cost analysis: legacy or new?">
-<meta property="og:description" content="Which plan actually costs less, measured on real workloads: verdicts, thresholds and cache sensitivity in paid dollars.">
-<meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="Ollama Cloud cost analysis: legacy or new?">
-<meta name="twitter:description" content="Which plan actually costs less, measured on real workloads: verdicts, thresholds and cache sensitivity in paid dollars.">
-<meta name="theme-color" content="#f2f4f7" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0d1217" media="(prefers-color-scheme: dark)">
-<!-- resolve theme before first paint to prevent FOUC; transitions are
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Ollama Cloud cost analysis: legacy or new?</title>
+        <meta
+            name="description"
+            content="Measured cost analysis of Ollama Cloud plans: per-workload verdicts and cache-hit sensitivity, recomputed live in the browser."
+        />
+        <link
+            rel="canonical"
+            href="https://srnoob2570.github.io/ollama-cloud-pricing-bench/dashboard.html"
+        />
+        <meta
+            property="og:url"
+            content="https://srnoob2570.github.io/ollama-cloud-pricing-bench/dashboard.html"
+        />
+        <meta property="og:type" content="article" />
+        <meta property="og:site_name" content="ocharness" />
+        <meta
+            property="og:title"
+            content="Ollama Cloud cost analysis: legacy or new?"
+        />
+        <meta
+            property="og:description"
+            content="Which plan actually costs less, measured on real workloads: verdicts and cache sensitivity in paid dollars."
+        />
+        <meta name="twitter:card" content="summary" />
+        <meta
+            name="twitter:title"
+            content="Ollama Cloud cost analysis: legacy or new?"
+        />
+        <meta
+            name="twitter:description"
+            content="Which plan actually costs less, measured on real workloads: verdicts and cache sensitivity in paid dollars."
+        />
+        <meta
+            name="theme-color"
+            content="#f2f4f7"
+            media="(prefers-color-scheme: light)"
+        />
+        <meta
+            name="theme-color"
+            content="#0d1217"
+            media="(prefers-color-scheme: dark)"
+        />
+        <!-- resolve theme before first paint to prevent FOUC; transitions are
      suppressed until the page finishes initialising the radios -->
-<script>
-(function() {
-  var stored = "system";
-  try { stored = localStorage.getItem("dashboard-theme") || "system"; } catch (e) { /* unavailable */ }
-  if (stored !== "light" && stored !== "dark") stored = "system";
-  var theme = stored === "system"
-    ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
-    : stored;
-  document.documentElement.setAttribute("data-theme", theme);
-  document.documentElement.classList.add("no-theme-transition");
-})();
-</script>
-<!-- Pages-first styling: Tailwind browser CDN + Google Fonts + Lucide icons (online serving) -->
-<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://unpkg.com/lucide@1.40.0/dist/umd/lucide.min.js"></script>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23161d25'/><rect x='7' y='14' width='6' height='12' rx='2' fill='%233987e5'/><rect x='19' y='6' width='6' height='20' rx='2' fill='%23d95926'/></svg>">
-<style>
-/* three-state theme tokens: system is the default (no attribute), light and
+        <script>
+            (function () {
+                var stored = "system";
+                try {
+                    stored =
+                        localStorage.getItem("dashboard-theme") || "system";
+                } catch (e) {
+                    /* unavailable */
+                }
+                if (stored !== "light" && stored !== "dark") stored = "system";
+                var theme =
+                    stored === "system"
+                        ? window.matchMedia("(prefers-color-scheme: dark)")
+                              .matches
+                            ? "dark"
+                            : "light"
+                        : stored;
+                document.documentElement.setAttribute("data-theme", theme);
+                document.documentElement.classList.add("no-theme-transition");
+            })();
+        </script>
+        <!-- Pages-first styling: Tailwind browser CDN + Google Fonts + Lucide icons (online serving) -->
+        <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+            rel="stylesheet"
+        />
+        <script src="https://unpkg.com/lucide@1.40.0/dist/umd/lucide.min.js"></script>
+        <link
+            rel="icon"
+            href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23161d25'/><rect x='7' y='14' width='6' height='12' rx='2' fill='%233987e5'/><rect x='19' y='6' width='6' height='20' rx='2' fill='%23d95926'/></svg>"
+        />
+        <style>
+            /* three-state theme tokens: system is the default (no attribute), light and
    dark are selectable. Chart colors NEVER appear here outside these tokens. */
-:root {
-  color-scheme: light;
-  --plane: #f2f4f7; --surface: #fbfcfd; --ink: #11161c; --ink-2: #333d47; --muted: #5f6b76;
-  --grid: #dde3e8; --axis: #b9c3cc; --ring: rgba(17,22,28,.16);
-  --hover: rgba(17,22,28,.05);
-  /* shadows tinted with the palette's cool graphite, not warm brown */
-  --panel-shadow: 0 1px 2px rgba(15,23,32,.05), 0 14px 34px -18px rgba(15,23,32,.22);
-  --legacy: #2a78d6; --new: #eb6834;            /* series: legacy / new (validated) */
-  --legacy-soft: rgba(42,120,214,.13); --new-soft: rgba(235,104,52,.14);
-  --tie: #5f6b76;
-  --radius: 0.75rem;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-    --plane: #0d1217; --surface: #151b22; --ink: #e8edf2; --ink-2: #b6c1cc; --muted: #7d8994;
-    --grid: #232c35; --axis: #39434e; --ring: rgba(232,237,242,.14);
-    --hover: rgba(232,237,242,.055);
-    --panel-shadow: 0 1px 2px rgba(0,0,0,.45), 0 16px 40px -18px rgba(0,0,0,.55);
-    --legacy: #3987e5; --new: #d95926;
-    --legacy-soft: rgba(57,135,229,.17); --new-soft: rgba(217,89,38,.17);
-    --tie: #7d8994;
-  }
-}
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --plane: #0d1217; --surface: #151b22; --ink: #e8edf2; --ink-2: #b6c1cc; --muted: #7d8994;
-  --grid: #232c35; --axis: #39434e; --ring: rgba(232,237,242,.14);
-  --hover: rgba(232,237,242,.055);
-  --panel-shadow: 0 1px 2px rgba(0,0,0,.45), 0 16px 40px -18px rgba(0,0,0,.55);
-  --legacy: #3987e5; --new: #d95926;
-  --legacy-soft: rgba(57,135,229,.17); --new-soft: rgba(217,89,38,.17);
-  --tie: #7d8994;
-}
-* { box-sizing: border-box; }
-/* shadcn zinc shell tokens (values refined to the ocharness graphite shell;
+            :root {
+                color-scheme: light;
+                --plane: #f2f4f7;
+                --surface: #fbfcfd;
+                --ink: #11161c;
+                --ink-2: #333d47;
+                --muted: #5f6b76;
+                --grid: #dde3e8;
+                --axis: #b9c3cc;
+                --ring: rgba(17, 22, 28, 0.16);
+                --hover: rgba(17, 22, 28, 0.05);
+                /* shadows tinted with the palette's cool graphite, not warm brown */
+                --panel-shadow:
+                    0 1px 2px rgba(15, 23, 32, 0.05),
+                    0 14px 34px -18px rgba(15, 23, 32, 0.22);
+                --legacy: #2a78d6;
+                --new: #eb6834; /* series: legacy / new (validated) */
+                --legacy-soft: rgba(42, 120, 214, 0.13);
+                --new-soft: rgba(235, 104, 52, 0.14);
+                --tie: #5f6b76;
+                --radius: 0.75rem;
+            }
+            @media (prefers-color-scheme: dark) {
+                :root:not([data-theme="light"]) {
+                    color-scheme: dark;
+                    --plane: #0d1217;
+                    --surface: #151b22;
+                    --ink: #e8edf2;
+                    --ink-2: #b6c1cc;
+                    --muted: #7d8994;
+                    --grid: #232c35;
+                    --axis: #39434e;
+                    --ring: rgba(232, 237, 242, 0.14);
+                    --hover: rgba(232, 237, 242, 0.055);
+                    --panel-shadow:
+                        0 1px 2px rgba(0, 0, 0, 0.45),
+                        0 16px 40px -18px rgba(0, 0, 0, 0.55);
+                    --legacy: #3987e5;
+                    --new: #d95926;
+                    --legacy-soft: rgba(57, 135, 229, 0.17);
+                    --new-soft: rgba(217, 89, 38, 0.17);
+                    --tie: #7d8994;
+                }
+            }
+            :root[data-theme="dark"] {
+                color-scheme: dark;
+                --plane: #0d1217;
+                --surface: #151b22;
+                --ink: #e8edf2;
+                --ink-2: #b6c1cc;
+                --muted: #7d8994;
+                --grid: #232c35;
+                --axis: #39434e;
+                --ring: rgba(232, 237, 242, 0.14);
+                --hover: rgba(232, 237, 242, 0.055);
+                --panel-shadow:
+                    0 1px 2px rgba(0, 0, 0, 0.45),
+                    0 16px 40px -18px rgba(0, 0, 0, 0.55);
+                --legacy: #3987e5;
+                --new: #d95926;
+                --legacy-soft: rgba(57, 135, 229, 0.17);
+                --new-soft: rgba(217, 89, 38, 0.17);
+                --tie: #7d8994;
+            }
+            * {
+                box-sizing: border-box;
+            }
+            /* shadcn zinc shell tokens (values refined to the ocharness graphite shell;
    --muted resolves to the theme slice's chart gray, --ring is the focus hue.
    Values ride rgb() so no raw hex lands on a background property) */
-:root{--radius-sm:calc(var(--radius) * .6);--radius-md:calc(var(--radius) * .8);--radius-lg:var(--radius)}
-:root{--radius:.75rem;--background:rgb(242 244 247);--foreground:rgb(17 22 28);--card:rgb(251 252 253);--card-foreground:rgb(17 22 28);--popover:rgb(251 252 253);--popover-foreground:rgb(17 22 28);--primary:rgb(22 32 43);--primary-foreground:rgb(242 245 248);--secondary:rgb(231 235 239);--secondary-foreground:rgb(17 22 28);--muted:rgb(95 107 118);--muted-foreground:rgb(95 107 118);--accent:rgb(227 232 237);--accent-foreground:rgb(17 22 28);--destructive:rgb(179 54 43);--border:rgb(216 222 229);--input:rgb(204 212 219);--ring:rgb(74 131 201)}[data-theme=dark]{--background:rgb(13 18 23);--foreground:rgb(232 237 242);--card:rgb(21 27 34);--card-foreground:rgb(232 237 242);--popover:rgb(22 29 37);--popover-foreground:rgb(232 237 242);--primary:rgb(215 222 229);--primary-foreground:rgb(16 22 28);--secondary:rgb(29 37 46);--secondary-foreground:rgb(232 237 242);--muted:rgb(125 137 148);--muted-foreground:rgb(141 153 165);--accent:rgb(33 42 52);--accent-foreground:rgb(232 237 242);--destructive:rgb(229 100 76);--border:rgb(38 48 58);--input:rgb(46 57 68);--ring:rgb(127 169 221)}@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--background:rgb(13 18 23);--foreground:rgb(232 237 242);--card:rgb(21 27 34);--card-foreground:rgb(232 237 242);--popover:rgb(22 29 37);--popover-foreground:rgb(232 237 242);--primary:rgb(215 222 229);--primary-foreground:rgb(16 22 28);--secondary:rgb(29 37 46);--secondary-foreground:rgb(232 237 242);--muted:rgb(125 137 148);--muted-foreground:rgb(141 153 165);--accent:rgb(33 42 52);--accent-foreground:rgb(232 237 242);--destructive:rgb(229 100 76);--border:rgb(38 48 58);--input:rgb(46 57 68);--ring:rgb(127 169 221)}}
+            :root {
+                --radius-sm: calc(var(--radius) * 0.6);
+                --radius-md: calc(var(--radius) * 0.8);
+                --radius-lg: var(--radius);
+            }
+            :root {
+                --radius: 0.75rem;
+                --background: rgb(242 244 247);
+                --foreground: rgb(17 22 28);
+                --card: rgb(251 252 253);
+                --card-foreground: rgb(17 22 28);
+                --popover: rgb(251 252 253);
+                --popover-foreground: rgb(17 22 28);
+                --primary: rgb(22 32 43);
+                --primary-foreground: rgb(242 245 248);
+                --secondary: rgb(231 235 239);
+                --secondary-foreground: rgb(17 22 28);
+                --muted: rgb(95 107 118);
+                --muted-foreground: rgb(95 107 118);
+                --accent: rgb(227 232 237);
+                --accent-foreground: rgb(17 22 28);
+                --destructive: rgb(179 54 43);
+                --border: rgb(216 222 229);
+                --input: rgb(204 212 219);
+                --ring: rgb(74 131 201);
+            }
+            [data-theme="dark"] {
+                --background: rgb(13 18 23);
+                --foreground: rgb(232 237 242);
+                --card: rgb(21 27 34);
+                --card-foreground: rgb(232 237 242);
+                --popover: rgb(22 29 37);
+                --popover-foreground: rgb(232 237 242);
+                --primary: rgb(215 222 229);
+                --primary-foreground: rgb(16 22 28);
+                --secondary: rgb(29 37 46);
+                --secondary-foreground: rgb(232 237 242);
+                --muted: rgb(125 137 148);
+                --muted-foreground: rgb(141 153 165);
+                --accent: rgb(33 42 52);
+                --accent-foreground: rgb(232 237 242);
+                --destructive: rgb(229 100 76);
+                --border: rgb(38 48 58);
+                --input: rgb(46 57 68);
+                --ring: rgb(127 169 221);
+            }
+            @media (prefers-color-scheme: dark) {
+                :root:not([data-theme="light"]) {
+                    --background: rgb(13 18 23);
+                    --foreground: rgb(232 237 242);
+                    --card: rgb(21 27 34);
+                    --card-foreground: rgb(232 237 242);
+                    --popover: rgb(22 29 37);
+                    --popover-foreground: rgb(232 237 242);
+                    --primary: rgb(215 222 229);
+                    --primary-foreground: rgb(16 22 28);
+                    --secondary: rgb(29 37 46);
+                    --secondary-foreground: rgb(232 237 242);
+                    --muted: rgb(125 137 148);
+                    --muted-foreground: rgb(141 153 165);
+                    --accent: rgb(33 42 52);
+                    --accent-foreground: rgb(232 237 242);
+                    --destructive: rgb(229 100 76);
+                    --border: rgb(38 48 58);
+                    --input: rgb(46 57 68);
+                    --ring: rgb(127 169 221);
+                }
+            }
 
-
-/* page chrome: shadcn-style token names for the shell; Pages-first, the data
+            /* page chrome: shadcn-style token names for the shell; Pages-first, the data
    rides inline as JSON and the styling loads from the CDN head block above.
    Voice: Inter carries prose and chrome, IBM Plex Mono carries every number. */
-html { scroll-behavior: smooth; }
-body { margin: 0; padding: 0 24px 72px; background: var(--background); color: var(--foreground);
-  font: 14.5px/1.6 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; }
-::selection { background: var(--new-soft); }
-@media (prefers-reduced-motion: reduce) {
-  html { scroll-behavior: auto; }
-  *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
-}
-html.no-theme-transition, html.no-theme-transition *,
-html.no-theme-transition *::before, html.no-theme-transition *::after {
-  transition: none !important; }
+            html {
+                scroll-behavior: smooth;
+            }
+            body {
+                margin: 0;
+                padding: 0 24px 72px;
+                background: var(--background);
+                color: var(--foreground);
+                font:
+                    14.5px/1.6 "Inter",
+                    ui-sans-serif,
+                    system-ui,
+                    -apple-system,
+                    "Segoe UI",
+                    sans-serif;
+                text-rendering: optimizeLegibility;
+                -webkit-font-smoothing: antialiased;
+            }
+            ::selection {
+                background: var(--new-soft);
+            }
+            @media (prefers-reduced-motion: reduce) {
+                html {
+                    scroll-behavior: auto;
+                }
+                *,
+                *::before,
+                *::after {
+                    transition-duration: 0.01ms !important;
+                    animation-duration: 0.01ms !important;
+                }
+            }
+            html.no-theme-transition,
+            html.no-theme-transition *,
+            html.no-theme-transition *::before,
+            html.no-theme-transition *::after {
+                transition: none !important;
+            }
 
-/* the one orchestrated motion moment: the hero band reveals once on load */
-@media (prefers-reduced-motion: no-preference) {
-  .hero-in { animation: hero-in .55s cubic-bezier(.16, .7, .3, 1) .04s both; }
-  @keyframes hero-in {
-    from { opacity: 0; transform: translateY(12px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-}
+            /* the one orchestrated motion moment: the hero band reveals once on load */
+            @media (prefers-reduced-motion: no-preference) {
+                .hero-in {
+                    animation: hero-in 0.55s cubic-bezier(0.16, 0.7, 0.3, 1)
+                        0.04s both;
+                }
+                @keyframes hero-in {
+                    from {
+                        opacity: 0;
+                        transform: translateY(12px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+            }
 
-.wrap { max-width: 1240px; margin: 0 auto; padding-top: clamp(28px, 5vh, 52px); }
-.skip { position: absolute; left: -9999px; }
-.skip:focus { left: 16px; top: 12px; background: var(--card); color: var(--card-foreground);
-  border: 1px solid var(--border); border-radius: var(--radius-md); padding: 6px 10px; z-index: 50; }
+            .wrap {
+                max-width: 1240px;
+                margin: 0 auto;
+                padding-top: clamp(28px, 5vh, 52px);
+            }
+            .skip {
+                position: absolute;
+                left: -9999px;
+            }
+            .skip:focus {
+                left: 16px;
+                top: 12px;
+                background: var(--card);
+                color: var(--card-foreground);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-md);
+                padding: 6px 10px;
+                z-index: 50;
+            }
 
-/* the two-page navbar: relative links only (the bundle ships both pages), the
+            /* the two-page navbar: relative links only (the bundle ships both pages), the
    current page marked with aria-current; brand mark left, theme toggle right */
-.topnav { position: sticky; top: 0; z-index: 40; display: flex; align-items: center;
-  flex-wrap: wrap; gap: 8px 20px; max-width: 1240px; margin: 0 auto; padding: 12px 0;
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in oklab, var(--background) 82%, transparent);
-  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
-.brand { display: flex; align-items: center; gap: 9px; }
-.brand-mark { width: 18px; height: 18px; flex: none; }
-.brand-name { font-weight: 700; font-size: 14.5px; letter-spacing: -.01em; }
-.brand-tag { font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
-  font-size: 11.5px; color: var(--muted-foreground); }
-.page-links { display: flex; gap: 4px; }
-.page-links a { font-size: 13px; color: var(--muted-foreground); text-decoration: none;
-  border-radius: var(--radius-md); padding: 5px 11px; font-weight: 500;
-  transition: background .15s ease, color .15s ease; }
-.page-links a:hover { background: var(--accent); color: var(--accent-foreground); }
-.page-links a[aria-current="page"] { background: var(--accent); color: var(--accent-foreground); font-weight: 600; }
-.topnav fieldset { margin-left: auto; }
-.topnav legend { position: absolute; left: -9999px; }
-@media (max-width: 480px) {
-  .topnav { position: static; gap: 6px 12px; }
-  .brand-tag { display: none; }
-}
+            .topnav {
+                position: sticky;
+                top: 0;
+                z-index: 40;
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 8px 20px;
+                max-width: 1240px;
+                margin: 0 auto;
+                padding: 12px 0;
+                border-bottom: 1px solid var(--border);
+                background: color-mix(
+                    in oklab,
+                    var(--background) 82%,
+                    transparent
+                );
+                backdrop-filter: blur(10px);
+                -webkit-backdrop-filter: blur(10px);
+            }
+            .brand {
+                display: flex;
+                align-items: center;
+                gap: 9px;
+            }
+            .brand-mark {
+                width: 18px;
+                height: 18px;
+                flex: none;
+            }
+            .brand-name {
+                font-weight: 700;
+                font-size: 14.5px;
+                letter-spacing: -0.01em;
+            }
+            .brand-tag {
+                font-family:
+                    "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+                font-size: 11.5px;
+                color: var(--muted-foreground);
+            }
+            .page-links {
+                display: flex;
+                gap: 4px;
+            }
+            .page-links a {
+                font-size: 13px;
+                color: var(--muted-foreground);
+                text-decoration: none;
+                border-radius: var(--radius-md);
+                padding: 5px 11px;
+                font-weight: 500;
+                transition:
+                    background 0.15s ease,
+                    color 0.15s ease;
+            }
+            .page-links a:hover {
+                background: var(--accent);
+                color: var(--accent-foreground);
+            }
+            .page-links a[aria-current="page"] {
+                background: var(--accent);
+                color: var(--accent-foreground);
+                font-weight: 600;
+            }
+            .topnav fieldset {
+                margin-left: auto;
+            }
+            .topnav legend {
+                position: absolute;
+                left: -9999px;
+            }
+            @media (max-width: 480px) {
+                .topnav {
+                    position: static;
+                    gap: 6px 12px;
+                }
+                .brand-tag {
+                    display: none;
+                }
+            }
 
-/* the three-state theme toggle: the selected state reads as a primary pill */
-fieldset { font: inherit; border: 0; padding: 0; margin: 0; }
-.seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-md);
-  overflow: hidden; background: var(--card); padding: 2px; gap: 2px; }
-.seg label { position: relative; display: inline-flex; align-items: center; gap: 5px;
-  padding: 5px 10px; font-size: 12.5px; color: var(--muted-foreground); cursor: pointer;
-  border-radius: var(--radius-sm); transition: background .15s ease, color .15s ease; }
-.seg label + label { border: 0; }
-.seg label:hover { background: var(--accent); color: var(--accent-foreground); }
-.seg input { position: absolute; opacity: 0; pointer-events: none; }
-.seg label:has(input:checked) { background: var(--primary); color: var(--primary-foreground); font-weight: 600; }
-.seg label:has(input:focus-visible) { outline: 2px solid var(--ring); outline-offset: -2px; }
-svg.lucide { width: 1em; height: 1em; flex: none; }
+            /* the three-state theme toggle: the selected state reads as a primary pill */
+            fieldset {
+                font: inherit;
+                border: 0;
+                padding: 0;
+                margin: 0;
+            }
+            .seg {
+                display: inline-flex;
+                border: 1px solid var(--border);
+                border-radius: var(--radius-md);
+                overflow: hidden;
+                background: var(--card);
+                padding: 2px;
+                gap: 2px;
+            }
+            .seg label {
+                position: relative;
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                padding: 5px 10px;
+                font-size: 12.5px;
+                color: var(--muted-foreground);
+                cursor: pointer;
+                border-radius: var(--radius-sm);
+                transition:
+                    background 0.15s ease,
+                    color 0.15s ease;
+            }
+            .seg label + label {
+                border: 0;
+            }
+            .seg label:hover {
+                background: var(--accent);
+                color: var(--accent-foreground);
+            }
+            .seg input {
+                position: absolute;
+                opacity: 0;
+                pointer-events: none;
+            }
+            .seg label:has(input:checked) {
+                background: var(--primary);
+                color: var(--primary-foreground);
+                font-weight: 600;
+            }
+            .seg label:has(input:focus-visible) {
+                outline: 2px solid var(--ring);
+                outline-offset: -2px;
+            }
+            svg.lucide {
+                width: 1em;
+                height: 1em;
+                flex: none;
+            }
 
-:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+            :focus-visible {
+                outline: 2px solid var(--ring);
+                outline-offset: 2px;
+            }
 
-.wrap h1 { font-size: clamp(28px, 4vw, 40px); margin: 0; letter-spacing: -.022em;
-  font-weight: 700; line-height: 1.14; text-wrap: balance; }
-.wrap h2 { font-size: 16px; letter-spacing: -.01em; color: var(--foreground);
-  margin: 34px 0 12px; font-weight: 600; text-wrap: balance; }
-.sub { color: var(--muted-foreground); font-size: 13.5px; margin-top: 10px; max-width: 88ch; }
+            .wrap h1 {
+                font-size: clamp(28px, 4vw, 40px);
+                margin: 0;
+                letter-spacing: -0.022em;
+                font-weight: 700;
+                line-height: 1.14;
+                text-wrap: balance;
+            }
+            .wrap h2 {
+                font-size: 16px;
+                letter-spacing: -0.01em;
+                color: var(--foreground);
+                margin: 34px 0 12px;
+                font-weight: 600;
+                text-wrap: balance;
+            }
+            .sub {
+                color: var(--muted-foreground);
+                font-size: 13.5px;
+                margin-top: 10px;
+                max-width: 88ch;
+            }
 
-/* the run's provenance as an instrument readout, not a meta decoration */
-.readout { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 12px; line-height: 1.75; color: var(--muted-foreground);
-  border-left: 2px solid var(--axis); padding: 3px 0 3px 14px; margin: 14px 0 0; }
+            /* the run's provenance as an instrument readout, not a meta decoration */
+            .readout {
+                font-family:
+                    "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas,
+                    monospace;
+                font-size: 12px;
+                line-height: 1.75;
+                color: var(--muted-foreground);
+                border-left: 2px solid var(--axis);
+                padding: 3px 0 3px 14px;
+                margin: 14px 0 0;
+            }
 
-.mono { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  font-variant-numeric: tabular-nums; }
-.badge { display: inline-block; font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
-  font-size: 10.5px; border: 1px solid var(--border); border-radius: var(--radius-sm);
-  padding: 1px 6px; color: var(--muted-foreground); background: var(--secondary);
-  margin-left: 6px; vertical-align: 1px; white-space: nowrap; }
+            .mono {
+                font-family:
+                    "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas,
+                    monospace;
+                font-variant-numeric: tabular-nums;
+            }
+            .badge {
+                display: inline-block;
+                font-family:
+                    "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+                font-size: 10.5px;
+                border: 1px solid var(--border);
+                border-radius: var(--radius-sm);
+                padding: 1px 6px;
+                color: var(--muted-foreground);
+                background: var(--secondary);
+                margin-left: 6px;
+                vertical-align: 1px;
+                white-space: nowrap;
+            }
 
-.panel { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg);
-  padding: 20px 22px; margin: 0 0 18px;
-  box-shadow: var(--panel-shadow); }
+            .panel {
+                background: var(--card);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-lg);
+                padding: 20px 22px;
+                margin: 0 0 18px;
+                box-shadow: var(--panel-shadow);
+            }
 
-/* the verdict band leads: the only tinted surface on the page, and its tint
+            /* the verdict band leads: the only tinted surface on the page, and its tint
    is data — the overall winner the headline states (set by renderReco) */
-.hero { border-left-width: 3px; padding: 24px 26px 22px; margin: 20px 0 22px; }
-.hero[data-winner="legacy"] { border-left-color: var(--legacy);
-  background: color-mix(in oklab, var(--card) 88%, var(--legacy)); }
-.hero[data-winner="new"] { border-left-color: var(--new);
-  background: color-mix(in oklab, var(--card) 88%, var(--new)); }
-.hero[data-winner="tie"], .hero[data-winner="split"] { border-left-color: var(--axis); }
+            .hero {
+                border-left-width: 3px;
+                padding: 24px 26px 22px;
+                margin: 20px 0 22px;
+            }
+            .hero[data-winner="legacy"] {
+                border-left-color: var(--legacy);
+                background: color-mix(in oklab, var(--card) 88%, var(--legacy));
+            }
+            .hero[data-winner="new"] {
+                border-left-color: var(--new);
+                background: color-mix(in oklab, var(--card) 88%, var(--new));
+            }
+            .hero[data-winner="tie"],
+            .hero[data-winner="split"] {
+                border-left-color: var(--axis);
+            }
 
-.big { font-size: clamp(23px, 3vw, 32px); font-weight: 700; letter-spacing: -.018em;
-  line-height: 1.22; margin: 0; text-wrap: balance; }
-.h-legacy { color: color-mix(in oklab, var(--legacy) 78%, var(--ink)); }
-.h-new { color: color-mix(in oklab, var(--new) 72%, var(--ink)); }
+            .big {
+                font-size: clamp(23px, 3vw, 32px);
+                font-weight: 700;
+                letter-spacing: -0.018em;
+                line-height: 1.22;
+                margin: 0;
+                text-wrap: balance;
+            }
+            .h-legacy {
+                color: color-mix(in oklab, var(--legacy) 78%, var(--ink));
+            }
+            .h-new {
+                color: color-mix(in oklab, var(--new) 72%, var(--ink));
+            }
 
-/* workload verdicts read as a scoreboard, not boxed cards */
-.pills { display: flex; flex-wrap: wrap; gap: 12px 26px; margin-top: 16px; }
-.pill { min-width: 150px; }
-.pill b { display: block; font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
-  font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--muted-foreground);
-  margin: 0 0 5px; }
+            /* workload verdicts read as a scoreboard, not boxed cards */
+            .pills {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 12px 26px;
+                margin-top: 16px;
+            }
+            .pill {
+                min-width: 150px;
+            }
+            .pill b {
+                display: block;
+                font-family:
+                    "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+                font-size: 11px;
+                font-weight: 600;
+                letter-spacing: 0.02em;
+                color: var(--muted-foreground);
+                margin: 0 0 5px;
+            }
 
-.controls { display: flex; flex-direction: column; gap: 18px; }
-.controls-row { display: flex; gap: 18px 22px; flex-wrap: wrap; align-items: flex-end; }
-.controls-row .ctl { flex: 1 1 auto; min-width: 150px; }
-.ctl { display: flex; flex-direction: column; gap: 6px; }
-.status-line { font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
-  font-size: 11.5px; color: var(--muted-foreground); padding-top: 10px;
-  border-top: 1px solid var(--border); }
-.ctl-label { font-size: 11px; font-weight: 600; letter-spacing: .02em;
-  color: var(--muted-foreground); }
+            .controls {
+                display: flex;
+                flex-direction: column;
+                gap: 18px;
+            }
+            .controls-row {
+                display: flex;
+                gap: 18px 22px;
+                flex-wrap: wrap;
+                align-items: flex-end;
+            }
+            .controls-row .ctl {
+                flex: 1 1 auto;
+                min-width: 150px;
+            }
+            /* the model control stays compact: it hugs its content up to a
+               240px cap so a long model name cannot stretch the select
+               across the row */
+            .controls-row .model-ctl {
+                flex: 0 1 auto;
+                min-width: 150px;
+                max-width: 240px;
+            }
+            .ctl {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+            }
+            .status-line {
+                font-family:
+                    "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+                font-size: 11.5px;
+                color: var(--muted-foreground);
+                padding-top: 10px;
+                border-top: 1px solid var(--border);
+            }
+            .ctl-label {
+                font-size: 11px;
+                font-weight: 600;
+                letter-spacing: 0.02em;
+                color: var(--muted-foreground);
+            }
 
-/* the token scenario reads as one control: the in/out fields bound by tags,
+            /* the token scenario reads as one control: the in/out fields bound by tags,
    and the ratio presets — which rewrite BOTH fields — grouped behind a
-   hairline divider so their scope is legible */
-.scenario { flex: 1 1 380px; }
-.scenario-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.scenario-tag { font-size: 10px; font-weight: 600; letter-spacing: .04em;
-  color: var(--muted-foreground); }
-.scenario-div { width: 1px; height: 20px; background: var(--border); margin: 0 6px; flex: none; }
-/* S(x): one labeled control — the slider, its live value and the presets
-   that drive the same value share one row */
-.s-ctl { gap: 6px; }
-.s-group { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; }
-.s-group input[type="range"] { flex: 1 1 240px; width: auto; max-width: 420px; }
-.s-val { font-size: 13px; min-width: 44px; }
-.s-presets { display: flex; gap: 6px; flex-wrap: wrap; }
+   hairline divider so their scope is legible; it hugs its content */
+            .controls-row .scenario {
+                flex: 0 1 auto;
+            }
+            .scenario-group {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                flex-wrap: wrap;
+            }
+            .scenario-tag {
+                font-size: 10px;
+                font-weight: 600;
+                letter-spacing: 0.04em;
+                color: var(--muted-foreground);
+            }
+            .scenario-div {
+                width: 1px;
+                height: 20px;
+                background: var(--border);
+                margin: 0 6px;
+                flex: none;
+            }
+            /* S(x): the same control as the calculator — the preset buttons plus the
+   free underline input with its unit attached; it hugs its content too */
+            .controls-row .s-ctl {
+                flex: 0 1 auto;
+            }
+            .ctl-row {
+                display: flex;
+                gap: 6px;
+                align-items: center;
+            }
+            .cache-presets {
+                flex-wrap: wrap;
+            }
+            .s-custom {
+                display: inline-flex;
+                align-items: center;
+                height: 32px;
+                padding: 0 6px 0 2px;
+                border: 0;
+                border-bottom: 2px solid var(--muted);
+                transition: border-color 0.15s ease;
+                cursor: text;
+            }
+            .s-custom:hover {
+                border-bottom-color: var(--ink-2);
+            }
+            .s-custom:focus-within {
+                border-bottom-color: var(--ring);
+            }
+            .s-custom input[type="number"] {
+                border: 0;
+                background: transparent;
+                box-shadow: none;
+                height: 28px;
+                width: 44px;
+                padding: 0 2px;
+                text-align: right;
+            }
+            .s-custom input[type="number"]:hover {
+                border-color: transparent;
+            }
+            .s-custom input[type="number"]:focus {
+                box-shadow: none;
+            }
+            .s-unit {
+                font-size: 12px;
+                font-weight: 600;
+                color: var(--muted-foreground);
+                font-variant-numeric: tabular-nums;
+            }
 
-select, input[type="number"] { font: inherit; font-size: 13px; color: var(--foreground);
-  background: var(--background); border: 1px solid var(--input); border-radius: var(--radius-md);
-  padding: 6px 10px; height: 36px;
-  transition: border-color .15s ease, box-shadow .15s ease; }
-select:hover, input[type="number"]:hover { border-color: var(--axis); }
-select:focus, input[type="number"]:focus { border-color: var(--ring); outline: none;
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 30%, transparent); }
-/* the select fills its column (parity with the calculator's ~420px picker),
-   so the row reads as two balanced clusters with no dead middle zone */
-#filter-model { width: 100%; }
-#input-tokens-in, #input-tokens-out { width: 120px; }
+            select,
+            input[type="number"] {
+                font: inherit;
+                font-size: 13px;
+                color: var(--foreground);
+                background: var(--background);
+                border: 1px solid var(--input);
+                border-radius: var(--radius-md);
+                padding: 6px 10px;
+                height: 36px;
+                transition:
+                    border-color 0.15s ease,
+                    box-shadow 0.15s ease;
+            }
+            select:hover,
+            input[type="number"]:hover {
+                border-color: var(--axis);
+            }
+            select:focus,
+            input[type="number"]:focus {
+                border-color: var(--ring);
+                outline: none;
+                box-shadow: 0 0 0 3px
+                    color-mix(in oklab, var(--ring) 30%, transparent);
+            }
+            /* the select fills its column, which stays compact: it hugs its
+               content up to a 240px cap so a long model name cannot stretch
+               the control across the row */
+            #filter-model {
+                width: 100%;
+                max-width: 240px;
+            }
+            #input-tokens-in,
+            #input-tokens-out {
+                width: 120px;
+            }
 
-button.preset { font: inherit; font-size: 12px; color: var(--secondary-foreground);
-  background: var(--secondary); border: 1px solid var(--border); border-radius: var(--radius-md);
-  padding: 5px 10px; cursor: pointer; height: 32px;
-  transition: background .15s ease, color .15s ease, border-color .15s ease, transform .05s ease;
-  display: inline-flex; align-items: center; gap: 6px; }
-button.preset:hover { background: var(--accent); color: var(--accent-foreground); border-color: var(--border); }
-button.preset:active { transform: translateY(1px); }
-button.preset.active { background: var(--primary); color: var(--primary-foreground);
-  border-color: var(--primary); font-weight: 600; }
-button.cache-preset { font-variant-numeric: tabular-nums; }
+            button.preset {
+                font: inherit;
+                font-size: 12px;
+                color: var(--secondary-foreground);
+                background: var(--secondary);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-md);
+                padding: 5px 10px;
+                cursor: pointer;
+                height: 32px;
+                transition:
+                    background 0.15s ease,
+                    color 0.15s ease,
+                    border-color 0.15s ease,
+                    transform 0.05s ease;
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+            }
+            button.preset:hover {
+                background: var(--accent);
+                color: var(--accent-foreground);
+                border-color: var(--border);
+            }
+            button.preset:active {
+                transform: translateY(1px);
+            }
+            button.preset.active {
+                background: var(--primary);
+                color: var(--primary-foreground);
+                border-color: var(--primary);
+                font-weight: 600;
+            }
+            button.cache-preset {
+                font-variant-numeric: tabular-nums;
+            }
 
-input[type="range"] { -webkit-appearance: none; appearance: none; width: 260px; max-width: 100%;
-  height: 6px; background: var(--input); border-radius: 999px; outline: none; vertical-align: middle; }
-input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
-  width: 16px; height: 16px; border-radius: 50%; background: var(--primary);
-  border: 2px solid var(--card); box-shadow: 0 1px 3px rgba(2,8,16,.25); cursor: pointer; }
-input[type="range"]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%;
-  background: var(--primary); border: 2px solid var(--card); box-shadow: 0 1px 3px rgba(2,8,16,.25); cursor: pointer; }
-input[type="range"]:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+            table {
+                border-collapse: collapse;
+                width: 100%;
+                font-size: 13px;
+            }
+            .scroll-x {
+                overflow: auto;
+                max-height: 72vh;
+            }
+            th {
+                position: sticky;
+                top: 0;
+                z-index: 1;
+                background: var(--card);
+                color: var(--muted-foreground);
+                font-size: 11px;
+                font-weight: 600;
+                letter-spacing: 0.02em;
+                text-align: left;
+                padding: 8px 10px;
+                border-bottom: 1px solid var(--axis);
+                white-space: nowrap;
+            }
+            td {
+                padding: 8px 10px;
+                border-bottom: 1px solid var(--border);
+                vertical-align: middle;
+            }
+            tbody tr {
+                transition: background 0.12s ease;
+            }
+            tbody tr:hover {
+                background: var(--hover);
+            }
+            td.num,
+            th.num {
+                text-align: right;
+                font-variant-numeric: tabular-nums;
+            }
+            .hdr-tokens {
+                font-size: 11px;
+            }
 
-table { border-collapse: collapse; width: 100%; font-size: 13px; }
-.scroll-x { overflow: auto; max-height: 72vh; }
-th { position: sticky; top: 0; z-index: 1; background: var(--card);
-  color: var(--muted-foreground); font-size: 11px; font-weight: 600; letter-spacing: .02em;
-  text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--axis); white-space: nowrap; }
-td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-tbody tr { transition: background .12s ease; }
-tbody tr:hover { background: var(--hover); }
-td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-.hdr-tokens { font-size: 11px; }
+            /* verdict chips: the data hues at full voice, text darkened toward ink for AA */
+            .chip {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                font-family:
+                    "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+                font-size: 12px;
+                padding: 3px 10px;
+                border-radius: 999px;
+                font-weight: 600;
+                white-space: nowrap;
+                font-variant-numeric: tabular-nums;
+                border: 1px solid transparent;
+            }
+            .chip .dot {
+                width: 7px;
+                height: 7px;
+                border-radius: 50%;
+                flex: none;
+            }
+            .chip.legacy {
+                color: color-mix(in oklab, var(--legacy) 65%, var(--ink));
+                background: color-mix(in oklab, var(--legacy) 12%, var(--card));
+                border-color: color-mix(
+                    in oklab,
+                    var(--legacy) 32%,
+                    transparent
+                );
+            }
+            .chip.legacy .dot {
+                background: var(--legacy);
+            }
+            .chip.new {
+                color: color-mix(in oklab, var(--new) 65%, var(--ink));
+                background: color-mix(in oklab, var(--new) 13%, var(--card));
+                border-color: color-mix(in oklab, var(--new) 32%, transparent);
+            }
+            .chip.new .dot {
+                background: var(--new);
+            }
+            .chip.tie {
+                color: var(--muted-foreground);
+                border: 1px dashed var(--axis);
+            }
+            .chip.nodata {
+                color: var(--muted-foreground);
+                font-weight: 500;
+            }
 
-/* verdict chips: the data hues at full voice, text darkened toward ink for AA */
-.chip { display: inline-flex; align-items: center; gap: 6px; font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
-  font-size: 12px; padding: 3px 10px; border-radius: 999px; font-weight: 600; white-space: nowrap;
-  font-variant-numeric: tabular-nums; border: 1px solid transparent; }
-.chip .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
-.chip.legacy { color: color-mix(in oklab, var(--legacy) 65%, var(--ink));
-  background: color-mix(in oklab, var(--legacy) 12%, var(--card));
-  border-color: color-mix(in oklab, var(--legacy) 32%, transparent); }
-.chip.legacy .dot { background: var(--legacy); }
-.chip.new { color: color-mix(in oklab, var(--new) 65%, var(--ink));
-  background: color-mix(in oklab, var(--new) 13%, var(--card));
-  border-color: color-mix(in oklab, var(--new) 32%, transparent); }
-.chip.new .dot { background: var(--new); }
-.chip.tie { color: var(--muted-foreground); border: 1px dashed var(--axis); }
-.chip.nodata { color: var(--muted-foreground); font-weight: 500; }
+            .mbar {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .mbar .track {
+                position: relative;
+                width: 96px;
+                height: 8px;
+                background: var(--grid);
+                border-radius: 4px;
+                overflow: hidden;
+            }
+            .mbar .fill {
+                position: absolute;
+                top: 0;
+                bottom: 0;
+                border-radius: 4px;
+            }
+            .mbar .fill.legacy {
+                left: 0;
+                background: var(--legacy);
+            }
+            .mbar .fill.new {
+                right: 0;
+                background: var(--new);
+            }
+            .mbar b {
+                font-weight: 600;
+                min-width: 52px;
+                text-align: right;
+            }
 
-.mbar { display: inline-flex; align-items: center; gap: 8px; }
-.mbar .track { position: relative; width: 96px; height: 8px; background: var(--grid);
-  border-radius: 4px; overflow: hidden; }
-.mbar .fill { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
-.mbar .fill.legacy { left: 0; background: var(--legacy); }
-.mbar .fill.new { right: 0; background: var(--new); }
-.mbar b { font-weight: 600; min-width: 52px; text-align: right; }
+            .legend {
+                display: flex;
+                gap: 8px 18px;
+                align-items: baseline;
+                flex-wrap: wrap;
+                font-size: 12px;
+                color: var(--muted-foreground);
+                margin: 12px 0 0;
+            }
+            .sw {
+                display: inline-block;
+                width: 10px;
+                height: 10px;
+                border-radius: 3px;
+                margin-right: 6px;
+                vertical-align: -1px;
+            }
 
-.legend { display: flex; gap: 8px 18px; align-items: baseline; flex-wrap: wrap;
-  font-size: 12px; color: var(--muted-foreground); margin: 12px 0 0; }
-.sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px;
-  margin-right: 6px; vertical-align: -1px; }
-
-.note { font-size: 12.5px; color: var(--muted-foreground); }
-.panel > p.note, main > p.note, .legend + p.note { line-height: 1.7; text-wrap: pretty; }
-.footnote { margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--border); }
-/* the protocol note: a demoted footnote zone, hairline-separated from the
+            .note {
+                font-size: 12.5px;
+                color: var(--muted-foreground);
+            }
+            .panel > p.note,
+            main > p.note,
+            .legend + p.note {
+                line-height: 1.7;
+                text-wrap: pretty;
+            }
+            .footnote {
+                margin-top: 28px;
+                padding-top: 18px;
+                border-top: 1px solid var(--border);
+            }
+            /* the protocol note: a demoted footnote zone, hairline-separated from the
    controls it explains; text verbatim, fully visible */
-.note.protocol { margin: 16px 0 0; padding-top: 12px; border-top: 1px solid var(--border);
-  font-size: 11.5px; line-height: 1.6; max-width: 120ch; }
+            .note.protocol {
+                margin: 16px 0 0;
+                padding-top: 12px;
+                border-top: 1px solid var(--border);
+                font-size: 11.5px;
+                line-height: 1.6;
+                max-width: 120ch;
+            }
 
-svg { display: block; max-width: 100%; }
-#chart-threshold svg, #chart-margins svg { width: 100%; height: auto; }
-</style>
-</head>
-<body>
-<a class="skip" href="#main">Skip to content</a>
-<nav class="topnav" aria-label="pages">
-  <div class="brand">
-    <svg class="brand-mark" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><rect x="3" y="9" width="4.5" height="8" rx="1.5" fill="var(--legacy)"/><rect x="10.5" y="3" width="4.5" height="14" rx="1.5" fill="var(--new)"/></svg>
-    <span class="brand-name">ocharness</span>
-    <span class="brand-tag">pricing bench</span>
-  </div>
-  <div class="page-links">
-    <a href="dashboard.html" aria-current="page">Dashboard</a>
-    <a href="calculator.html">Calculator</a>
-  </div>
-  <fieldset>
-    <legend>theme</legend>
-    <div class="seg" role="radiogroup" aria-label="theme">
-      <label><input type="radio" name="theme" value="system" checked><i data-lucide="monitor" aria-hidden="true"></i> system</label>
-      <label><input type="radio" name="theme" value="light"><i data-lucide="sun" aria-hidden="true"></i> light</label>
-      <label><input type="radio" name="theme" value="dark"><i data-lucide="moon" aria-hidden="true"></i> dark</label>
-    </div>
-  </fieldset>
-</nav>
-<main id="main" class="wrap">
-<h1>Ollama Cloud cost analysis: legacy or new?</h1>
-<p class="readout">__RESUMEN__</p>
+            svg {
+                display: block;
+                max-width: 100%;
+            }
+            #chart-margins svg {
+                width: 100%;
+                height: auto;
+            }
+        </style>
+    </head>
+    <body>
+        <a class="skip" href="#main">Skip to content</a>
+        <nav class="topnav" aria-label="pages">
+            <div class="brand">
+                <svg
+                    class="brand-mark"
+                    viewBox="0 0 20 20"
+                    aria-hidden="true"
+                    focusable="false"
+                >
+                    <rect
+                        x="3"
+                        y="9"
+                        width="4.5"
+                        height="8"
+                        rx="1.5"
+                        fill="var(--legacy)"
+                    />
+                    <rect
+                        x="10.5"
+                        y="3"
+                        width="4.5"
+                        height="14"
+                        rx="1.5"
+                        fill="var(--new)"
+                    />
+                </svg>
+                <span class="brand-name">ocharness</span>
+                <span class="brand-tag">pricing bench</span>
+            </div>
+            <div class="page-links">
+                <a href="dashboard.html" aria-current="page">Dashboard</a>
+                <a href="calculator.html">Calculator</a>
+            </div>
+            <fieldset>
+                <legend>theme</legend>
+                <div class="seg" role="radiogroup" aria-label="theme">
+                    <label
+                        ><input
+                            type="radio"
+                            name="theme"
+                            value="system"
+                            checked
+                        /><i data-lucide="monitor" aria-hidden="true"></i>
+                        system</label
+                    >
+                    <label
+                        ><input type="radio" name="theme" value="light" /><i
+                            data-lucide="sun"
+                            aria-hidden="true"
+                        ></i>
+                        light</label
+                    >
+                    <label
+                        ><input type="radio" name="theme" value="dark" /><i
+                            data-lucide="moon"
+                            aria-hidden="true"
+                        ></i>
+                        dark</label
+                    >
+                </div>
+            </fieldset>
+        </nav>
+        <main id="main" class="wrap">
+            <h1>Ollama Cloud cost analysis: legacy or new?</h1>
 
-<section id="reco" class="panel hero hero-in">
-  <div class="big" id="reco-headline"></div>
-  <div class="sub" id="reco-sub"></div>
-  <div class="pills" id="reco-pills"></div>
-</section>
+            <section id="reco" class="panel hero hero-in">
+                <div class="big" id="reco-headline"></div>
+                <div class="sub" id="reco-sub"></div>
+                <div class="pills" id="reco-pills"></div>
+            </section>
 
-<div class="panel">
-  <div class="controls">
-    <div class="controls-row">
-      <div class="ctl">
-        <label class="ctl-label" for="filter-model">model</label>
-        <select id="filter-model"><option value="">all models</option>__OPCIONES__</select>
-      </div>
-      <div class="ctl scenario">
-        <span class="ctl-label" id="scenario-label">token scenario</span>
-        <div class="scenario-group" role="group" aria-labelledby="scenario-label">
-          <label class="scenario-tag" for="input-tokens-in">in</label>
-          <input type="number" id="input-tokens-in" min="1" step="1000" value="1000000" class="mono">
-          <label class="scenario-tag" for="input-tokens-out">out</label>
-          <input type="number" id="input-tokens-out" min="1" step="1000" value="250000" class="mono">
-          <span class="scenario-div" aria-hidden="true"></span>
-          <button type="button" class="preset mono" data-in="1000000" data-out="250000" aria-label="set scenario to 4:1">4:1</button>
-          <button type="button" class="preset mono" data-in="625000" data-out="625000" aria-label="set scenario to 1:1">1:1</button>
-          <button type="button" class="preset mono" data-in="250000" data-out="1000000" aria-label="set scenario to 1:4">1:4</button>
-        </div>
-      </div>
-    </div>
-    <div class="ctl s-ctl">
-      <label class="ctl-label" for="slider-s">cache hit-rate S(x), presentation layer only</label>
-      <div class="s-group">
-        <input type="range" id="slider-s" min="0" max="100" value="85" step="1" aria-describedby="slider-val slider-note">
-        <b id="slider-val" class="mono s-val">85%</b>
-        <div class="s-presets">
-          <button type="button" class="preset mono cache-preset" data-s="0">0%</button>
-          <button type="button" class="preset mono cache-preset" data-s="50">50%</button>
-          <button type="button" class="preset mono cache-preset active" data-s="85">85%</button>
-          <button type="button" class="preset mono cache-preset" data-s="95">95%</button>
-        </div>
-      </div>
-    </div>
-    <div class="status-line" id="estado-filtro" aria-live="polite"></div>
-  </div>
-  <p class="note protocol" id="slider-note">The slider and the token scenario inputs recompute the new-plan
-    costs, the critical threshold and the verdict margins in live JS, from the embedded
-    per-cell tokens, rates and anchor. Nothing persisted changes. The raw is immutable and
-    derivatives regenerate only with versioned parameters.
-    Models with a conclusive measured hit-rate keep it, marked &laquo;measured S&raquo;, and the slider
-    cannot move them; models without a published discount are unmoved, S(x) &equiv; S0 for them. A
-    custom value that overrides measurements belongs to a stamped re-run with --s, never to this
-    dashboard.</p>
-</div>
+            <div class="panel">
+                <div class="controls">
+                    <div class="controls-row">
+                        <div class="ctl model-ctl">
+                            <label class="ctl-label" for="filter-model"
+                                >model</label
+                            >
+                            <select id="filter-model">
+                                <option value="">all models</option>
+                                __OPCIONES__
+                            </select>
+                        </div>
+                        <div class="ctl scenario">
+                            <span class="ctl-label" id="scenario-label"
+                                >token scenario</span
+                            >
+                            <div
+                                class="scenario-group"
+                                role="group"
+                                aria-labelledby="scenario-label"
+                            >
+                                <label
+                                    class="scenario-tag"
+                                    for="input-tokens-in"
+                                    >in</label
+                                >
+                                <input
+                                    type="number"
+                                    id="input-tokens-in"
+                                    min="1"
+                                    step="1000"
+                                    value="1000000"
+                                    class="mono"
+                                />
+                                <label
+                                    class="scenario-tag"
+                                    for="input-tokens-out"
+                                    >out</label
+                                >
+                                <input
+                                    type="number"
+                                    id="input-tokens-out"
+                                    min="1"
+                                    step="1000"
+                                    value="250000"
+                                    class="mono"
+                                />
+                                <span
+                                    class="scenario-div"
+                                    aria-hidden="true"
+                                ></span>
+                                <button
+                                    type="button"
+                                    class="preset mono"
+                                    data-in="1000000"
+                                    data-out="250000"
+                                    aria-label="set scenario to 4:1"
+                                >
+                                    4:1
+                                </button>
+                                <button
+                                    type="button"
+                                    class="preset mono"
+                                    data-in="625000"
+                                    data-out="625000"
+                                    aria-label="set scenario to 1:1"
+                                >
+                                    1:1
+                                </button>
+                                <button
+                                    type="button"
+                                    class="preset mono"
+                                    data-in="250000"
+                                    data-out="1000000"
+                                    aria-label="set scenario to 1:4"
+                                >
+                                    1:4
+                                </button>
+                            </div>
+                        </div>
+                        <div class="ctl s-ctl">
+                            <label class="ctl-label" for="cache-s">cache hit-rate</label
+                            >
+                            <div class="ctl-row cache-presets">
+                                <button
+                                    type="button"
+                                    class="preset mono cache-preset"
+                                    data-s="0"
+                                >
+                                    0%
+                                </button>
+                                <button
+                                    type="button"
+                                    class="preset mono cache-preset"
+                                    data-s="50"
+                                >
+                                    50%
+                                </button>
+                                <button
+                                    type="button"
+                                    class="preset mono cache-preset active"
+                                    data-s="85"
+                                >
+                                    85%
+                                </button>
+                                <button
+                                    type="button"
+                                    class="preset mono cache-preset"
+                                    data-s="95"
+                                >
+                                    95%
+                                </button>
+                                <label class="s-custom" for="cache-s">
+                                    <input
+                                        type="number"
+                                        id="cache-s"
+                                        min="0"
+                                        max="100"
+                                        step="1"
+                                        value="85"
+                                        class="mono"
+                                        aria-label="custom cache percentage"
+                                    />
+                                    <span class="s-unit">%</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    <div
+                        class="status-line"
+                        id="estado-filtro"
+                        aria-live="polite"
+                    ></div>
+                </div>
+            </div>
 
-<h2>Cells (model &times; workload)</h2>
-<div class="panel scroll-x">
-  <table>
-    <thead><tr>
-      <th>model</th><th>workload</th><th>level</th>
-      <th class="num">legacy $ / <span class="hdr-tokens mono">1M+250k</span> tok</th>
-      <th class="num">new $ / <span class="hdr-tokens mono">1M+250k</span> tok</th>
-      <th class="num">pass rate</th><th>verdict</th><th>margin (paid $)</th>
-    </tr></thead>
-    <tbody id="tabla-cuerpo"></tbody>
-  </table>
-  <p class="note" style="margin-top:8px">Verdicts compare what the same monthly budget buys on
-    each system. The new plan sells credits at a per-tier multiplier over money paid
-    (<span class="mono" id="credit-ratio-note"></span> at this doc's tier: Max $100 &rarr; $300
-    credits), so a new-side figure of $X in credits really costs $X&thinsp;&divide;&thinsp;<span class="mono credit-ratio-num"></span> paid. The margin is
-    stated in paid dollars. Example: a task that burns $<span class="mono credit-ratio-num"></span>.00 of new-plan credits costs
-    $1.00 paid.</p>
-  <p class="note" style="margin-top:8px">The two price columns are nominal dollars for the
-    token scenario set in the &laquo;tokens in&raquo; / &laquo;tokens out&raquo; inputs,
-    1M in / 250k out by default. The new column prices the scenario exactly on the official
-    table, where input, cached input and output each carry their own rate, and follows the
-    S(x) slider. The legacy meter emits a single pp read per bracket with no in/out
-    decomposition because the GPU-time rate was never published, so the legacy column applies
-    the cell's measured pp/1M to the scenario's in+out total. Hover for the underlying meter
-    read and the per-task prices. A sub-tick weekly read falls back to the session-derived
-    equivalent, marked &laquo;session&raquo;.</p>
-  <p class="note" style="margin-top:8px">The verdict chips compare each cell's measured
-    per-task prices, the measured legacy read against the new plan priced live at the
-    cell's own measured token mix and the slider's S(x), so they follow the slider
-    for assumed-S models and never the scenario inputs. The meter-native view
-    lives in the threshold chart below. Every verdict shows its margin, the chip's
-    +X&nbsp;%: how much
-    more expensive the loser is, (loser &minus; winner) &divide; winner. It can exceed 100 %
-    when the loser costs more than twice the winner. A verdict exists only when the margin
-    clears the tie band, &gt;2 meter ticks or &gt;5 % of the cheaper cost. Inside it the cell
-    is a tie.</p>
-</div>
+            <h2>Cells (model &times; workload)</h2>
+            <div class="panel scroll-x">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>model</th>
+                            <th>workload</th>
+                            <th>level</th>
+                            <th class="num">
+                                legacy $ /
+                                <span class="hdr-tokens mono">1M+250k</span> tok
+                            </th>
+                            <th class="num">
+                                new $ /
+                                <span class="hdr-tokens mono">1M+250k</span> tok
+                            </th>
+                            <th class="num">pass rate</th>
+                            <th>verdict</th>
+                            <th>margin (paid $)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tabla-cuerpo"></tbody>
+                </table>
+                <p class="note" style="margin-top: 8px">
+                    Verdicts compare real monthly costs across both systems.
+                    New-plan credits convert at 3x (pay $100, get $300), so $X
+                    in credits = $X÷3 real cost. Prices use a sample usage case;
+                    the new plan prices input/output separately, legacy uses one
+                    flat rate. Verdicts show % difference between real measured
+                    costs, only when the gap is meaningful—otherwise it's a tie.
+                </p>
+            </div>
 
-<h2>Break-even per million tokens: legacy $ vs new-plan $</h2>
-<div class="panel">
-  <div id="chart-threshold"></div>
-  <div class="legend"><span><span class="sw" style="background:var(--legacy)"></span>legacy $/1M,
-    the measured meter read at the anchor; a sub-tick weekly read shows its session-derived
-    equivalent, marked</span>
-    <span><span class="sw" style="background:var(--new);width:3px"></span>new paid $/1M at the
-    slider's S(x), each cell's own measured mix, credits at face value &divide;
-    <span class="mono credit-ratio-num"></span></span>
-    <span>legacy left of new &rArr; legacy is cheaper, the same comparison as the pp/1M
-    threshold translated at the anchor into paid dollars</span></div>
-</div>
+            <h2>How much do you save by picking the winner?</h2>
+            <div class="panel">
+                <div id="chart-margins"></div>
+                <div class="legend">
+                    <span
+                        ><span
+                            class="sw"
+                            style="background: var(--legacy)"
+                        ></span
+                        >legacy wins (left)</span
+                    >
+                    <span
+                        ><span class="sw" style="background: var(--new)"></span
+                        >new wins (right)</span
+                    >
+                    <span
+                        ><span
+                            class="sw"
+                            style="background: var(--tie); border-radius: 50%"
+                        ></span
+                        >tie</span
+                    >
+                    <span
+                        >center axis = 0 %, a tie sits on it; bars cap at 100 %
+                        and the chevron marks a margin beyond; margins follow
+                        the slider for assumed-S models</span
+                    >
+                    <span
+                        >margins are in paid dollars, so the new plan's credits
+                        count at face value &divide;
+                        <span class="mono credit-ratio-num"></span
+                    ></span>
+                </div>
+            </div>
+        </main>
 
-<h2>How much do you save by picking the winner?</h2>
-<div class="panel">
-  <div id="chart-margins"></div>
-  <div class="legend"><span><span class="sw" style="background:var(--legacy)"></span>legacy wins
-    (left)</span>
-    <span><span class="sw" style="background:var(--new)"></span>new wins (right)</span>
-    <span><span class="sw" style="background:var(--tie);border-radius:50%"></span>tie</span>
-    <span>center axis = 0 %, a tie sits on it; bars cap at 100 % and the chevron marks a
-    margin beyond; margins follow the slider for assumed-S models</span>
-    <span>margins are in paid dollars, so the new plan's credits count at face value &divide;
-    <span class="mono credit-ratio-num"></span></span></div>
-</div>
+        <script id="analysis-data" type="application/json">
+            __DATOS__
+        </script>
+        <script id="rates-data" type="application/json">
+            __RATES__
+        </script>
+        <script>
+            "use strict";
+            var DATA = JSON.parse(
+                document.getElementById("analysis-data").textContent,
+            );
+            var RATES = JSON.parse(
+                document.getElementById("rates-data").textContent,
+            );
+            var BP = DATA.base_params;
+            var USDPP = BP.usd_per_pp; // the anchor: USD per weekly pp
+            var TICKUSD = BP.tick_usd; // one meter tick, in USD
+            // the new plan's per-tier credit multiplier (Max: $100 -> $300 credits): the
+            // verdicts and margins compare PAID dollars, so the new side's
+            // nominal credit cost divides by this (the persisted doc's credit_ratio).
+            // A doc persisted before v1.3 carries no credit_ratio: its verdicts were
+            // computed 1:1, so the fallback reproduces THAT comparison (1.0) and never
+            // re-denominates an old doc's numbers behind its own persisted chips.
+            var CREDITRATIO = isNum(BP.credit_ratio) ? BP.credit_ratio : 1.0;
+            var PER = RATES.per || 1000000;
+            // the presentation default: 85% reflects measured agent traffic (~90% of the
+            // input rides as cache reads); a measured S keeps precedence per model
+            var SLIDER_DEFAULT = 85;
+            // the token scenario: input and output are priced at their own rates; the
+            // defaults make the columns read a 4:1 agent-style scenario at 1.25M tokens
+            var TOKENS_IN_DEFAULT = 1000000,
+                TOKENS_OUT_DEFAULT = 250000;
+            var estado = {
+                model: "",
+                slider: SLIDER_DEFAULT,
+                tin: TOKENS_IN_DEFAULT,
+                tout: TOKENS_OUT_DEFAULT,
+            };
 
-<p class="note footnote">__NOTAS__</p>
-</main>
+            function $(id) {
+                return document.getElementById(id);
+            }
+            // Lucide loads from the CDN (Pages-first styling): replace every
+            // <i data-lucide="..."> placeholder with its inline SVG. Guarded so a blocked
+            // CDN degrades to icon-less markup, never to a thrown error. The CDN <script>
+            // is a synchronous head tag on purpose: it guarantees window.lucide exists by
+            // the time this runs — adding `defer` would make this a silent no-op.
+            function refrescoIconos() {
+                if (window.lucide) lucide.createIcons();
+            }
+            function esc(s) {
+                return String(s).replace(/[&<>"']/g, function (c) {
+                    return {
+                        "&": "&amp;",
+                        "<": "&lt;",
+                        ">": "&gt;",
+                        '"': "&quot;",
+                        "'": "&#39;",
+                    }[c];
+                });
+            }
+            function isNum(x) {
+                return typeof x === "number" && isFinite(x);
+            }
+            function isNull(x) {
+                return x === null || x === undefined;
+            }
+            function money(x) {
+                return isNull(x) ? "no data" : "$" + Number(x).toPrecision(6);
+            }
 
-<script id="analysis-data" type="application/json">__DATOS__</script>
-<script id="rates-data" type="application/json">__RATES__</script>
-<script>
-"use strict";
-var DATA = JSON.parse(document.getElementById("analysis-data").textContent);
-var RATES = JSON.parse(document.getElementById("rates-data").textContent);
-var BP = DATA.base_params;
-var USDPP = BP.usd_per_pp;   // the anchor: USD per weekly pp
-var TICKUSD = BP.tick_usd;   // one meter tick, in USD
-// the new plan's per-tier credit multiplier (Max: $100 -> $300 credits): the
-// verdicts, margins and threshold compare PAID dollars, so the new side's
-// nominal credit cost divides by this (the persisted doc's credit_ratio).
-// A doc persisted before v1.3 carries no credit_ratio: its verdicts were
-// computed 1:1, so the fallback reproduces THAT comparison (1.0) and never
-// re-denominates an old doc's numbers behind its own persisted chips.
-var CREDITRATIO = isNum(BP.credit_ratio) ? BP.credit_ratio : 1.0;
-var PER = RATES.per || 1000000;
-// the presentation default: 85% reflects measured agent traffic (~90% of the
-// input rides as cache reads); a measured S keeps precedence per model
-var SLIDER_DEFAULT = 85;
-// the token scenario: input and output are priced at their own rates; the
-// defaults make the columns read a 4:1 agent-style scenario at 1.25M tokens
-var TOKENS_IN_DEFAULT = 1000000, TOKENS_OUT_DEFAULT = 250000;
-var estado = { model: "", slider: SLIDER_DEFAULT, tin: TOKENS_IN_DEFAULT, tout: TOKENS_OUT_DEFAULT };
+            function cellsFiltered() {
+                return DATA.cells.filter(function (c) {
+                    return !estado.model || c.model === estado.model;
+                });
+            }
+            function rateOf(model) {
+                return RATES && RATES.rates ? RATES.rates[model] || null : null;
+            }
+            function sPerModel(model) {
+                return (DATA.s_per_model || {})[model] || null;
+            }
+            function measuredS(model) {
+                var spm = sPerModel(model);
+                return spm && spm.source === "measured" && isNum(spm.s)
+                    ? spm.s
+                    : null;
+            }
+            function effectiveS(model) {
+                // measured keeps precedence: the slider governs only the assumed models
+                var m = measuredS(model);
+                return m === null ? estado.slider / 100 : m;
+            }
+            function newCostAt(cell) {
+                var r = rateOf(cell.model);
+                if (
+                    !r ||
+                    isNull(cell.tok_in_median) ||
+                    isNull(cell.tok_out_median)
+                )
+                    return null;
+                var s = effectiveS(cell.model);
+                if (!r.has_cache_discount) s = 0; // no published discount: S(x) is S0, the slider cannot move it
+                return (
+                    (cell.tok_in_median * (1 - s) * r.input +
+                        cell.tok_in_median * s * r.cached_input +
+                        cell.tok_out_median * r.output) /
+                    PER
+                );
+            }
+            function verdictOf(
+                legacy,
+                nuevo,
+                tickUsd,
+                legacySession,
+                creditRatio,
+            ) {
+                // the same rule as the persisted verdicts: the new side re-denominates to
+                // paid dollars (credits divide by the plan's credit multiplier) BEFORE the
+                // comparison, so the tie band is the MINIMUM of 2 ticks and 5 % of the
+                // cheaper PAID cost; margin_pct = (loser - winner) / winner.
+                // A sub-tick winner (weekly reads 0.0) prices with its session-derived
+                // weekly-equivalent; with no session reading either, the loser's own cost
+                // (a free winner saves the whole bill: exactly 100 %)
+                if (isNull(legacy) || isNull(nuevo))
+                    return { winner: "no data", margin_pct: null };
+                nuevo = nuevo / (creditRatio || 1);
+                var band = Math.min(
+                    2 * tickUsd,
+                    0.05 * Math.min(legacy, nuevo),
+                );
+                if (Math.abs(legacy - nuevo) <= band)
+                    return { winner: "tie", margin_pct: null };
+                if (legacy < nuevo) {
+                    var winnerCost = legacy || legacySession || nuevo;
+                    return {
+                        winner: "legacy",
+                        margin_pct: ((nuevo - legacy) / winnerCost) * 100,
+                    };
+                }
+                return {
+                    winner: "new",
+                    margin_pct: ((legacy - nuevo) / (nuevo || legacy)) * 100,
+                };
+            }
+            function verdictAt(cell) {
+                var legacy = cell.legacy_cost_task_usd
+                    ? cell.legacy_cost_task_usd.median
+                    : null;
+                var legacySession = cell.legacy_cost_task_usd_session
+                    ? cell.legacy_cost_task_usd_session.median
+                    : null;
+                return verdictOf(
+                    legacy,
+                    newCostAt(cell),
+                    TICKUSD,
+                    legacySession,
+                    CREDITRATIO,
+                );
+            }
+            function taskTokens(cell) {
+                // the rep's median token mix: the denominator that turns a per-task price
+                // into a per-1M price (linear in tokens)
+                if (isNull(cell.tok_in_median) || isNull(cell.tok_out_median))
+                    return null;
+                var t = cell.tok_in_median + cell.tok_out_median;
+                return t > 0 ? t : null;
+            }
+            function legacyPerTask(cell) {
+                // the weekly window is the unit of account; a sub-tick weekly read (0.0)
+                // prices with its session-derived weekly-equivalent, marked, the same
+                // fallback the verdict uses. No readable bracket either: no data.
+                var weekly = cell.legacy_cost_task_usd
+                    ? cell.legacy_cost_task_usd.median
+                    : null;
+                if (isNum(weekly) && weekly > 0)
+                    return { usd: weekly, derived: false };
+                var session = cell.legacy_cost_task_usd_session
+                    ? cell.legacy_cost_task_usd_session.median
+                    : null;
+                if (isNum(session) && session > 0)
+                    return { usd: session, derived: true };
+                return null;
+            }
+            function legacyPer1M(cell) {
+                // the cell's measured meter read, normalized to USD per 1M tokens. The
+                // legacy meter emits one pp read per bracket (no in/out decomposition,
+                // the GPU-time rate was never published), so this price belongs to the
+                // cell's measured mix; a custom scenario only scales it with its total
+                var leg = legacyPerTask(cell);
+                var t = taskTokens(cell);
+                if (!leg || !t) return null;
+                return (leg.usd / t) * 1e6;
+            }
+            function newCostAt2(tin, tout, model) {
+                // the official table priced exactly at the scenario's in/out split
+                var r = rateOf(model);
+                if (!r || !(tin > 0) || !(tout > 0)) return null;
+                var s = effectiveS(model);
+                if (!r.has_cache_discount) s = 0; // no published discount: S(x) is S0, the slider cannot move it
+                return (
+                    (tin * (1 - s) * r.input +
+                        tin * s * r.cached_input +
+                        tout * r.output) /
+                    PER
+                );
+            }
+            function compactTokens(n) {
+                // 1000000 -> "1M", 1500000 -> "1.5M", 500000 -> "500k", 750 -> "750"
+                if (n >= 1e6) return Math.round(n / 1e5) / 10 + "M";
+                if (n >= 1000) return Math.round(n / 1000) + "k";
+                return String(n);
+            }
 
-function $(id) { return document.getElementById(id); }
-// Lucide loads from the CDN (Pages-first styling): replace every
-// <i data-lucide="..."> placeholder with its inline SVG. Guarded so a blocked
-// CDN degrades to icon-less markup, never to a thrown error. The CDN <script>
-// is a synchronous head tag on purpose: it guarantees window.lucide exists by
-// the time this runs — adding `defer` would make this a silent no-op.
-function refrescoIconos() {
-  if (window.lucide) lucide.createIcons();
-}
-function esc(s) {
-  return String(s).replace(/[&<>"']/g, function (c) {
-    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
-  });
-}
-function isNum(x) { return typeof x === "number" && isFinite(x); }
-function isNull(x) { return x === null || x === undefined; }
-function money(x) { return isNull(x) ? "no data" : "$" + Number(x).toPrecision(6); }
+            function chip(v) {
+                if (!v || v.winner === "no data")
+                    return '<span class="chip nodata">no data</span>';
+                if (v.winner === "tie")
+                    return '<span class="chip tie">tie</span>';
+                // the margin reads as +X %: how much more expensive the loser is than the
+                // chip's winner (a minus sign would read as a negative value)
+                return (
+                    '<span class="chip ' +
+                    v.winner +
+                    '"><span class="dot"></span>' +
+                    v.winner +
+                    " &middot; +" +
+                    Number(v.margin_pct).toFixed(1) +
+                    "%</span>"
+                );
+            }
+            function marginBar(v) {
+                if (!v || v.winner === "no data" || v.winner === "tie")
+                    return '<span class="note">&mdash;</span>';
+                return (
+                    '<span class="mbar"><span class="track"><span class="fill ' +
+                    v.winner +
+                    '" style="width:' +
+                    Math.min(100, v.margin_pct).toFixed(2) +
+                    '%"></span></span><b class="mono">' +
+                    Number(v.margin_pct).toFixed(1) +
+                    "%</b></span>"
+                );
+            }
 
-function cellsFiltered() {
-  return DATA.cells.filter(function (c) { return !estado.model || c.model === estado.model; });
-}
-function rateOf(model) { return (RATES && RATES.rates) ? RATES.rates[model] || null : null; }
-function sPerModel(model) { return (DATA.s_per_model || {})[model] || null; }
-function measuredS(model) {
-  var spm = sPerModel(model);
-  return spm && spm.source === "measured" && isNum(spm.s) ? spm.s : null;
-}
-function effectiveS(model) {
-  // measured keeps precedence: the slider governs only the assumed models
-  var m = measuredS(model);
-  return m === null ? estado.slider / 100 : m;
-}
-function newCostAt(cell) {
-  var r = rateOf(cell.model);
-  if (!r || isNull(cell.tok_in_median) || isNull(cell.tok_out_median)) return null;
-  var s = effectiveS(cell.model);
-  if (!r.has_cache_discount) s = 0;  // no published discount: S(x) is S0, the slider cannot move it
-  return (cell.tok_in_median * (1 - s) * r.input +
-          cell.tok_in_median * s * r.cached_input +
-          cell.tok_out_median * r.output) / PER;
-}
-function thresholdAt(cell) {
-  // the threshold exists only for a MEASURED cell (the same rule as the
-  // persisted `_cell_doc`): without a readable legacy bracket there is no
-  // comparison to draw, and no line is invented for the bars
-  if (!cell.legacy_cost_task_usd) return null;
-  var cost = newCostAt(cell);
-  var tokens = isNull(cell.tok_in_median) || isNull(cell.tok_out_median)
-    ? null : cell.tok_in_median + cell.tok_out_median;
-  if (!isNum(cost) || !tokens) return null;
-  // paid dollars: the new side's credits divide by the credit multiplier
-  return cost / (tokens / 1e6) / (USDPP * CREDITRATIO);
-}
-function verdictOf(legacy, nuevo, tickUsd, legacySession, creditRatio) {
-  // the same rule as the persisted verdicts: the new side re-denominates to
-  // paid dollars (credits divide by the plan's credit multiplier) BEFORE the
-  // comparison, so the tie band is the MINIMUM of 2 ticks and 5 % of the
-  // cheaper PAID cost; margin_pct = (loser - winner) / winner.
-  // A sub-tick winner (weekly reads 0.0) prices with its session-derived
-  // weekly-equivalent; with no session reading either, the loser's own cost
-  // (a free winner saves the whole bill: exactly 100 %)
-  if (isNull(legacy) || isNull(nuevo)) return { winner: "no data", margin_pct: null };
-  nuevo = nuevo / (creditRatio || 1);
-  var band = Math.min(2 * tickUsd, 0.05 * Math.min(legacy, nuevo));
-  if (Math.abs(legacy - nuevo) <= band) return { winner: "tie", margin_pct: null };
-  if (legacy < nuevo) {
-    var winnerCost = legacy || legacySession || nuevo;
-    return { winner: "legacy", margin_pct: (nuevo - legacy) / winnerCost * 100 };
-  }
-  return { winner: "new", margin_pct: (legacy - nuevo) / (nuevo || legacy) * 100 };
-}
-function verdictAt(cell) {
-  var legacy = cell.legacy_cost_task_usd ? cell.legacy_cost_task_usd.median : null;
-  var legacySession = cell.legacy_cost_task_usd_session ? cell.legacy_cost_task_usd_session.median : null;
-  return verdictOf(legacy, newCostAt(cell), TICKUSD, legacySession, CREDITRATIO);
-}
-function taskTokens(cell) {
-  // the rep's median token mix: the denominator that turns a per-task price
-  // into a per-1M price (linear in tokens)
-  if (isNull(cell.tok_in_median) || isNull(cell.tok_out_median)) return null;
-  var t = cell.tok_in_median + cell.tok_out_median;
-  return t > 0 ? t : null;
-}
-function legacyPerTask(cell) {
-  // the weekly window is the unit of account; a sub-tick weekly read (0.0)
-  // prices with its session-derived weekly-equivalent, marked, the same
-  // fallback the verdict uses. No readable bracket either: no data.
-  var weekly = cell.legacy_cost_task_usd ? cell.legacy_cost_task_usd.median : null;
-  if (isNum(weekly) && weekly > 0) return { usd: weekly, derived: false };
-  var session = cell.legacy_cost_task_usd_session ? cell.legacy_cost_task_usd_session.median : null;
-  if (isNum(session) && session > 0) return { usd: session, derived: true };
-  return null;
-}
-function legacyPer1M(cell) {
-  // the cell's measured meter read, normalized to USD per 1M tokens. The
-  // legacy meter emits one pp read per bracket (no in/out decomposition,
-  // the GPU-time rate was never published), so this price belongs to the
-  // cell's measured mix; a custom scenario only scales it with its total
-  var leg = legacyPerTask(cell);
-  var t = taskTokens(cell);
-  if (!leg || !t) return null;
-  return leg.usd / t * 1e6;
-}
-function newCostAt2(tin, tout, model) {
-  // the official table priced exactly at the scenario's in/out split
-  var r = rateOf(model);
-  if (!r || !(tin > 0) || !(tout > 0)) return null;
-  var s = effectiveS(model);
-  if (!r.has_cache_discount) s = 0;  // no published discount: S(x) is S0, the slider cannot move it
-  return (tin * (1 - s) * r.input + tin * s * r.cached_input + tout * r.output) / PER;
-}
-function compactTokens(n) {
-  // 1000000 -> "1M", 1500000 -> "1.5M", 500000 -> "500k", 750 -> "750"
-  if (n >= 1e6) return (Math.round(n / 1e5) / 10) + "M";
-  if (n >= 1000) return Math.round(n / 1000) + "k";
-  return String(n);
-}
+            function medianOf(vals) {
+                // statistics.median's convention: the middle value, or the mean of the two
+                // middles for an even count, the same median the persisted doc uses
+                if (!vals.length) return null;
+                var a = vals.slice().sort(function (x, y) {
+                    return x - y;
+                });
+                var m = Math.floor(a.length / 2);
+                return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+            }
+            function renderReco() {
+                var grupos = {};
+                cellsFiltered().forEach(function (c) {
+                    var v = verdictAt(c);
+                    if (v.winner === "no data") return;
+                    (grupos[c.workload] = grupos[c.workload] || []).push(v);
+                });
+                var workloads = Object.keys(grupos).sort();
+                var newWl = 0,
+                    legWl = 0,
+                    decided = 0;
+                var pills = workloads
+                    .map(function (wl) {
+                        var xs = grupos[wl];
+                        var nw = 0,
+                            lw = 0;
+                        xs.forEach(function (v) {
+                            if (v.winner === "new") nw++;
+                            else if (v.winner === "legacy") lw++;
+                        });
+                        // the pill's side is the cells' majority; a workload whose cells all tie
+                        // renders the tie chip, never a fabricated winner with a fake margin
+                        var win = nw > lw ? "new" : lw > nw ? "legacy" : "tie";
+                        // the margin is the median over the WINNING side's cells only
+                        var side =
+                            win === "tie"
+                                ? []
+                                : xs
+                                      .filter(function (v) {
+                                          return v.winner === win;
+                                      })
+                                      .map(function (v) {
+                                          return v.margin_pct;
+                                      })
+                                      .filter(function (x) {
+                                          return x !== null;
+                                      });
+                        if (win === "new") {
+                            newWl++;
+                            decided++;
+                        } else if (win === "legacy") {
+                            legWl++;
+                            decided++;
+                        }
+                        return (
+                            '<div class="pill"><b>' +
+                            esc(wl) +
+                            "</b>" +
+                            chip({ winner: win, margin_pct: medianOf(side) }) +
+                            "</div>"
+                        );
+                    })
+                    .join("");
+                var headline;
+                if (!workloads.length)
+                    headline = "No measured verdict under this filter";
+                else if (!decided)
+                    headline = "Every measured workload ties inside the band";
+                else if (newWl && !legWl)
+                    headline =
+                        'The <span class="h-new">new plan</span> wins every decided workload';
+                else if (legWl && !newWl)
+                    headline =
+                        'The <span class="h-legacy">legacy plan</span> wins every decided workload';
+                else
+                    headline =
+                        'Split: the <span class="h-legacy">legacy</span> plan wins ' +
+                        legWl +
+                        " of " +
+                        decided +
+                        " decided workloads";
+                $("reco-headline").innerHTML = headline;
+                // the hero band paints the overall verdict: the same majority the headline
+                // states, carried as data for the stylesheet to tint (legacy/new/split/tie)
+                var overall =
+                    !workloads.length || !decided
+                        ? "tie"
+                        : newWl && !legWl
+                          ? "new"
+                          : legWl && !newWl
+                            ? "legacy"
+                            : "split";
+                $("reco").setAttribute("data-winner", overall);
+                $("reco-pills").innerHTML =
+                    pills ||
+                    '<p class="note">no measured cell under this filter</p>';
+                $("reco-sub").textContent =
+                    "The margin is how much more expensive the loser is; picking the winner avoids " +
+                    "paying that premium. Anchor: $" +
+                    BP.ancla +
+                    "/mo = " +
+                    Number(USDPP).toFixed(6) +
+                    " USD per weekly pp (tick $" +
+                    Number(TICKUSD).toFixed(6) +
+                    ").";
+            }
 
-function chip(v) {
-  if (!v || v.winner === "no data") return '<span class="chip nodata">no data</span>';
-  if (v.winner === "tie") return '<span class="chip tie">tie</span>';
-  // the margin reads as +X %: how much more expensive the loser is than the
-  // chip's winner (a minus sign would read as a negative value)
-  return '<span class="chip ' + v.winner + '"><span class="dot"></span>' + v.winner +
-    " &middot; +" + Number(v.margin_pct).toFixed(1) + "%</span>";
-}
-function marginBar(v) {
-  if (!v || v.winner === "no data" || v.winner === "tie") return '<span class="note">&mdash;</span>';
-  return '<span class="mbar"><span class="track"><span class="fill ' + v.winner +
-    '" style="width:' + Math.min(100, v.margin_pct).toFixed(2) + '%"></span></span><b class="mono">' +
-    Number(v.margin_pct).toFixed(1) + "%</b></span>";
-}
+            function renderTable() {
+                var filas = cellsFiltered()
+                    .map(function (c) {
+                        var v = verdictAt(c);
+                        var r = rateOf(c.model);
+                        var measuredBadge =
+                            measuredS(c.model) !== null
+                                ? ' <span class="badge">measured S</span>'
+                                : "";
+                        var s0Badge =
+                            r && !r.has_cache_discount
+                                ? ' <span class="badge">S(x) &equiv; S0</span>'
+                                : "";
+                        // scenario prices: the new side prices the user's in/out exactly on the
+                        // official table; the legacy side applies the cell's measured pp/1M (one
+                        // bracket read, no in/out decomposition) to the scenario's total. The
+                        // meter read (pp/1M) and the per-task prices ride in the tooltips
+                        var leg1m = legacyPer1M(c);
+                        var leg = legacyPerTask(c);
+                        var legPrice = isNum(leg1m)
+                            ? (leg1m * (estado.tin + estado.tout)) / 1e6
+                            : null;
+                        var legTip = !leg
+                            ? "no measured legacy bracket"
+                            : "legacy per task: " +
+                              money(leg.usd) +
+                              (leg.derived
+                                  ? " (session-derived)"
+                                  : " (weekly)") +
+                              (c.pp_per_1m && isNum(c.pp_per_1m.median)
+                                  ? " · measured " +
+                                    c.pp_per_1m.median +
+                                    " pp/1M × $" +
+                                    Number(USDPP).toFixed(6) +
+                                    "/pp"
+                                  : "") +
+                              " · applied to your in+out total at the cell's measured mix";
+                        var newPrice = newCostAt2(
+                            estado.tin,
+                            estado.tout,
+                            c.model,
+                        );
+                        var newPerTask = newCostAt(c);
+                        var newTip =
+                            "priced at your in/out scenario at S(x)=" +
+                            Math.round(effectiveS(c.model) * 100) +
+                            "%" +
+                            (isNum(newPerTask)
+                                ? " · per task (measured mix): " +
+                                  money(newPerTask)
+                                : "");
+                        return (
+                            '<tr><td class="mono">' +
+                            esc(c.model) +
+                            measuredBadge +
+                            "</td>" +
+                            "<td>" +
+                            esc(c.workload) +
+                            "</td>" +
+                            "<td>" +
+                            esc(isNull(c.level) ? "—" : c.level) +
+                            "</td>" +
+                            '<td class="num mono" title="' +
+                            esc(legTip) +
+                            '">' +
+                            money(legPrice) +
+                            (leg && leg.derived
+                                ? ' <span class="badge">session</span>'
+                                : "") +
+                            "</td>" +
+                            '<td class="num mono" title="' +
+                            esc(newTip) +
+                            '">' +
+                            money(newPrice) +
+                            s0Badge +
+                            "</td>" +
+                            '<td class="num mono">' +
+                            (isNull(c.pass_rate)
+                                ? "no data"
+                                : Math.round(c.pass_rate * 100) + "%") +
+                            "</td>" +
+                            "<td>" +
+                            chip(v) +
+                            "</td>" +
+                            "<td>" +
+                            marginBar(v) +
+                            "</td></tr>"
+                        );
+                    })
+                    .join("");
+                $("tabla-cuerpo").innerHTML = filas;
+            }
 
-function medianOf(vals) {
-  // statistics.median's convention: the middle value, or the mean of the two
-  // middles for an even count, the same median the persisted doc uses
-  if (!vals.length) return null;
-  var a = vals.slice().sort(function (x, y) { return x - y; });
-  var m = Math.floor(a.length / 2);
-  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
-}
-function renderReco() {
-  var grupos = {};
-  cellsFiltered().forEach(function (c) {
-    var v = verdictAt(c);
-    if (v.winner === "no data") return;
-    (grupos[c.workload] = grupos[c.workload] || []).push(v);
-  });
-  var workloads = Object.keys(grupos).sort();
-  var newWl = 0, legWl = 0, decided = 0;
-  var pills = workloads.map(function (wl) {
-    var xs = grupos[wl];
-    var nw = 0, lw = 0;
-    xs.forEach(function (v) {
-      if (v.winner === "new") nw++;
-      else if (v.winner === "legacy") lw++;
-    });
-    // the pill's side is the cells' majority; a workload whose cells all tie
-    // renders the tie chip, never a fabricated winner with a fake margin
-    var win = nw > lw ? "new" : lw > nw ? "legacy" : "tie";
-    // the margin is the median over the WINNING side's cells only
-    var side = win === "tie" ? [] : xs.filter(function (v) { return v.winner === win; })
-      .map(function (v) { return v.margin_pct; }).filter(function (x) { return x !== null; });
-    if (win === "new") { newWl++; decided++; }
-    else if (win === "legacy") { legWl++; decided++; }
-    return '<div class="pill"><b>' + esc(wl) + "</b>" +
-      chip({ winner: win, margin_pct: medianOf(side) }) + "</div>";
-  }).join("");
-  var headline;
-  if (!workloads.length) headline = "No measured verdict under this filter";
-  else if (!decided) headline = "Every measured workload ties inside the band";
-  else if (newWl && !legWl) headline = 'The <span class="h-new">new plan</span> wins every decided workload';
-  else if (legWl && !newWl) headline = 'The <span class="h-legacy">legacy plan</span> wins every decided workload';
-  else headline = 'Split: the <span class="h-legacy">legacy</span> plan wins ' + legWl + " of " +
-    decided + " decided workloads";
-  $("reco-headline").innerHTML = headline;
-  // the hero band paints the overall verdict: the same majority the headline
-  // states, carried as data for the stylesheet to tint (legacy/new/split/tie)
-  var overall = !workloads.length || !decided ? "tie"
-    : newWl && !legWl ? "new" : legWl && !newWl ? "legacy" : "split";
-  $("reco").setAttribute("data-winner", overall);
-  $("reco-pills").innerHTML = pills || '<p class="note">no measured cell under this filter</p>';
-  $("reco-sub").textContent =
-    "The margin is how much more expensive the loser is; picking the winner avoids " +
-    "paying that premium. Anchor: $" + BP.ancla + "/mo = " +
-    Number(USDPP).toFixed(6) + " USD per weekly pp (tick $" + Number(TICKUSD).toFixed(6) + ").";
-}
+            function renderMargins() {
+                var cont = $("chart-margins");
+                var filas = cellsFiltered().filter(function (c) {
+                    return c.legacy_cost_task_usd;
+                });
+                if (!filas.length) {
+                    cont.innerHTML =
+                        '<p class="note">no measured cell under this filter</p>';
+                    return;
+                }
+                var verdicts = filas.map(function (c) {
+                    return { c: c, v: verdictAt(c) };
+                });
+                // the strongest verdict leads; ties and no-data rows read at the bottom
+                verdicts.sort(function (a, b) {
+                    var ra = a.v.margin_pct === null ? 1 : 0,
+                        rb = b.v.margin_pct === null ? 1 : 0;
+                    return (
+                        ra - rb || (b.v.margin_pct || 0) - (a.v.margin_pct || 0)
+                    );
+                });
+                // the scale caps at 100 %, the same cap the cells table's margin bar
+                // applies, so a 1000 % outlier no longer flattens every other row; a bar
+                // past the cap ends in a chevron and keeps its true value in the label and
+                // the tooltip. Each half reserves a label gutter so the "+X %" always fits
+                // outside its bar: no text can land on a row label or cross the center
+                var CAP = 100,
+                    labelRoom = 64;
+                var W = 720,
+                    labelW = 252,
+                    rowH = 26;
+                var plot = (W - labelW - 16) / 2,
+                    half = plot - labelRoom;
+                var cx = labelW + plot,
+                    baseY = verdicts.length * rowH + 6,
+                    H = baseY + 42;
+                var svg =
+                    '<line x1="' +
+                    cx +
+                    '" y1="6" x2="' +
+                    cx +
+                    '" y2="' +
+                    baseY +
+                    '" stroke="var(--grid)" stroke-width="1"/>' +
+                    '<line x1="' +
+                    labelW +
+                    '" y1="' +
+                    baseY +
+                    '" x2="' +
+                    (W - 16) +
+                    '" y2="' +
+                    baseY +
+                    '" stroke="var(--grid)" stroke-width="1"/>';
+                // % ticks and faint gridlines on both sides: the 100 % cap reads as a cap
+                [50, CAP].forEach(function (v) {
+                    [cx - (v / CAP) * half, cx + (v / CAP) * half].forEach(
+                        function (x) {
+                            svg +=
+                                '<line x1="' +
+                                x.toFixed(2) +
+                                '" y1="6" x2="' +
+                                x.toFixed(2) +
+                                '" y2="' +
+                                baseY +
+                                '" stroke="var(--grid)" stroke-width="1"/>';
+                        },
+                    );
+                });
+                [0, 50, CAP].forEach(function (v) {
+                    [cx - (v / CAP) * half, cx + (v / CAP) * half].forEach(
+                        function (x, side) {
+                            if (v === 0 && side === 0) return; // the center 0 gets a single label
+                            svg +=
+                                '<text x="' +
+                                x.toFixed(2) +
+                                '" y="' +
+                                (baseY + 16) +
+                                '" text-anchor="middle" ' +
+                                'font-size="10" fill="var(--muted)" font-family="&quot;IBM Plex Mono&quot;,ui-monospace,Menlo,monospace">' +
+                                v +
+                                (v === CAP ? " %" : "") +
+                                "</text>";
+                        },
+                    );
+                });
+                svg +=
+                    '<text x="' +
+                    (cx - plot / 2).toFixed(1) +
+                    '" y="' +
+                    (H - 6) +
+                    '" text-anchor="middle" font-size="10" fill="var(--muted)">&larr; legacy cheaper</text>' +
+                    '<text x="' +
+                    (cx + plot / 2).toFixed(1) +
+                    '" y="' +
+                    (H - 6) +
+                    '" text-anchor="middle" font-size="10" fill="var(--muted)">new cheaper &rarr;</text>';
+                verdicts.forEach(function (x, i) {
+                    var y = i * rowH + 14;
+                    svg +=
+                        '<text x="' +
+                        (labelW - 8) +
+                        '" y="' +
+                        (y + 4) +
+                        '" text-anchor="end" font-size="11" ' +
+                        'fill="var(--ink-2)" font-family="&quot;IBM Plex Mono&quot;,ui-monospace,Menlo,monospace">' +
+                        esc(x.c.model) +
+                        " &middot; " +
+                        esc(x.c.workload) +
+                        "</text>";
+                    if (x.v.winner === "no data") {
+                        svg +=
+                            '<text x="' +
+                            cx +
+                            '" y="' +
+                            (y + 4) +
+                            '" text-anchor="middle" font-size="10" ' +
+                            'fill="var(--muted)">no data</text>';
+                        return;
+                    }
+                    if (x.v.winner === "tie") {
+                        svg +=
+                            '<circle cx="' +
+                            cx +
+                            '" cy="' +
+                            y +
+                            '" r="4" fill="var(--tie)"><title>tie: inside ' +
+                            "the band (2 meter ticks or 5 % of the cheaper cost)</title></circle>";
+                        return;
+                    }
+                    var pct = x.v.margin_pct;
+                    var len = (Math.min(pct, CAP) / CAP) * half;
+                    var over = pct > CAP;
+                    var isLegacy = x.v.winner === "legacy";
+                    var tip =
+                        esc(x.c.model) +
+                        " (" +
+                        esc(x.c.workload) +
+                        "): " +
+                        x.v.winner +
+                        " by " +
+                        Number(pct).toFixed(2) +
+                        "%" +
+                        (over ? " (bar capped at 100 %)" : "");
+                    var barX = (isLegacy ? cx - len : cx).toFixed(2);
+                    svg +=
+                        '<rect x="' +
+                        barX +
+                        '" y="' +
+                        (y - 7) +
+                        '" width="' +
+                        len.toFixed(2) +
+                        '" height="14" rx="3" fill="var(--' +
+                        x.v.winner +
+                        ')"><title>' +
+                        tip +
+                        "</title></rect>";
+                    if (over) {
+                        // the chevron at the capped end: the real margin goes beyond the scale
+                        var tipX = isLegacy ? cx - len : cx + len;
+                        var dir = isLegacy ? -1 : 1;
+                        svg +=
+                            '<path d="M ' +
+                            tipX.toFixed(2) +
+                            " " +
+                            (y - 10) +
+                            " L " +
+                            (tipX + dir * 7).toFixed(2) +
+                            " " +
+                            y +
+                            " L " +
+                            tipX.toFixed(2) +
+                            " " +
+                            (y + 10) +
+                            " Z" +
+                            '" fill="var(--' +
+                            x.v.winner +
+                            ')"><title>' +
+                            tip +
+                            "</title></path>";
+                    }
+                    // past the chevron (7 px) when the bar capped, clear of it otherwise
+                    svg +=
+                        '<text x="' +
+                        (isLegacy
+                            ? cx - len - (over ? 13 : 6)
+                            : cx + len + (over ? 13 : 6)
+                        ).toFixed(2) +
+                        '" y="' +
+                        (y + 4) +
+                        '" text-anchor="' +
+                        (isLegacy ? "end" : "start") +
+                        '" font-size="10" fill="var(--ink-2)" ' +
+                        'font-family="&quot;IBM Plex Mono&quot;,ui-monospace,Menlo,monospace">' +
+                        Number(pct).toFixed(1) +
+                        "%</text>";
+                });
+                cont.innerHTML =
+                    '<svg viewBox="0 0 ' +
+                    W +
+                    " " +
+                    H +
+                    '" role="img" aria-label="verdict margin by cell: legacy left, new right, tie dot">' +
+                    svg +
+                    "</svg>";
+            }
 
-function renderTable() {
-  var filas = cellsFiltered().map(function (c) {
-    var v = verdictAt(c);
-    var r = rateOf(c.model);
-    var measuredBadge = measuredS(c.model) !== null ? ' <span class="badge">measured S</span>' : "";
-    var s0Badge = r && !r.has_cache_discount ? ' <span class="badge">S(x) &equiv; S0</span>' : "";
-    // scenario prices: the new side prices the user's in/out exactly on the
-    // official table; the legacy side applies the cell's measured pp/1M (one
-    // bracket read, no in/out decomposition) to the scenario's total. The
-    // meter read (pp/1M) and the per-task prices ride in the tooltips
-    var leg1m = legacyPer1M(c);
-    var leg = legacyPerTask(c);
-    var legPrice = isNum(leg1m) ? leg1m * (estado.tin + estado.tout) / 1e6 : null;
-    var legTip = !leg ? "no measured legacy bracket"
-      : "legacy per task: " + money(leg.usd) + (leg.derived ? " (session-derived)" : " (weekly)") +
-        (c.pp_per_1m && isNum(c.pp_per_1m.median)
-          ? " · measured " + c.pp_per_1m.median + " pp/1M × $" + Number(USDPP).toFixed(6) + "/pp"
-          : "") +
-        " · applied to your in+out total at the cell's measured mix";
-    var newPrice = newCostAt2(estado.tin, estado.tout, c.model);
-    var newPerTask = newCostAt(c);
-    var newTip = "priced at your in/out scenario at S(x)=" +
-      Math.round(effectiveS(c.model) * 100) + "%" +
-      (isNum(newPerTask) ? " · per task (measured mix): " + money(newPerTask) : "");
-    return '<tr><td class="mono">' + esc(c.model) + measuredBadge + "</td>" +
-      "<td>" + esc(c.workload) + "</td>" +
-      "<td>" + esc(isNull(c.level) ? "—" : c.level) + "</td>" +
-      '<td class="num mono" title="' + esc(legTip) + '">' + money(legPrice) +
-        (leg && leg.derived ? ' <span class="badge">session</span>' : "") + "</td>" +
-      '<td class="num mono" title="' + esc(newTip) + '">' + money(newPrice) + s0Badge + "</td>" +
-      '<td class="num mono">' + (isNull(c.pass_rate) ? "no data" : Math.round(c.pass_rate * 100) + "%") + "</td>" +
-      "<td>" + chip(v) + "</td>" +
-      "<td>" + marginBar(v) + "</td></tr>";
-  }).join("");
-  $("tabla-cuerpo").innerHTML = filas;
-}
+            function renderStatus() {
+                var scene =
+                    compactTokens(estado.tin) +
+                    " in + " +
+                    compactTokens(estado.tout) +
+                    " out";
+                $("estado-filtro").textContent =
+                    (estado.model || "all models") +
+                    " | cache " +
+                    estado.slider +
+                    "% | prices at " +
+                    scene;
+                Array.prototype.forEach.call(
+                    document.querySelectorAll(".hdr-tokens"),
+                    function (el) {
+                        el.textContent =
+                            compactTokens(estado.tin) +
+                            "+" +
+                            compactTokens(estado.tout);
+                    },
+                );
+            }
+            function renderAll() {
+                renderCreditRatioNote();
+                renderReco();
+                renderTable();
+                renderMargins();
+                renderStatus();
+            }
 
-function usdLabel(x) { return "$" + Number(x).toPrecision(3); }
-function renderThreshold() {
-  // the pp/1M threshold comparison, translated at the anchor into hard
-  // dollars per 1M tokens: legacy $/1M (the measured meter read, with the
-  // session fallback the table uses) against the new-plan $/1M priced on the
-  // cell's own mix, the same rule as the persisted threshold, in a readable unit
-  var cont = $("chart-threshold");
-  var medidas = cellsFiltered().filter(function (c) {
-    return legacyPer1M(c) !== null && thresholdAt(c) !== null;
-  }).map(function (c) {
-    var leg = legacyPerTask(c);
-    return {
-      c: c,
-      legacyUsd: legacyPer1M(c),
-      derived: leg && leg.derived,
-      newUsd: thresholdAt(c) * USDPP
-    };
-  }).sort(function (a, b) { return b.legacyUsd - a.legacyUsd; });
-  if (!medidas.length) {
-    cont.innerHTML = '<p class="note">no measured cell under this filter</p>';
-    return;
-  }
-  var top = 0;
-  medidas.forEach(function (m) {
-    top = Math.max(top, m.legacyUsd, m.newUsd);
-  });
-  top *= 1.05;
-  if (!(top > 0)) top = 1;  // an all-zero scale must not divide into NaN widths
-  var W = 720, labelW = 320, right = 90, rowH = 24;
-  var plotW = W - labelW - right, baseY = medidas.length * rowH + 8, H = baseY + 44;
-  // the scale finally carries an axis: a baseline, ticks at 0 / mid / data max
-  // and faint gridlines the rows cross, so the new-price tick's position reads
-  // against numbers
-  var ejes = '<line x1="' + labelW + '" y1="' + baseY + '" x2="' + (W - right) + '" y2="' +
-    baseY + '" stroke="var(--grid)" stroke-width="1"/>';
-  var grid = "";
-  var dataMax = top / 1.05;
-  [0, dataMax / 2, dataMax].forEach(function (v) {
-    var x = labelW + v / top * plotW;
-    grid += '<line x1="' + x.toFixed(2) + '" y1="4" x2="' + x.toFixed(2) + '" y2="' + baseY +
-      '" stroke="var(--grid)" stroke-width="1"/>';
-    ejes += '<text x="' + x.toFixed(2) + '" y="' + (baseY + 16) + '" text-anchor="middle" ' +
-      'font-size="10" fill="var(--muted)" font-family="&quot;IBM Plex Mono&quot;,ui-monospace,Menlo,monospace">' +
-      "$" + v.toFixed(2) + "</text>";
-  });
-  ejes += '<text x="' + ((labelW + W - right) / 2).toFixed(1) + '" y="' + (H - 6) +
-    '" text-anchor="middle" font-size="10" fill="var(--muted)">$ per 1M tokens</text>';
-  var rows = "";
-  medidas.forEach(function (m, i) {
-    var y = i * rowH + 10;
-    var c = m.c;
-    // the meter can recalculate a bracket downward (negative median): such a
-    // read prices as nothing, so legacyPer1M already filtered it out
-    var bw = Math.max(0, m.legacyUsd / top * plotW);
-    var tx = m.newUsd / top * plotW;
-    // a full-width track keeps the near-zero rows visible as "measured at
-    // zero" rather than empty, and the value reads in a fixed right column:
-    // it can never land on the new-price tick, wherever that price falls
-    rows += '<text x="' + (labelW - 8) + '" y="' + (y + 10) + '" text-anchor="end" font-size="11" ' +
-      'fill="var(--ink-2)" font-family="&quot;IBM Plex Mono&quot;,ui-monospace,Menlo,monospace">' +
-      esc(c.model) + " &middot; " + esc(c.workload) + (m.derived ? " (session)" : "") + "</text>" +
-      '<rect x="' + labelW + '" y="' + y + '" width="' + plotW + '" height="14" rx="3" ' +
-      'fill="var(--grid)" fill-opacity="0.55"><title>' + esc(c.model) + " (" + esc(c.workload) +
-      "): legacy " + usdLabel(m.legacyUsd) + " per 1M tokens</title></rect>" +
-      '<rect x="' + labelW + '" y="' + y + '" width="' + bw.toFixed(2) + '" height="14" rx="3" ' +
-      'fill="var(--legacy)"><title>' + esc(c.model) + " (" + esc(c.workload) + "): legacy " +
-      usdLabel(m.legacyUsd) + " per 1M tokens" + (m.derived ? " (session-derived weekly-equivalent)" : "") +
-      " · measured " + c.pp_per_1m.median + " pp/1M</title></rect>" +
-      '<rect x="' + (labelW + tx - 1.5).toFixed(2) + '" y="' + (y - 3) + '" width="3" height="20" ' +
-      'rx="1.5" fill="var(--new)"><title>' + esc(c.model) + " (" + esc(c.workload) +
-      "): new " + usdLabel(m.newUsd) + " PAID per 1M tokens at S(x)=" +
-      Math.round(effectiveS(c.model) * 100) + "% (threshold " +
-      Number(thresholdAt(c)).toPrecision(6) + " pp/1M)</title></rect>" +
-      '<text x="' + (W - 8) + '" y="' + (y + 10) + '" text-anchor="end" font-size="10" ' +
-      'fill="var(--ink-2)" font-family="&quot;IBM Plex Mono&quot;,ui-monospace,Menlo,monospace">' +
-      usdLabel(m.legacyUsd) + "</text>";
-  });
-  cont.innerHTML = '<svg viewBox="0 0 ' + W + " " + H +
-    '" role="img" aria-label="legacy dollars per 1M tokens against the new-plan dollars per ' +
-    '1M tokens">' + grid + rows + ejes + "</svg>";
-}
+            // the credit multiplier the doc was analyzed with, filled into the prose: the
+            // copy must never hardcode a ratio the persisted doc may not have used
+            function renderCreditRatioNote() {
+                var nota = $("credit-ratio-note");
+                if (nota)
+                    nota.textContent = "credit ratio " + CREDITRATIO + "x";
+                Array.prototype.forEach.call(
+                    document.querySelectorAll(".credit-ratio-num"),
+                    function (el) {
+                        el.textContent = String(CREDITRATIO);
+                    },
+                );
+            }
 
-function renderMargins() {
-  var cont = $("chart-margins");
-  var filas = cellsFiltered().filter(function (c) { return c.legacy_cost_task_usd; });
-  if (!filas.length) {
-    cont.innerHTML = '<p class="note">no measured cell under this filter</p>';
-    return;
-  }
-  var verdicts = filas.map(function (c) { return { c: c, v: verdictAt(c) }; });
-  // the strongest verdict leads; ties and no-data rows read at the bottom
-  verdicts.sort(function (a, b) {
-    var ra = a.v.margin_pct === null ? 1 : 0, rb = b.v.margin_pct === null ? 1 : 0;
-    return ra - rb || (b.v.margin_pct || 0) - (a.v.margin_pct || 0);
-  });
-  // the scale caps at 100 %, the same cap the cells table's margin bar
-  // applies, so a 1000 % outlier no longer flattens every other row; a bar
-  // past the cap ends in a chevron and keeps its true value in the label and
-  // the tooltip. Each half reserves a label gutter so the "+X %" always fits
-  // outside its bar: no text can land on a row label or cross the center
-  var CAP = 100, labelRoom = 64;
-  var W = 720, labelW = 252, rowH = 26;
-  var plot = (W - labelW - 16) / 2, half = plot - labelRoom;
-  var cx = labelW + plot, baseY = verdicts.length * rowH + 6, H = baseY + 42;
-  var svg = '<line x1="' + cx + '" y1="6" x2="' + cx + '" y2="' + baseY +
-    '" stroke="var(--grid)" stroke-width="1"/>' +
-    '<line x1="' + labelW + '" y1="' + baseY + '" x2="' + (W - 16) + '" y2="' + baseY +
-    '" stroke="var(--grid)" stroke-width="1"/>';
-  // % ticks and faint gridlines on both sides: the 100 % cap reads as a cap
-  [50, CAP].forEach(function (v) {
-    [cx - v / CAP * half, cx + v / CAP * half].forEach(function (x) {
-      svg += '<line x1="' + x.toFixed(2) + '" y1="6" x2="' + x.toFixed(2) + '" y2="' + baseY +
-        '" stroke="var(--grid)" stroke-width="1"/>';
-    });
-  });
-  [0, 50, CAP].forEach(function (v) {
-    [cx - v / CAP * half, cx + v / CAP * half].forEach(function (x, side) {
-      if (v === 0 && side === 0) return;  // the center 0 gets a single label
-      svg += '<text x="' + x.toFixed(2) + '" y="' + (baseY + 16) + '" text-anchor="middle" ' +
-        'font-size="10" fill="var(--muted)" font-family="&quot;IBM Plex Mono&quot;,ui-monospace,Menlo,monospace">' +
-        v + (v === CAP ? " %" : "") + "</text>";
-    });
-  });
-  svg += '<text x="' + (cx - plot / 2).toFixed(1) + '" y="' + (H - 6) +
-      '" text-anchor="middle" font-size="10" fill="var(--muted)">&larr; legacy cheaper</text>' +
-    '<text x="' + (cx + plot / 2).toFixed(1) + '" y="' + (H - 6) +
-      '" text-anchor="middle" font-size="10" fill="var(--muted)">new cheaper &rarr;</text>';
-  verdicts.forEach(function (x, i) {
-    var y = i * rowH + 14;
-    svg += '<text x="' + (labelW - 8) + '" y="' + (y + 4) + '" text-anchor="end" font-size="11" ' +
-      'fill="var(--ink-2)" font-family="&quot;IBM Plex Mono&quot;,ui-monospace,Menlo,monospace">' +
-      esc(x.c.model) + " &middot; " + esc(x.c.workload) + "</text>";
-    if (x.v.winner === "no data") {
-      svg += '<text x="' + cx + '" y="' + (y + 4) + '" text-anchor="middle" font-size="10" ' +
-        'fill="var(--muted)">no data</text>';
-      return;
-    }
-    if (x.v.winner === "tie") {
-      svg += '<circle cx="' + cx + '" cy="' + y + '" r="4" fill="var(--tie)"><title>tie: inside ' +
-        'the band (2 meter ticks or 5 % of the cheaper cost)</title></circle>';
-      return;
-    }
-    var pct = x.v.margin_pct;
-    var len = Math.min(pct, CAP) / CAP * half;
-    var over = pct > CAP;
-    var isLegacy = x.v.winner === "legacy";
-    var tip = esc(x.c.model) + " (" + esc(x.c.workload) + "): " + x.v.winner + " by " +
-      Number(pct).toFixed(2) + "%" + (over ? " (bar capped at 100 %)" : "");
-    var barX = (isLegacy ? cx - len : cx).toFixed(2);
-    svg += '<rect x="' + barX + '" y="' + (y - 7) +
-      '" width="' + len.toFixed(2) + '" height="14" rx="3" fill="var(--' + x.v.winner +
-      ')"><title>' + tip + "</title></rect>";
-    if (over) {
-      // the chevron at the capped end: the real margin goes beyond the scale
-      var tipX = isLegacy ? cx - len : cx + len;
-      var dir = isLegacy ? -1 : 1;
-      svg += '<path d="M ' + tipX.toFixed(2) + " " + (y - 10) + " L " + (tipX + dir * 7).toFixed(2) +
-        " " + y + " L " + tipX.toFixed(2) + " " + (y + 10) + " Z" + '" fill="var(--' + x.v.winner +
-        ')"><title>' + tip + "</title></path>";
-    }
-    // past the chevron (7 px) when the bar capped, clear of it otherwise
-    svg += '<text x="' + (isLegacy ? cx - len - (over ? 13 : 6) : cx + len + (over ? 13 : 6)).toFixed(2) +
-      '" y="' + (y + 4) +
-      '" text-anchor="' + (isLegacy ? "end" : "start") + '" font-size="10" fill="var(--ink-2)" ' +
-      'font-family="&quot;IBM Plex Mono&quot;,ui-monospace,Menlo,monospace">' + Number(pct).toFixed(1) + "%</text>";
-  });
-  cont.innerHTML = '<svg viewBox="0 0 ' + W + " " + H +
-    '" role="img" aria-label="verdict margin by cell: legacy left, new right, tie dot">' +
-    svg + "</svg>";
-}
+            $("filter-model").addEventListener("change", function (e) {
+                estado.model = e.target.value;
+                renderAll();
+            });
+            // the free cache input: the same estado.slider state and recompute path the
+            // slider drove, clamped to 0-100 like the calculator's control; the value
+            // reads in the field itself and the status line echoes it
+            $("cache-s").addEventListener("input", function () {
+                var n = Number(this.value);
+                if (isFinite(n) && n >= 0 && n <= 100) {
+                    estado.slider = Math.round(n);
+                }
+                updateCachePresetActive();
+                renderAll();
+            });
+            function updateCachePresetActive() {
+                Array.prototype.forEach.call(
+                    document.querySelectorAll("button.cache-preset"),
+                    function (b) {
+                        var s = Number(b.getAttribute("data-s"));
+                        b.classList.toggle("active", s === estado.slider);
+                    },
+                );
+            }
+            Array.prototype.forEach.call(
+                document.querySelectorAll("button.cache-preset"),
+                function (b) {
+                    b.addEventListener("click", function () {
+                        estado.slider = Number(b.getAttribute("data-s"));
+                        $("cache-s").value = String(estado.slider);
+                        updateCachePresetActive();
+                        renderAll();
+                    });
+                },
+            );
+            updateCachePresetActive();
+            function bindTokens(id, clave, porDefecto) {
+                var input = $(id);
+                input.value = String(porDefecto);
+                input.addEventListener("input", function () {
+                    var n = Math.floor(Number(input.value));
+                    // empty or garbage input falls back to the field's default instead of pricing nothing
+                    estado[clave] = isFinite(n) && n >= 1 ? n : porDefecto;
+                    renderAll();
+                });
+            }
+            bindTokens("input-tokens-in", "tin", TOKENS_IN_DEFAULT);
+            bindTokens("input-tokens-out", "tout", TOKENS_OUT_DEFAULT);
+            Array.prototype.forEach.call(
+                document.querySelectorAll("button.preset:not(.cache-preset)"),
+                function (b) {
+                    b.addEventListener("click", function () {
+                        estado.tin = Number(b.getAttribute("data-in"));
+                        estado.tout = Number(b.getAttribute("data-out"));
+                        $("input-tokens-in").value = String(estado.tin);
+                        $("input-tokens-out").value = String(estado.tout);
+                        renderAll();
+                    });
+                },
+            );
 
+            function resolveTheme(t) {
+                if (t === "light" || t === "dark") return t;
+                return window.matchMedia("(prefers-color-scheme: dark)").matches
+                    ? "dark"
+                    : "light";
+            }
+            function applyTheme(t) {
+                document.documentElement.setAttribute(
+                    "data-theme",
+                    resolveTheme(t),
+                );
+            }
+            Array.prototype.forEach.call(
+                document.querySelectorAll('input[name="theme"]'),
+                function (radio) {
+                    radio.addEventListener("change", function (e) {
+                        applyTheme(e.target.value);
+                        try {
+                            localStorage.setItem(
+                                "dashboard-theme",
+                                e.target.value,
+                            );
+                        } catch (err) {
+                            /* unavailable */
+                        }
+                    });
+                },
+            );
+            (function initTheme() {
+                var guardado = null;
+                try {
+                    guardado = localStorage.getItem("dashboard-theme");
+                } catch (err) {
+                    /* unavailable */
+                }
+                if (guardado !== "light" && guardado !== "dark")
+                    guardado = "system";
+                var radio = document.querySelector(
+                    'input[name="theme"][value="' + guardado + '"]',
+                );
+                if (radio) radio.checked = true;
+                applyTheme(guardado);
+                requestAnimationFrame(function () {
+                    document.documentElement.classList.remove(
+                        "no-theme-transition",
+                    );
+                });
+            })();
+            // keep "system" in sync with the OS preference after load
+            var systemMedia = window.matchMedia("(prefers-color-scheme: dark)");
+            systemMedia.addEventListener("change", function (e) {
+                var guardado = "system";
+                try {
+                    guardado = localStorage.getItem("dashboard-theme");
+                } catch (err) {
+                    /* unavailable */
+                }
+                if (guardado === "system") {
+                    document.documentElement.setAttribute(
+                        "data-theme",
+                        e.matches ? "dark" : "light",
+                    );
+                }
+            });
 
-function renderStatus() {
-  var scene = compactTokens(estado.tin) + " in + " + compactTokens(estado.tout) + " out";
-  $("estado-filtro").textContent = (estado.model || "all models") +
-    " | cache slider at " + estado.slider + "% | prices at " + scene;
-  Array.prototype.forEach.call(document.querySelectorAll(".hdr-tokens"), function (el) {
-    el.textContent = compactTokens(estado.tin) + "+" + compactTokens(estado.tout);
-  });
-}
-function renderAll() {
-  renderCreditRatioNote();
-  renderReco();
-  renderTable();
-  renderThreshold();
-  renderMargins();
-  renderStatus();
-}
-
-// the credit multiplier the doc was analyzed with, filled into the prose: the
-// copy must never hardcode a ratio the persisted doc may not have used
-function renderCreditRatioNote() {
-  var nota = $("credit-ratio-note");
-  if (nota) nota.textContent = "credit ratio " + CREDITRATIO + "x";
-  Array.prototype.forEach.call(document.querySelectorAll(".credit-ratio-num"), function (el) {
-    el.textContent = String(CREDITRATIO);
-  });
-}
-
-$("filter-model").addEventListener("change", function (e) {
-  estado.model = e.target.value;
-  renderAll();
-});
-var slider = $("slider-s");
-slider.value = String(SLIDER_DEFAULT);
-slider.addEventListener("input", function () {
-  estado.slider = Number(slider.value);
-  $("slider-val").textContent = estado.slider + "%";
-  updateCachePresetActive();
-  renderAll();
-});
-$("slider-val").textContent = SLIDER_DEFAULT + "%";
-function updateCachePresetActive() {
-  Array.prototype.forEach.call(document.querySelectorAll("button.cache-preset"), function (b) {
-    var s = Number(b.getAttribute("data-s"));
-    b.classList.toggle("active", s === estado.slider);
-  });
-}
-Array.prototype.forEach.call(document.querySelectorAll("button.cache-preset"), function (b) {
-  b.addEventListener("click", function () {
-    estado.slider = Number(b.getAttribute("data-s"));
-    slider.value = String(estado.slider);
-    $("slider-val").textContent = estado.slider + "%";
-    updateCachePresetActive();
-    renderAll();
-  });
-});
-updateCachePresetActive();
-function bindTokens(id, clave, porDefecto) {
-  var input = $(id);
-  input.value = String(porDefecto);
-  input.addEventListener("input", function () {
-    var n = Math.floor(Number(input.value));
-    // empty or garbage input falls back to the field's default instead of pricing nothing
-    estado[clave] = isFinite(n) && n >= 1 ? n : porDefecto;
-    renderAll();
-  });
-}
-bindTokens("input-tokens-in", "tin", TOKENS_IN_DEFAULT);
-bindTokens("input-tokens-out", "tout", TOKENS_OUT_DEFAULT);
-Array.prototype.forEach.call(document.querySelectorAll("button.preset:not(.cache-preset)"), function (b) {
-  b.addEventListener("click", function () {
-    estado.tin = Number(b.getAttribute("data-in"));
-    estado.tout = Number(b.getAttribute("data-out"));
-    $("input-tokens-in").value = String(estado.tin);
-    $("input-tokens-out").value = String(estado.tout);
-    renderAll();
-  });
-});
-
-function resolveTheme(t) {
-  if (t === "light" || t === "dark") return t;
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
-function applyTheme(t) {
-  document.documentElement.setAttribute("data-theme", resolveTheme(t));
-}
-Array.prototype.forEach.call(document.querySelectorAll('input[name="theme"]'), function (radio) {
-  radio.addEventListener("change", function (e) {
-    applyTheme(e.target.value);
-    try { localStorage.setItem("dashboard-theme", e.target.value); } catch (err) { /* unavailable */ }
-  });
-});
-(function initTheme() {
-  var guardado = null;
-  try { guardado = localStorage.getItem("dashboard-theme"); } catch (err) { /* unavailable */ }
-  if (guardado !== "light" && guardado !== "dark") guardado = "system";
-  var radio = document.querySelector('input[name="theme"][value="' + guardado + '"]');
-  if (radio) radio.checked = true;
-  applyTheme(guardado);
-  requestAnimationFrame(function () {
-    document.documentElement.classList.remove("no-theme-transition");
-  });
-})();
-// keep "system" in sync with the OS preference after load
-var systemMedia = window.matchMedia("(prefers-color-scheme: dark)");
-systemMedia.addEventListener("change", function (e) {
-  var guardado = "system";
-  try { guardado = localStorage.getItem("dashboard-theme"); } catch (err) { /* unavailable */ }
-  if (guardado === "system") {
-    document.documentElement.setAttribute("data-theme", e.matches ? "dark" : "light");
-  }
-});
-
-renderAll();
-refrescoIconos();
-</script>
-</body>
+            renderAll();
+            refrescoIconos();
+        </script>
+    </body>
 </html>

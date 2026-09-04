@@ -419,6 +419,7 @@ def test_dashboard_loads_the_pages_contract_from_the_cdn(tmp_path):
                 "https://fonts.gstatic.com",
                 "https://unpkg.com",
                 "https://srnoob2570.github.io",
+                "https://github.com/srnoob2570",
                 "http://www.w3.org/2000/svg",
             )
         ), url
@@ -676,6 +677,7 @@ def test_calculator_loads_the_pages_contract_from_the_cdn(tmp_path):
                 "https://fonts.gstatic.com",
                 "https://unpkg.com",
                 "https://srnoob2570.github.io",
+                "https://github.com/srnoob2570",
                 "http://www.w3.org/2000/svg",
             )
         ), url

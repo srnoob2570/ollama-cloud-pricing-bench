@@ -1118,6 +1118,22 @@
                 max-width: 120ch;
             }
 
+            /* one hairline footer: the GitHub link, muted like the chrome */
+            .site-footer {
+                max-width: 1240px;
+                margin: 28px auto 0;
+                padding: 14px 0 0;
+                border-top: 1px solid var(--border);
+                font-size: 12.5px;
+                color: var(--muted-foreground);
+            }
+            .site-footer a {
+                color: inherit;
+            }
+            .site-footer a:hover {
+                color: var(--foreground);
+            }
+
             svg {
                 display: block;
                 max-width: 100%;
@@ -1477,6 +1493,16 @@
                 </div>
             </div>
         </main>
+        <footer class="site-footer">
+            <span class="brand-name">obench</span>
+            &middot;
+            <a
+                href="https://github.com/srnoob2570/ollama-cloud-pricing-bench"
+                target="_blank"
+                rel="noopener"
+                >GitHub</a
+            >
+        </footer>
 
         <script id="analysis-data" type="application/json">
             __DATOS__

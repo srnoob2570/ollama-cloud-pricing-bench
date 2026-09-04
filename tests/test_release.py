@@ -756,6 +756,52 @@ def test_analyze_release_refuses_a_metadata_of_another_run(tmp_path, fake_cli, f
     assert "run-otro" in errores or "tag" in errores
 
 
+def test_analyze_release_accepts_the_pre_rename_dataset_stamp(tmp_path, fake_cli, fake_gh):
+    """A frozen release shipped before the package rename carries the legacy
+    kind: the validator must keep accepting it, because integrity rides the
+    sha256 checks, not the kind string."""
+    from test_run import prepare
+
+    prepare(tmp_path)
+    assert (
+        run_cli(
+            tmp_path,
+            "run",
+            "--level",
+            "T1",
+            "--settle-s",
+            "2",
+            "--settle-poll-s",
+            "0.01",
+            "--reps",
+            "1",
+        )[0]
+        == 0
+    )
+    run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
+    assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)[0] == 0
+    activos = gh_assets(fake_gh, f"run-{run_id}")
+    # the stamp the pre-rename harness shipped, inside and outside the tarball
+    with tarfile.open(activos / "dataset.tar.gz") as tar:
+        destino = tmp_path / "retar"
+        destino.mkdir()
+        tar.extractall(destino, filter="data")
+    (destino / "metadata.json").write_text(
+        (destino / "metadata.json")
+        .read_text(encoding="utf-8")
+        .replace('"kind": "obench-dataset"', '"kind": "ocharness-dataset"'),
+        encoding="utf-8",
+    )
+    with tarfile.open(activos / "dataset.tar.gz", "w:gz") as t:
+        for p in sorted(destino.rglob("*")):
+            if p.is_file():
+                t.add(p, arcname=p.relative_to(destino).as_posix())
+    meta = json.loads((activos / "metadata.json").read_text(encoding="utf-8"))
+    meta["kind"] = "ocharness-dataset"
+    (activos / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+    assert run_cli(tmp_path, "analyze", "--release", f"run-{run_id}", "--repo", REPO)[0] == 0
+
+
 # ---------------------------------------------------------------------------
 # resume: the spec's 7th subcommand, realized as run's resumable twin
 # ---------------------------------------------------------------------------

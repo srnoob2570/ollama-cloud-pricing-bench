@@ -51,6 +51,10 @@ from . import dataset_export
 from .pricing import PriceTable, TableError
 
 DATASET_KIND = "obench-dataset"
+# the stamp the pre-rename harness shipped: frozen published releases keep it,
+# so the validator must keep accepting it (integrity rides the sha256 checks,
+# not the kind string)
+DATASET_KIND_LEGACY = "ocharness-dataset"
 RELEASES_DIR = "releases"
 TAG_PREFIX = "run-"
 GH_TIMEOUT_S = 600.0  # asset uploads can be slow
@@ -527,7 +531,7 @@ def load_metadata(raiz) -> dict:
         meta = json.loads(texto)
     except json.JSONDecodeError as e:
         raise ReleaseError(f"metadata.json is not valid JSON: {e}") from None
-    if not isinstance(meta, dict) or meta.get("kind") != DATASET_KIND:
+    if not isinstance(meta, dict) or meta.get("kind") not in (DATASET_KIND, DATASET_KIND_LEGACY):
         raise ReleaseError("metadata.json is not an obench dataset stamp (kind mismatch)")
     faltantes = [
         k for k in ("run_id", "table_version", "protocol_version", "files") if k not in meta

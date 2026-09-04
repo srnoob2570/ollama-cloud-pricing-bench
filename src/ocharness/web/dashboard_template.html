@@ -10,8 +10,27 @@
 <meta property="og:description" content="Which plan actually costs less, measured on real workloads: verdicts, thresholds and cache sensitivity in paid dollars.">
 <meta name="theme-color" content="#f8f7f2" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#12110e" media="(prefers-color-scheme: dark)">
-<!-- vendored offline styles: Tailwind + shadcn tokens; Lucide icons -->
-<style>__ESTILO_BASE__</style>
+<!-- resolve theme before first paint to prevent FOUC; transitions are
+     suppressed until the page finishes initialising the radios -->
+<script>
+(function() {
+  var stored = "system";
+  try { stored = localStorage.getItem("dashboard-theme") || "system"; } catch (e) { /* unavailable */ }
+  if (stored !== "light" && stored !== "dark") stored = "system";
+  var theme = stored === "system"
+    ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+    : stored;
+  document.documentElement.setAttribute("data-theme", theme);
+  document.documentElement.classList.add("no-theme-transition");
+})();
+</script>
+<!-- Pages-first styling: Tailwind browser CDN + Google Fonts + Lucide icons (online serving) -->
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lucide@1.40.0/dist/umd/lucide.min.js"></script>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230f766e'/><path d='M6 22l6-8 5 5 4-6 5 9z' fill='%23fff'/></svg>">
 <style>
 /* three-state theme tokens: system is the default (no attribute), light and
    dark are selectable. Chart colors NEVER appear here outside these tokens. */
@@ -48,10 +67,13 @@
   --legacy-soft: rgba(57,135,229,.18); --new-soft: rgba(217,89,38,.18);
 }
 * { box-sizing: border-box; }
+/* shadcn zinc shell tokens (restored inline; was the vendored sheet's tail) */
+:root{--radius-sm:calc(var(--radius) * .6);--radius-md:calc(var(--radius) * .8);--radius-lg:var(--radius)}
+:root{--radius:.625rem;--background:oklch(100% 0 0);--foreground:oklch(14.5% 0 0);--card:oklch(100% 0 0);--card-foreground:oklch(14.5% 0 0);--popover:oklch(100% 0 0);--popover-foreground:oklch(14.5% 0 0);--primary:oklch(20.5% 0 0);--primary-foreground:oklch(98.5% 0 0);--secondary:oklch(97% 0 0);--secondary-foreground:oklch(20.5% 0 0);--muted:oklch(97% 0 0);--muted-foreground:oklch(55.6% 0 0);--accent:oklch(97% 0 0);--accent-foreground:oklch(20.5% 0 0);--destructive:oklch(57.7% .245 27.325);--border:oklch(92.2% 0 0);--input:oklch(92.2% 0 0);--ring:oklch(70.8% 0 0)}[data-theme=dark]{--background:oklch(14.5% 0 0);--foreground:oklch(98.5% 0 0);--card:oklch(20.5% 0 0);--card-foreground:oklch(98.5% 0 0);--popover:oklch(20.5% 0 0);--popover-foreground:oklch(98.5% 0 0);--primary:oklch(92.2% 0 0);--primary-foreground:oklch(20.5% 0 0);--secondary:oklch(26.9% 0 0);--secondary-foreground:oklch(98.5% 0 0);--muted:oklch(26.9% 0 0);--muted-foreground:oklch(70.8% 0 0);--accent:oklch(26.9% 0 0);--accent-foreground:oklch(98.5% 0 0);--destructive:oklch(70.4% .191 22.216);--border:oklch(100% 0 0/.1);--input:oklch(100% 0 0/.15);--ring:oklch(55.6% 0 0)}@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--background:oklch(14.5% 0 0);--foreground:oklch(98.5% 0 0);--card:oklch(20.5% 0 0);--card-foreground:oklch(98.5% 0 0);--popover:oklch(20.5% 0 0);--popover-foreground:oklch(98.5% 0 0);--primary:oklch(92.2% 0 0);--primary-foreground:oklch(20.5% 0 0);--secondary:oklch(26.9% 0 0);--secondary-foreground:oklch(98.5% 0 0);--muted:oklch(26.9% 0 0);--muted-foreground:oklch(70.8% 0 0);--accent:oklch(26.9% 0 0);--accent-foreground:oklch(98.5% 0 0);--destructive:oklch(70.4% .191 22.216);--border:oklch(100% 0 0/.1);--input:oklch(100% 0 0/.15);--ring:oklch(55.6% 0 0)}}
 
-/* shadcn/ui zinc shell: the vendored layer above already carries the token
-   map; these rules are the page-specific chrome that cannot be expressed as
-   utilities until the stylesheet is recompiled against the final templates. */
+
+/* page chrome: shadcn-style token names for the shell; Pages-first, the data
+   rides inline as JSON and the styling loads from the CDN head block above. */
 html { scroll-behavior: smooth; }
 body { margin: 0; padding: 0 24px 64px; background: var(--background); color: var(--foreground);
   font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -61,6 +83,9 @@ body { margin: 0; padding: 0 24px 64px; background: var(--background); color: va
   html { scroll-behavior: auto; }
   *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
+html.no-theme-transition, html.no-theme-transition *,
+html.no-theme-transition *::before, html.no-theme-transition *::after {
+  transition: none !important; }
 
 .wrap { max-width: 1200px; margin: 0 auto; padding-top: clamp(28px, 6vh, 56px); }
 .skip { position: absolute; left: -9999px; }
@@ -103,9 +128,13 @@ h2 { font-size: 15px; letter-spacing: -.01em; color: var(--foreground);
   padding: 18px 20px; margin: 0 0 16px;
   box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 6px 16px -4px rgba(0,0,0,.06); }
 
-.controls { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-end; margin: 14px 0 4px; }
+.controls { display: flex; flex-direction: column; gap: 16px; margin: 14px 0 4px; }
+.controls-row { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-end; }
+.controls-row .ctl { flex: 1 1 auto; min-width: 140px; }
+.controls-row fieldset { flex: 0 0 auto; }
 .ctl { display: flex; flex-direction: column; gap: 6px; }
 .ctl-row { display: flex; gap: 6px; align-items: center; }
+.status-line { font-size: 12px; color: var(--muted-foreground); padding-top: 2px; border-top: 1px solid var(--border); }
 .ctl-label, legend { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
   color: var(--muted-foreground); font-weight: 600; }
 legend { padding: 0; margin-bottom: 5px; }
@@ -148,8 +177,10 @@ input[type="range"]::-moz-range-thumb { width: 16px; height: 16px; border-radius
 
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 .scroll-x { overflow: auto; max-height: 72vh; }
-th { position: sticky; top: 0; z-index: 1; background: var(--muted);
-  font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground);
+th { position: sticky; top: 0; z-index: 1;
+  background: color-mix(in oklab, var(--muted) 45%, var(--card));
+  color: var(--foreground);
+  font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
   text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); font-weight: 600; }
 td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 tbody tr { transition: background .15s ease; }
@@ -160,9 +191,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   border-radius: 999px; font-weight: 600; white-space: nowrap;
   font-variant-numeric: tabular-nums; }
 .chip .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.chip.legacy { color: var(--legacy); background: var(--legacy-soft); }
+.chip.legacy { color: color-mix(in oklab, var(--legacy) 85%, var(--foreground)); background: color-mix(in oklab, var(--legacy) 10%, var(--muted)); }
 .chip.legacy .dot { background: var(--legacy); }
-.chip.new { color: var(--new); background: var(--new-soft); }
+.chip.new { color: color-mix(in oklab, var(--new) 85%, var(--foreground)); background: color-mix(in oklab, var(--new) 10%, var(--muted)); }
 .chip.new .dot { background: var(--new); }
 .chip.tie { color: var(--muted-foreground); border: 1px dashed var(--border); }
 .chip.nodata { color: var(--muted-foreground); font-weight: 500; }
@@ -171,8 +202,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .mbar .track { position: relative; width: 84px; height: 10px; background: var(--input);
   border-radius: 3px; overflow: hidden; }
 .mbar .fill { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
-.mbar .fill.legacy { left: 0; background: var(--legacy); }
-.mbar .fill.new { right: 0; background: var(--new); }
+.mbar .fill.legacy { left: 0; background: color-mix(in oklab, var(--legacy) 70%, var(--card)); }
+.mbar .fill.new { right: 0; background: color-mix(in oklab, var(--new) 70%, var(--card)); }
 .mbar b { font-weight: 600; min-width: 48px; text-align: right; }
 
 .big { font-size: 28px; font-weight: 700; letter-spacing: -.02em;
@@ -193,13 +224,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .note { font-size: 12px; color: var(--muted-foreground); }
 .panel > p.note, main > p.note, .legend + p.note { line-height: 1.65; text-wrap: pretty; }
 
-details { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
-summary { cursor: pointer; color: var(--foreground); font-weight: 600; font-size: 13px;
-  transition: color .15s ease; display: inline-flex; align-items: center; gap: 6px; }
-summary:hover { color: var(--muted-foreground); }
-
 svg { display: block; max-width: 100%; }
-#chart-threshold svg, #chart-margins svg, #chart-dp svg { width: 100%; height: auto; }
+#chart-threshold svg, #chart-margins svg { width: 100%; height: auto; }
 </style>
 </head>
 <body>
@@ -220,42 +246,53 @@ svg { display: block; max-width: 100%; }
 
 <div class="panel">
   <div class="controls">
-    <div class="ctl">
-      <label class="ctl-label" for="filter-model">model</label>
-      <select id="filter-model"><option value="">all models</option>__OPCIONES__</select>
+    <div class="controls-row">
+      <div class="ctl">
+        <label class="ctl-label" for="filter-model">model</label>
+        <select id="filter-model"><option value="">all models</option>__OPCIONES__</select>
+      </div>
+      <div class="ctl">
+        <label class="ctl-label" for="input-tokens-in">tokens in</label>
+        <input type="number" id="input-tokens-in" min="1" step="1000" value="1000000" class="mono">
+      </div>
+      <div class="ctl">
+        <label class="ctl-label" for="input-tokens-out">tokens out</label>
+        <div class="ctl-row">
+          <input type="number" id="input-tokens-out" min="1" step="1000" value="250000" class="mono">
+          <button type="button" class="preset mono" data-in="1000000" data-out="250000" aria-label="set scenario to 4:1">4:1</button>
+          <button type="button" class="preset mono" data-in="625000" data-out="625000" aria-label="set scenario to 1:1">1:1</button>
+          <button type="button" class="preset mono" data-in="250000" data-out="1000000" aria-label="set scenario to 1:4">1:4</button>
+        </div>
+      </div>
+      <fieldset>
+        <legend>theme</legend>
+        <div class="seg" role="radiogroup" aria-label="theme">
+          <label><input type="radio" name="theme" value="system" checked><i data-lucide="monitor" aria-hidden="true"></i> system</label>
+          <label><input type="radio" name="theme" value="light"><i data-lucide="sun" aria-hidden="true"></i> light</label>
+          <label><input type="radio" name="theme" value="dark"><i data-lucide="moon" aria-hidden="true"></i> dark</label>
+        </div>
+      </fieldset>
     </div>
-    <div class="ctl">
-      <label class="ctl-label" for="input-tokens-in">tokens in</label>
-      <input type="number" id="input-tokens-in" min="1" step="1000" value="1000000" class="mono">
-    </div>
-    <div class="ctl">
-      <label class="ctl-label" for="input-tokens-out">tokens out</label>
-      <div class="ctl-row">
-        <input type="number" id="input-tokens-out" min="1" step="1000" value="250000" class="mono">
-        <button type="button" class="preset mono" data-in="1000000" data-out="250000">4:1</button>
-        <button type="button" class="preset mono" data-in="625000" data-out="625000">1:1</button>
-        <button type="button" class="preset mono" data-in="250000" data-out="1000000">1:4</button>
+    <div class="controls-row">
+      <div class="ctl">
+        <label class="ctl-label" for="slider-s">cache hit-rate S(x), presentation layer only</label>
+        <div class="ctl-row">
+          <input type="range" id="slider-s" min="0" max="100" value="85" step="1" aria-describedby="slider-val slider-note">
+          <b id="slider-val" class="mono">85%</b>
+        </div>
+      </div>
+      <div class="ctl">
+        <span class="ctl-label">presets</span>
+        <div class="ctl-row">
+          <button type="button" class="preset mono cache-preset" data-s="0">0%</button>
+          <button type="button" class="preset mono cache-preset" data-s="50">50%</button>
+          <button type="button" class="preset mono cache-preset active" data-s="85">85%</button>
+          <button type="button" class="preset mono cache-preset" data-s="95">95%</button>
+        </div>
       </div>
     </div>
-    <fieldset>
-      <legend>theme</legend>
-      <div class="seg" role="radiogroup" aria-label="theme">
-        <label><input type="radio" name="theme" value="system" checked><i class="i-monitor" aria-hidden="true"></i> system</label>
-        <label><input type="radio" name="theme" value="light"><i class="i-sun" aria-hidden="true"></i> light</label>
-        <label><input type="radio" name="theme" value="dark"><i class="i-moon" aria-hidden="true"></i> dark</label>
-      </div>
-    </fieldset>
-    <span id="estado-filtro" class="note"></span>
+    <div class="status-line" id="estado-filtro" aria-live="polite"></div>
   </div>
-  <label for="slider-s"><b>Cache hit-rate S(x)</b>, presentation layer only:
-    <input type="range" id="slider-s" min="0" max="100" value="85" step="1">
-    <b id="slider-val" class="mono">85%</b></label>
-  <p style="margin:6px 0 0">
-    <button type="button" class="preset mono cache-preset" data-s="0">0%</button>
-    <button type="button" class="preset mono cache-preset" data-s="50">50%</button>
-    <button type="button" class="preset mono cache-preset" data-s="85">85%</button>
-    <button type="button" class="preset mono cache-preset" data-s="95">95%</button>
-  </p>
   <p class="note" id="slider-note">The slider and the token scenario inputs recompute the new-plan
     costs, the critical threshold and the verdict margins in live JS, from the embedded
     per-cell tokens, rates and anchor. Nothing persisted changes. The raw is immutable and
@@ -330,19 +367,6 @@ svg { display: block; max-width: 100%; }
     <span class="mono credit-ratio-num"></span></span></div>
 </div>
 
-<details>
-  <summary>Robustness: who wins by profile, sensitivity sweeps, cache calibration, legacy quota
-    vs tokens <i class="i-chevron-down" aria-hidden="true"></i></summary>
-  <h2>Who wins, by user profile (persisted S0/S1 reference)</h2>
-  <div class="panel">__WHO_WINS__</div>
-  <h2>Sensitivity sweeps</h2>
-  <div class="panel">__SENSIBILIDAD__</div>
-  <h2>Cache calibration (effective S per model)</h2>
-  <div class="panel">__CALIBRACION__</div>
-  <h2>Legacy quota vs billed tokens</h2>
-  <div class="panel"><div id="chart-dp"></div></div>
-</details>
-
 <p class="note" style="margin-top:16px">__NOTAS__</p>
 </main>
 
@@ -372,6 +396,14 @@ var TOKENS_IN_DEFAULT = 1000000, TOKENS_OUT_DEFAULT = 250000;
 var estado = { model: "", slider: SLIDER_DEFAULT, tin: TOKENS_IN_DEFAULT, tout: TOKENS_OUT_DEFAULT };
 
 function $(id) { return document.getElementById(id); }
+// Lucide loads from the CDN (Pages-first styling): replace every
+// <i data-lucide="..."> placeholder with its inline SVG. Guarded so a blocked
+// CDN degrades to icon-less markup, never to a thrown error. The CDN <script>
+// is a synchronous head tag on purpose: it guarantees window.lucide exists by
+// the time this runs — adding `defer` would make this a silent no-op.
+function refrescoIconos() {
+  if (window.lucide) lucide.createIcons();
+}
 function esc(s) {
   return String(s).replace(/[&<>"']/g, function (c) {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
@@ -615,7 +647,7 @@ function renderThreshold() {
   var plotW = W - labelW - right, baseY = medidas.length * rowH + 8, H = baseY + 44;
   // the scale finally carries an axis: a baseline, ticks at 0 / mid / data max
   // and faint gridlines the rows cross, so the new-price tick's position reads
-  // against numbers (the same tick pattern the dp-tokens curve uses)
+  // against numbers
   var ejes = '<line x1="' + labelW + '" y1="' + baseY + '" x2="' + (W - right) + '" y2="' +
     baseY + '" stroke="var(--grid)" stroke-width="1"/>';
   var grid = "";
@@ -754,62 +786,6 @@ function renderMargins() {
     svg + "</svg>";
 }
 
-function renderDp() {
-  var cont = $("chart-dp");
-  var puntos = DATA.dp_tokens_curve || [];
-  if (!puntos.length) {
-    cont.innerHTML = '<p class="note">no measured bracket</p>';
-    return;
-  }
-  var maxX = Math.max.apply(null, puntos.map(function (p) { return p.tokens_total; })) * 1.05;
-  var maxY = Math.max.apply(null, puntos.map(function (p) { return p.dpp_weekly; })) * 1.05;
-  // an all-zero axis (every readable bracket below the tick) must not divide
-  // by zero into NaN coordinates: the dots sit on the baseline instead
-  if (!(maxX > 0)) maxX = 1;
-  if (!(maxY > 0)) maxY = 1;
-  var W = 660, H = 280, padL = 52, padB = 34, padT = 20, padR = 12;
-  function kfmt(v) {  // compact tick label: 336000 -> "336k", sub-k keeps one decimal
-    return v >= 1000 ? Math.round(v / 1000) + "k" : String(Math.round(v * 10) / 10);
-  }
-  var ejes = '<line x1="' + padL + '" y1="' + (H - padB) + '" x2="' + (W - padR) + '" y2="' +
-    (H - padB) + '" stroke="var(--grid)" stroke-width="1"/>' +
-    '<line x1="' + padL + '" y1="' + padT + '" x2="' + padL + '" y2="' + (H - padB) +
-    '" stroke="var(--grid)" stroke-width="1"/>';
-  // the scale was implied before: now the axes carry tick labels and captions
-  // (ticks sit at 0 / mid / data max, inside the padded plot, never on the rim)
-  var dataMaxX = maxX / 1.05, dataMaxY = maxY / 1.05;
-  var ticks = "";
-  [0, dataMaxX / 2, dataMaxX].forEach(function (v) {
-    var x = padL + v / maxX * (W - padL - padR);
-    ticks += '<text x="' + x.toFixed(1) + '" y="' + (H - padB + 14) + '" text-anchor="middle" ' +
-      'font-size="10" fill="var(--muted)" font-family="&quot;IBM Plex Mono&quot;,ui-monospace,Menlo,monospace">' +
-      kfmt(v) + "</text>";
-  });
-  [0, dataMaxY / 2, dataMaxY].forEach(function (v) {
-    var y = H - padB - v / maxY * (H - padB - padT);
-    ticks += '<text x="' + (padL - 6) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end" ' +
-      'font-size="10" fill="var(--muted)" font-family="&quot;IBM Plex Mono&quot;,ui-monospace,Menlo,monospace">' +
-      kfmt(v) + "</text>";
-  });
-  ejes += '<text x="' + padL + '" y="10" font-size="10" fill="var(--muted)">legacy weekly ' +
-      '&Delta;pp</text>' +
-    '<text x="' + ((padL + W - padR) / 2).toFixed(1) + '" y="' + (H - 4) +
-      '" text-anchor="middle" font-size="10" fill="var(--muted)">billed tokens</text>';
-  var dots = puntos.map(function (p) {
-    var x = padL + p.tokens_total / maxX * (W - padL - padR);
-    var y = H - padB - p.dpp_weekly / maxY * (H - padB - padT);
-    return '<circle cx="' + x.toFixed(2) + '" cy="' + y.toFixed(2) + '" r="4" fill="var(--legacy)" ' +
-      'fill-opacity="0.85"><title>' + esc(p.model) + " &middot; " +
-      esc(isNull(p.workload) ? "pooled" : p.workload) + ": " + p.dpp_weekly + " weekly pp / " +
-      p.tokens_total + " tokens</title></circle>";
-  }).join("");
-  cont.innerHTML = '<svg viewBox="0 0 ' + W + " " + H +
-    '" role="img" aria-label="legacy weekly quota delta versus billed tokens">' + ejes + ticks +
-    dots +
-    "</svg>" +
-    '<p class="note">one dot per measured bracket, legacy weekly &Delta;pp against billed ' +
-    "tokens; the legacy side never moves with the slider</p>";
-}
 
 function renderStatus() {
   var scene = compactTokens(estado.tin) + " in + " + compactTokens(estado.tout) + " out";
@@ -847,17 +823,26 @@ slider.value = String(SLIDER_DEFAULT);
 slider.addEventListener("input", function () {
   estado.slider = Number(slider.value);
   $("slider-val").textContent = estado.slider + "%";
+  updateCachePresetActive();
   renderAll();
 });
 $("slider-val").textContent = SLIDER_DEFAULT + "%";
+function updateCachePresetActive() {
+  Array.prototype.forEach.call(document.querySelectorAll("button.cache-preset"), function (b) {
+    var s = Number(b.getAttribute("data-s"));
+    b.classList.toggle("active", s === estado.slider);
+  });
+}
 Array.prototype.forEach.call(document.querySelectorAll("button.cache-preset"), function (b) {
   b.addEventListener("click", function () {
     estado.slider = Number(b.getAttribute("data-s"));
     slider.value = String(estado.slider);
     $("slider-val").textContent = estado.slider + "%";
+    updateCachePresetActive();
     renderAll();
   });
 });
+updateCachePresetActive();
 function bindTokens(id, clave, porDefecto) {
   var input = $(id);
   input.value = String(porDefecto);
@@ -880,9 +865,12 @@ Array.prototype.forEach.call(document.querySelectorAll("button.preset:not(.cache
   });
 });
 
+function resolveTheme(t) {
+  if (t === "light" || t === "dark") return t;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
 function applyTheme(t) {
-  if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
-  else document.documentElement.removeAttribute("data-theme");
+  document.documentElement.setAttribute("data-theme", resolveTheme(t));
 }
 Array.prototype.forEach.call(document.querySelectorAll('input[name="theme"]'), function (radio) {
   radio.addEventListener("change", function (e) {
@@ -897,10 +885,22 @@ Array.prototype.forEach.call(document.querySelectorAll('input[name="theme"]'), f
   var radio = document.querySelector('input[name="theme"][value="' + guardado + '"]');
   if (radio) radio.checked = true;
   applyTheme(guardado);
+  requestAnimationFrame(function () {
+    document.documentElement.classList.remove("no-theme-transition");
+  });
 })();
+// keep "system" in sync with the OS preference after load
+var systemMedia = window.matchMedia("(prefers-color-scheme: dark)");
+systemMedia.addEventListener("change", function (e) {
+  var guardado = "system";
+  try { guardado = localStorage.getItem("dashboard-theme"); } catch (err) { /* unavailable */ }
+  if (guardado === "system") {
+    document.documentElement.setAttribute("data-theme", e.matches ? "dark" : "light");
+  }
+});
 
-renderDp();
 renderAll();
+refrescoIconos();
 </script>
 </body>
 </html>

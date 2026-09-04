@@ -7,8 +7,27 @@
 <meta name="description" content="How many tokens the Pro and Max plans' monthly credits buy, per model, at any in : out token split — priced live on the official Ollama Cloud table.">
 <meta name="theme-color" content="#f8f7f2" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#12110e" media="(prefers-color-scheme: dark)">
-<!-- vendored offline styles: Tailwind + shadcn tokens; Lucide icons -->
-<style>__ESTILO_BASE__</style>
+<!-- resolve theme before first paint to prevent FOUC; transitions are
+     suppressed until the page finishes initialising the radios -->
+<script>
+(function() {
+  var stored = "system";
+  try { stored = localStorage.getItem("dashboard-theme") || "system"; } catch (e) { /* unavailable */ }
+  if (stored !== "light" && stored !== "dark") stored = "system";
+  var theme = stored === "system"
+    ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+    : stored;
+  document.documentElement.setAttribute("data-theme", theme);
+  document.documentElement.classList.add("no-theme-transition");
+})();
+</script>
+<!-- Pages-first styling: Tailwind browser CDN + Google Fonts + Lucide icons (online serving) -->
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lucide@1.40.0/dist/umd/lucide.min.js"></script>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230f766e'/><path d='M6 22l6-8 5 5 4-6 5 9z' fill='%23fff'/></svg>">
 <style>
 /* three-state theme tokens: system is the default (no attribute), light and
    dark are selectable. Chart colors NEVER appear here outside these tokens. */
@@ -45,10 +64,13 @@
   --legacy-soft: rgba(57,135,229,.18); --new-soft: rgba(217,89,38,.18);
 }
 * { box-sizing: border-box; }
+/* shadcn zinc shell tokens (restored inline; was the vendored sheet's tail) */
+:root{--radius-sm:calc(var(--radius) * .6);--radius-md:calc(var(--radius) * .8);--radius-lg:var(--radius)}
+:root{--radius:.625rem;--background:oklch(100% 0 0);--foreground:oklch(14.5% 0 0);--card:oklch(100% 0 0);--card-foreground:oklch(14.5% 0 0);--popover:oklch(100% 0 0);--popover-foreground:oklch(14.5% 0 0);--primary:oklch(20.5% 0 0);--primary-foreground:oklch(98.5% 0 0);--secondary:oklch(97% 0 0);--secondary-foreground:oklch(20.5% 0 0);--muted:oklch(97% 0 0);--muted-foreground:oklch(55.6% 0 0);--accent:oklch(97% 0 0);--accent-foreground:oklch(20.5% 0 0);--destructive:oklch(57.7% .245 27.325);--border:oklch(92.2% 0 0);--input:oklch(92.2% 0 0);--ring:oklch(70.8% 0 0)}[data-theme=dark]{--background:oklch(14.5% 0 0);--foreground:oklch(98.5% 0 0);--card:oklch(20.5% 0 0);--card-foreground:oklch(98.5% 0 0);--popover:oklch(20.5% 0 0);--popover-foreground:oklch(98.5% 0 0);--primary:oklch(92.2% 0 0);--primary-foreground:oklch(20.5% 0 0);--secondary:oklch(26.9% 0 0);--secondary-foreground:oklch(98.5% 0 0);--muted:oklch(26.9% 0 0);--muted-foreground:oklch(70.8% 0 0);--accent:oklch(26.9% 0 0);--accent-foreground:oklch(98.5% 0 0);--destructive:oklch(70.4% .191 22.216);--border:oklch(100% 0 0/.1);--input:oklch(100% 0 0/.15);--ring:oklch(55.6% 0 0)}@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--background:oklch(14.5% 0 0);--foreground:oklch(98.5% 0 0);--card:oklch(20.5% 0 0);--card-foreground:oklch(98.5% 0 0);--popover:oklch(20.5% 0 0);--popover-foreground:oklch(98.5% 0 0);--primary:oklch(92.2% 0 0);--primary-foreground:oklch(20.5% 0 0);--secondary:oklch(26.9% 0 0);--secondary-foreground:oklch(98.5% 0 0);--muted:oklch(26.9% 0 0);--muted-foreground:oklch(70.8% 0 0);--accent:oklch(26.9% 0 0);--accent-foreground:oklch(98.5% 0 0);--destructive:oklch(70.4% .191 22.216);--border:oklch(100% 0 0/.1);--input:oklch(100% 0 0/.15);--ring:oklch(55.6% 0 0)}}
 
-/* shadcn/ui zinc shell: the vendored layer above already carries the token
-   map; these rules are the page-specific chrome that cannot be expressed as
-   utilities until the stylesheet is recompiled against the final templates. */
+
+/* page chrome: shadcn-style token names for the shell; Pages-first, the data
+   rides inline as JSON and the styling loads from the CDN head block above. */
 html { scroll-behavior: smooth; }
 body { margin: 0; padding: 0 24px 64px; background: var(--background); color: var(--foreground);
   font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -58,6 +80,9 @@ body { margin: 0; padding: 0 24px 64px; background: var(--background); color: va
   html { scroll-behavior: auto; }
   *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
+html.no-theme-transition, html.no-theme-transition *,
+html.no-theme-transition *::before, html.no-theme-transition *::after {
+  transition: none !important; }
 
 .wrap { max-width: 1200px; margin: 0 auto; padding-top: clamp(28px, 6vh, 56px); }
 .skip { position: absolute; left: -9999px; }
@@ -95,9 +120,10 @@ h1 { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   padding: 18px 20px; margin: 0 0 16px;
   box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 6px 16px -4px rgba(0,0,0,.06); }
 
-.controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; align-items: start; margin: 14px 0 4px; }
+.controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; align-items: start; margin: 14px 0 4px; }
 .ctl { display: flex; flex-direction: column; gap: 6px; }
 .ctl-row { display: flex; gap: 6px; align-items: center; }
+.ctl-row.custom-ratio { display: grid; grid-template-columns: 1fr auto 1fr; gap: 6px; align-items: center; }
 .ctl-label, legend { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
   color: var(--muted-foreground); font-weight: 600; }
 legend { padding: 0; margin-bottom: 5px; }
@@ -155,6 +181,7 @@ fieldset { font: inherit; border: 0; padding: 0; margin: 0; }
 .model-picker-item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: var(--radius-sm);
   cursor: pointer; font-size: 12.5px; color: var(--foreground); transition: background .12s ease; }
 .model-picker-item:hover { background: var(--accent); color: var(--accent-foreground); }
+.model-picker-item:focus { outline: 2px solid var(--shadcn-ring); outline-offset: -2px; background: var(--accent); color: var(--accent-foreground); }
 .model-picker-item[aria-selected="true"] { background: var(--primary); color: var(--primary-foreground); font-weight: 600; }
 .model-picker-check { width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; flex: none;
   border: 1px solid var(--border); border-radius: var(--radius-sm); }
@@ -169,14 +196,14 @@ fieldset { font: inherit; border: 0; padding: 0; margin: 0; }
   cursor: pointer; color: var(--muted-foreground); display: inline-flex; align-items: center; transition: color .15s ease; line-height: 1; font-size: 12px; }
 .chip-remove:hover { color: var(--foreground); }
 
-/* custom in : out inputs: compact numeric fields that sit as peers in the
-   controls grid, not flex-grow giants that crowd the cache/theme groups */
+/* custom in : out inputs: compact numeric fields that share their group's
+   width so the grid cell has no dead space, while staying proportionally small */
 #plan-custom-in, #plan-custom-out {
-  width: 5ch;
+  width: auto;
   min-width: 48px;
+  max-width: 110px;
   text-align: center;
   padding-inline: 4px;
-  flex: none;
 }
 
 /* cache custom input inline with presets */
@@ -195,8 +222,10 @@ tfoot td { padding-top: 8px; font-size: 11px; color: var(--muted-foreground); te
 
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 .scroll-x { overflow: auto; max-height: 72vh; }
-th { position: sticky; top: 0; z-index: 1; background: var(--muted);
-  font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground);
+th { position: sticky; top: 0; z-index: 1;
+  background: color-mix(in oklab, var(--muted) 45%, var(--card));
+  color: var(--foreground);
+  font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
   text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); font-weight: 600; }
 td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 tbody tr { transition: background .15s ease; }
@@ -225,14 +254,14 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
       </div>
       <select id="filter-model" multiple style="display:none">__OPCIONES__</select>
       <div class="model-picker" id="model-picker">
-        <button type="button" class="model-picker-btn" id="model-picker-btn" aria-haspopup="listbox" aria-expanded="false">
+        <button type="button" class="model-picker-btn" id="model-picker-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="model-picker-dropdown">
           <span class="model-picker-text" id="model-picker-text">all models</span>
-          <i class="i-chevron-down icon" aria-hidden="true"></i>
+          <i data-lucide="chevron-down" class="icon" aria-hidden="true"></i>
         </button>
         <div class="model-picker-dropdown" id="model-picker-dropdown" role="listbox" aria-multiselectable="true" style="display:none;">
           <div class="model-picker-search">
-            <i class="i-search icon" aria-hidden="true"></i>
-            <input type="text" id="model-search" placeholder="Search models…" autocomplete="off">
+            <i data-lucide="search" class="icon" aria-hidden="true"></i>
+            <input type="text" id="model-search" placeholder="Search models…" autocomplete="off" aria-label="Search models">
           </div>
           <div class="model-picker-actions">
             <button type="button" class="preset" id="model-select-all">all</button>
@@ -246,10 +275,10 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
     <div class="ctl">
       <label class="ctl-label" for="plan-custom-in">custom in : out</label>
-      <div class="ctl-row">
-        <input type="number" id="plan-custom-in" min="0" step="any" value="1" class="mono">
+      <div class="ctl-row custom-ratio">
+        <input type="number" id="plan-custom-in" min="0" step="any" value="1" class="mono" aria-label="custom input ratio">
         <span class="ctl-label">:</span>
-        <input type="number" id="plan-custom-out" min="0" step="any" value="1" class="mono">
+        <input type="number" id="plan-custom-out" min="0" step="any" value="1" class="mono" aria-label="custom output ratio">
       </div>
     </div>
 
@@ -270,9 +299,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
     <fieldset>
       <legend>theme</legend>
       <div class="seg" role="radiogroup" aria-label="theme">
-        <label><input type="radio" name="theme" value="system" checked><i class="i-monitor" aria-hidden="true"></i> system</label>
-        <label><input type="radio" name="theme" value="light"><i class="i-sun" aria-hidden="true"></i> light</label>
-        <label><input type="radio" name="theme" value="dark"><i class="i-moon" aria-hidden="true"></i> dark</label>
+        <label><input type="radio" name="theme" value="system" checked><i data-lucide="monitor" aria-hidden="true"></i> system</label>
+        <label><input type="radio" name="theme" value="light"><i data-lucide="sun" aria-hidden="true"></i> light</label>
+        <label><input type="radio" name="theme" value="dark"><i data-lucide="moon" aria-hidden="true"></i> dark</label>
       </div>
     </fieldset>
   </div>
@@ -300,7 +329,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 // The plan token-budget section's standalone page (the split from the
 // dashboard): the full pricing table rides in #rates-data — every model the
 // chosen table prices, not only the analysis cells' models — and the doc's
-// base params + per-model S ride in #analysis-data. No fetches, no CDN.
+// base params + per-model S ride in #analysis-data. Pages-first: the data
+// rides inline as JSON; the styling loads from the CDN because Pages serves
+// online.
 var DATA = JSON.parse(document.getElementById("analysis-data").textContent);
 var RATES = JSON.parse(document.getElementById("rates-data").textContent);
 var PER = RATES.per || 1000000;
@@ -328,6 +359,15 @@ var ALL_MODELS = Object.keys(RATES.rates || {});
 var estado = { models: ALL_MODELS.slice(), slider: SLIDER_DEFAULT, planCustomIn: 1, planCustomOut: 1 };
 
 function $(id) { return document.getElementById(id); }
+// Lucide loads from the CDN (Pages-first styling): replace every
+// <i data-lucide="..."> placeholder with its inline SVG. Guarded so a blocked
+// CDN degrades to icon-less markup, never to a thrown error. Call after any
+// innerHTML injection that carries icons. The CDN <script> is a synchronous
+// head tag on purpose: it guarantees window.lucide exists by the time this
+// runs — adding `defer` would make this a silent no-op.
+function refrescoIconos() {
+  if (window.lucide) lucide.createIcons();
+}
 function esc(s) {
   return String(s).replace(/[&<>"']/g, function (c) {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
@@ -419,21 +459,22 @@ function renderPlanTokens() {
     return '<div class="panel scroll-x"><p class="plan-head">' + plane.head +
       '<span class="plan-export-group">' +
       '<button type="button" class="preset plan-export" data-plane="' + indice +
-      '" data-mode="download"><i class="i-download icon-btn" aria-hidden="true"></i> PNG</button>' +
+      '" data-mode="download"><i data-lucide="download" class="icon-btn" aria-hidden="true"></i> PNG</button>' +
       '<button type="button" class="preset plan-export" data-plane="' + indice +
-      '" data-mode="copy"><i class="i-copy icon-btn" aria-hidden="true"></i> Copy</button></span></p>' +
+      '" data-mode="copy"><i data-lucide="copy" class="icon-btn" aria-hidden="true"></i> Copy</button></span></p>' +
       '<table><thead><tr><th class="num">in : out ratio</th>' + ths +
       '</tr><tr><th>model</th>' + subths + "</tr></thead><tbody>" + filas +
       '</tbody><tfoot><tr><td colspan="' + (1 + columnas.length * 3) + '">cache hit: ' + estado.slider +
       "% &middot; each cell: ↓ input, ↑ output, then the total</td></tr></tfoot></table></div>";
   }).join("");
   $("plan-tokens").innerHTML = tablas;
+  refrescoIconos();
 }
 
 function exportPlanImage(planeIndex, mode, btn) {
   // draws one plan's matrix onto an offscreen canvas using the live theme
   // tokens and exports it as a PNG: clipboard copy when asked and supported,
-  // file download otherwise; no external library — the offline test forbids one
+  // file download otherwise; no external library — the canvas API only
   var plane = PLANES[planeIndex];
   if (!plane) return;
   var titulo = plane.name + " — $" + plane.paid + " paid → $" + plane.credits + " credits";
@@ -586,17 +627,55 @@ function renderAll() {
 }
 
 /* model multi-select ------------------------------------------------------- */
+var pickerOpen = false;
+var pickerFocusIndex = -1;
+
 function buildModelPicker() {
   var select = $("filter-model");
   var list = $("model-picker-list");
   var options = Array.prototype.slice.call(select.options);
-  list.innerHTML = options.map(function(opt) {
+  list.innerHTML = options.map(function(opt, idx) {
     var selected = estado.models.indexOf(opt.value) !== -1;
-    return '<label class="model-picker-item" role="option" aria-selected="' + selected + '" data-value="' + esc(opt.value) + '">' +
-      '<span class="model-picker-check">' + (selected ? '<i class="i-check" aria-hidden="true"></i>' : '') + '</span>' +
+    return '<label class="model-picker-item" role="option" tabindex="-1" aria-selected="' + selected + '" data-value="' + esc(opt.value) + '" data-index="' + idx + '">' +
+      '<span class="model-picker-check">' + (selected ? '<i data-lucide="check" aria-hidden="true"></i>' : '') + '</span>' +
       '<span class="model-picker-name">' + esc(opt.value) + '</span>' +
       '</label>';
   }).join("");
+  refrescoIconos();
+  pickerFocusIndex = -1;
+}
+
+function getVisiblePickerItems() {
+  return Array.prototype.filter.call(document.querySelectorAll(".model-picker-item"), function(item) {
+    return item.style.display !== "none";
+  });
+}
+
+function focusPickerItem(index) {
+  var items = getVisiblePickerItems();
+  if (!items.length) return;
+  if (index < 0) index = 0;
+  if (index >= items.length) index = items.length - 1;
+  pickerFocusIndex = index;
+  items.forEach(function(item, i) { item.setAttribute("tabindex", i === index ? "0" : "-1"); });
+  items[index].focus();
+}
+
+function openModelPicker() {
+  pickerOpen = true;
+  $("model-picker-dropdown").style.display = "block";
+  $("model-picker-btn").setAttribute("aria-expanded", "true");
+  $("model-search").value = "";
+  buildModelPicker();
+  setTimeout(function() { $("model-search").focus(); }, 0);
+}
+
+function closeModelPicker(focusTrigger) {
+  pickerOpen = false;
+  $("model-picker-dropdown").style.display = "none";
+  $("model-picker-btn").setAttribute("aria-expanded", "false");
+  pickerFocusIndex = -1;
+  if (focusTrigger) $("model-picker-btn").focus();
 }
 
 function updateModelChips() {
@@ -613,12 +692,13 @@ function updateModelChips() {
     chips.innerHTML = estado.models.map(function(m) {
       return '<span class="chip">' + esc(m) +
         '<button type="button" class="chip-remove" data-value="' + esc(m) + '" aria-label="Remove ' + esc(m) + '">' +
-        '<i class="i-x" aria-hidden="true"></i>' +
+        '<i data-lucide="x" aria-hidden="true"></i>' +
         '</button></span>';
     }).join("");
     $("model-picker-text").textContent = estado.models.length + " model" + (estado.models.length === 1 ? "" : "s");
     $("model-count").textContent = estado.models.length + " of " + ALL_MODELS.length;
   }
+  refrescoIconos();
 }
 
 function toggleModel(val) {
@@ -636,35 +716,66 @@ function toggleModel(val) {
 
 $("model-picker-btn").addEventListener("click", function(e) {
   e.stopPropagation();
-  var dropdown = $("model-picker-dropdown");
-  var isOpen = dropdown.style.display !== "none";
-  dropdown.style.display = isOpen ? "none" : "block";
-  this.setAttribute("aria-expanded", String(!isOpen));
-  if (!isOpen) {
-    $("model-search").value = "";
-    buildModelPicker();
-    setTimeout(function() { $("model-search").focus(); }, 0);
+  if (pickerOpen) closeModelPicker(true);
+  else openModelPicker();
+});
+
+$("model-picker-btn").addEventListener("keydown", function(e) {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    if (pickerOpen) closeModelPicker(false);
+    else openModelPicker();
   }
 });
 
 document.addEventListener("click", function(e) {
   if (!e.target.closest("#model-picker")) {
-    $("model-picker-dropdown").style.display = "none";
-    $("model-picker-btn").setAttribute("aria-expanded", "false");
+    closeModelPicker(false);
+  }
+});
+
+document.addEventListener("keydown", function(e) {
+  if (e.key === "Escape" && pickerOpen) {
+    e.preventDefault();
+    closeModelPicker(true);
   }
 });
 
 $("model-picker-list").addEventListener("click", function(e) {
+  e.stopPropagation();
   var item = e.target.closest(".model-picker-item");
   if (!item) return;
   var val = item.getAttribute("data-value");
   toggleModel(val);
-  // refresh the clicked item only for performance, then rebuild on next open
   var selected = estado.models.indexOf(val) !== -1;
   item.setAttribute("aria-selected", selected);
   item.querySelector(".model-picker-check").innerHTML = selected
-    ? '<i class="i-check" aria-hidden="true"></i>'
+    ? '<i data-lucide="check" aria-hidden="true"></i>'
     : '';
+  refrescoIconos();
+  // keep the dropdown open so the user can toggle more models
+  if (pickerOpen) $("model-search").focus();
+});
+
+$("model-picker-dropdown").addEventListener("keydown", function(e) {
+  var items = getVisiblePickerItems();
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    focusPickerItem(pickerFocusIndex + 1);
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    if (pickerFocusIndex <= 0) {
+      $("model-search").focus();
+      pickerFocusIndex = -1;
+    } else {
+      focusPickerItem(pickerFocusIndex - 1);
+    }
+  } else if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    if (pickerFocusIndex >= 0 && items[pickerFocusIndex]) {
+      items[pickerFocusIndex].click();
+    }
+  }
 });
 
 $("model-search").addEventListener("input", function() {
@@ -673,6 +784,18 @@ $("model-search").addEventListener("input", function() {
     var name = item.querySelector(".model-picker-name").textContent.toLowerCase();
     item.style.display = name.indexOf(q) !== -1 ? "" : "none";
   });
+  pickerFocusIndex = -1;
+});
+
+$("model-search").addEventListener("keydown", function(e) {
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    var items = getVisiblePickerItems();
+    if (items.length) focusPickerItem(0);
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    closeModelPicker(true);
+  }
 });
 
 $("model-select-all").addEventListener("click", function(e) {
@@ -681,6 +804,7 @@ $("model-select-all").addEventListener("click", function(e) {
   buildModelPicker();
   updateModelChips();
   renderAll();
+  if (pickerOpen) $("model-search").focus();
 });
 
 $("model-clear-all").addEventListener("click", function(e) {
@@ -689,6 +813,7 @@ $("model-clear-all").addEventListener("click", function(e) {
   buildModelPicker();
   updateModelChips();
   renderAll();
+  if (pickerOpen) $("model-search").focus();
 });
 
 $("model-chips").addEventListener("click", function(e) {
@@ -756,9 +881,12 @@ $("plan-tokens").addEventListener("click", function (e) {
 
 // the three-state theme, shared with the dashboard through the same
 // localStorage key so both pages of the bundle agree on it
+function resolveTheme(t) {
+  if (t === "light" || t === "dark") return t;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
 function applyTheme(t) {
-  if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
-  else document.documentElement.removeAttribute("data-theme");
+  document.documentElement.setAttribute("data-theme", resolveTheme(t));
 }
 Array.prototype.forEach.call(document.querySelectorAll('input[name="theme"]'), function (radio) {
   radio.addEventListener("change", function (e) {
@@ -773,10 +901,23 @@ Array.prototype.forEach.call(document.querySelectorAll('input[name="theme"]'), f
   var radio = document.querySelector('input[name="theme"][value="' + guardado + '"]');
   if (radio) radio.checked = true;
   applyTheme(guardado);
+  requestAnimationFrame(function () {
+    document.documentElement.classList.remove("no-theme-transition");
+  });
 })();
+// keep "system" in sync with the OS preference after load
+var systemMedia = window.matchMedia("(prefers-color-scheme: dark)");
+systemMedia.addEventListener("change", function (e) {
+  var guardado = "system";
+  try { guardado = localStorage.getItem("dashboard-theme"); } catch (err) { /* unavailable */ }
+  if (guardado === "system") {
+    document.documentElement.setAttribute("data-theme", e.matches ? "dark" : "light");
+  }
+});
 
 updateCachePresetActive();
 renderAll();
+refrescoIconos();
 </script>
 </body>
 </html>

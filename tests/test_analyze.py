@@ -385,22 +385,42 @@ def test_unmeasured_cell_is_no_data_and_never_extrapolated(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# the self-contained offline dashboard
+# the dashboard page: the Pages-first contract (data inline, CDN styling)
 # ---------------------------------------------------------------------------
 
 
-def test_dashboard_is_selfcontained_and_offline(tmp_path):
+def test_dashboard_loads_the_pages_contract_from_the_cdn(tmp_path):
+    """Pages-first: the dashboard's data still rides inside the file as JSON
+    (a single file, no sibling fetches), but styling loads from the CDN because
+    GitHub Pages serves online — the Tailwind browser build, Google Fonts and
+    the Lucide icons with a guarded createIcons refresh helper, plus the inline
+    SVG favicon. No unresolved __TOKEN__ placeholder survives."""
     pricing = with_tables(tmp_path)
     craft_dataset(tmp_path)
     analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
     html = (tmp_path / "analysis" / "dashboard.html").read_text(encoding="utf-8")
-    bajo = html.lower()
-    assert "http://" not in bajo and "https://" not in bajo  # no CDN, no fetches
-    assert "<script src" not in bajo and "<link " not in bajo
-    assert "@import" not in bajo  # string @import evades the url("// pin above
-    # blob/object URLs from the local PNG export are fine: any external CSS
-    # url() would carry http(s), already forbidden by the assertions above
-    assert "url(http" not in bajo and 'url("//' not in bajo
+    # the CDN head block: Tailwind browser build, Google Fonts, Lucide icons
+    assert 'src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"' in html
+    assert "fonts.googleapis.com/css2?family=Inter" in html
+    assert "display=swap" in html
+    assert "unpkg.com/lucide@1.40.0/dist/umd/lucide.min.js" in html
+    assert "createIcons" in html  # the guarded refresh helper the page ships
+    assert 'rel="icon"' in html  # the inline SVG favicon (a data URI, no fetch)
+    # the favicon's xmlns is the SVG XML namespace: an identifier, not a fetch
+    assert "http://www.w3.org/2000/svg" in html
+    # every http(s):// literal belongs to the known Pages-first origin set: the
+    # pinned CDNs, the font hosts and the SVG namespace identifier — the
+    # successor of the old offline no-http-literals evasion guards
+    for url in re.findall(r'https?://[^"\'\s<>)]+', html):
+        assert url.startswith(
+            (
+                "https://cdn.jsdelivr.net",
+                "https://fonts.googleapis.com",
+                "https://fonts.gstatic.com",
+                "https://unpkg.com",
+                "http://www.w3.org/2000/svg",
+            )
+        ), url
     assert 'id="filter-model"' in html  # the model filter
     assert 'id="slider-s"' in html  # the cache slider (the scenario control's successor)
     assert 'id="input-tokens-in"' in html  # the token scenario: input...
@@ -424,6 +444,10 @@ def test_dashboard_is_selfcontained_and_offline(tmp_path):
     # filter options cover every model present in the dataset
     for modelo in ("alpha", "beta", "gamma"):
         assert f'value="{modelo}"' in html
+    # every __TOKEN__ placeholder resolved: none survives in the rendered page
+    # (ESTILO_BASE included: the vendored fill no longer exists anywhere)
+    for nombre in ("RESUMEN", "OPCIONES", "NOTAS", "DATOS", "RATES", "ESTILO_BASE"):
+        assert f"__{nombre}__" not in html
 
 
 # ---------------------------------------------------------------------------
@@ -455,7 +479,9 @@ def test_dashboard_v2_charts_are_theme_token_svgs_and_pngs_leave_the_bundle(tmp_
     from theme tokens, and the bundle ships no pngs/ folder at all."""
     html = render_dashboard_v2(tmp_path)
     assert not (tmp_path / "analysis" / "pngs").exists()
-    assert html.count("<svg") >= 3  # threshold, diverging margins, dp-tokens curve
+    assert (
+        html.count("<svg") >= 2
+    )  # threshold, diverging margins (dp curve left with the robustness section)
     # zero hardcoded chart colors: every SVG fill/stroke is a CSS variable, and
     # the validated palette lives ONLY in the theme token definitions
     assert 'fill="#' not in html and "stroke='#" not in html
@@ -628,20 +654,30 @@ def _bloque_tokens(ruta: pathlib.Path) -> str:
     return cuerpo[inicio:fin]
 
 
-def test_calculator_is_selfcontained_and_offline(tmp_path):
-    """The calculator meets the same offline criteria as the dashboard: one
-    file, zero external resources, both data blobs embedded and parsable, its
-    model options covering every model the embedded rates price. The same
-    analysis blob rides byte-equal in both pages, the theme-token block is
-    shared verbatim, and no unresolved __TOKEN__ placeholder survives."""
+def test_calculator_loads_the_pages_contract_from_the_cdn(tmp_path):
+    """The calculator meets the same Pages-first contract as the dashboard: the
+    data blobs ride embedded and parsable, styling loads from the CDN (the
+    Tailwind browser build, Google Fonts and Lucide with a guarded createIcons
+    helper), and its model options cover every model the embedded rates price.
+    The same analysis blob rides byte-equal in both pages, the theme-token
+    block is shared verbatim, and no unresolved __TOKEN__ placeholder survives."""
     tablero, html = render_bundle_v2(tmp_path)
-    bajo = html.lower()
-    assert "http://" not in bajo and "https://" not in bajo  # no CDN, no fetches
-    assert "<script src" not in bajo and "<link " not in bajo
-    assert "@import" not in bajo  # string @import evades the url("// pin above
-    # blob/object URLs from the local PNG export are fine: any external CSS
-    # url() would carry http(s), already forbidden by the assertions above
-    assert "url(http" not in bajo and 'url("//' not in bajo
+    # the CDN head block: Tailwind browser build, Google Fonts, Lucide icons
+    assert 'src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"' in html
+    assert "fonts.googleapis.com/css2?family=Inter" in html and "display=swap" in html
+    assert "unpkg.com/lucide@1.40.0/dist/umd/lucide.min.js" in html and "createIcons" in html
+    assert 'rel="icon"' in html
+    # every http(s):// literal belongs to the known Pages-first origin set
+    for url in re.findall(r'https?://[^"\'\s<>)]+', html):
+        assert url.startswith(
+            (
+                "https://cdn.jsdelivr.net",
+                "https://fonts.googleapis.com",
+                "https://fonts.gstatic.com",
+                "https://unpkg.com",
+                "http://www.w3.org/2000/svg",
+            )
+        ), url
     assert 'id="filter-model"' in html  # the (hidden) multi-select the picker drives
     assert 'id="slider-s"' not in html  # the range slider is gone by design (Phase 2)
     # the S(x) control: cache preset buttons plus a custom 0-100 input — the
@@ -678,21 +714,6 @@ def test_calculator_is_selfcontained_and_offline(tmp_path):
     for pagina in (tablero, html):
         assert re.search(r"__[A-Z_]+__", pagina) is None
 
-    # the inlined vendored CSS is one byte-equal fill on both pages: the FIRST
-    # <style> block is exactly the __ESTILO_BASE__ fill (the page token block
-    # is a later <style>), so parity there means zero drift between sheets
-    def primer_estilo(pagina: str) -> str:
-        return pagina.split("<style>", 1)[1].split("</style>", 1)[0]
-
-    assert primer_estilo(tablero) == primer_estilo(html)
-    # the vendored layer follows the OS when the page carries no explicit theme
-    # (Gate 2 F1): the minified fill must carry the media gate that mirrors the
-    # page tokens' system fallback, excluding an explicit light choice
-    for estilo in (primer_estilo(tablero), primer_estilo(html)):
-        assert "prefers-color-scheme" in estilo
-        assert (
-            ":root:not([data-theme=light])" in estilo or ':root:not([data-theme="light"])' in estilo
-        )
     # the theme tokens are copied, not drifted: both templates carry the
     # identical :root / dark-mode block
     assert _bloque_tokens(plantillas / "dashboard_template.html") == _bloque_tokens(plantilla)
@@ -723,10 +744,9 @@ def _tokens_clase(cuerpo: str) -> set[str]:
 
 
 def _selectores_pagina(estilos: list[str]) -> set[str]:
-    """Class selectors of a template's page CSS (its token-based custom
-    <style> blocks — the vendored __ESTILO_BASE__ fill is not one)."""
-    pagina = "\n".join(e for e in estilos if "__ESTILO_BASE__" not in e)
-    css = re.sub(r"/\*.*?\*/", "", pagina, flags=re.S)
+    """Class selectors of a template's page CSS (its custom <style> blocks —
+    the only styling the template ships besides the CDN head block)."""
+    css = re.sub(r"/\*.*?\*/", "", "\n".join(estilos), flags=re.S)
     sels: set[str] = set()
     for m in re.finditer(r"([^{}]+)\{", css):
         sels.update(re.findall(r"\.([A-Za-z][\w-]*)", m.group(1)))
@@ -749,17 +769,12 @@ def _selectores_js(cuerpo: str) -> set[str]:
 def test_template_class_tokens_resolve_to_a_consumer():
     """The stale-artifact trap: every static class token in both templates must
     resolve to a real consumer — a page-CSS selector in that template's own
-    <style>, a selector the template's JS binds, a vendored .i-* icon class, a
-    compiled Tailwind utility present in the vendored sheet, or the tiny
-    JS-state allowlist. An uncompiled utility (say gap-2 typed into markup
-    without a recompile) fails red naming the rebuild step."""
+    <style>, a selector the template's JS binds, or the tiny JS-state
+    allowlist. There is no vendored sheet to freeride on any more (Pages-first:
+    styling loads from the CDN, and the Lucide icons ride data-lucide
+    attributes, which carry no classes), so a stray utility class in the
+    markup fails red."""
     web = pathlib.Path(analyze_module.__file__).parent / "web"
-    icones = set(
-        re.findall(
-            r"\.(i-[a-z0-9-]+)\b", (web / "vendor" / "lucide-icons.css").read_text(encoding="utf-8")
-        )
-    )
-    hoja = (web / "vendor" / "tailwind-4.3.3.min.css").read_text(encoding="utf-8")
     rojos: list[str] = []
     for nombre in ("dashboard_template.html", "calculator_template.html"):
         cuerpo = (web / nombre).read_text(encoding="utf-8")
@@ -767,18 +782,13 @@ def test_template_class_tokens_resolve_to_a_consumer():
         pagina = _selectores_pagina(re.findall(r"<style>(.*?)</style>", cuerpo, re.S))
         js = _selectores_js(cuerpo)
         for t in sorted(tokens):
-            if t in pagina or t in js or t in icones or t in _ESTADO_CLASES:
-                continue
-            # compiled utility: the vendored sheet must carry .token itself
-            # (word-bounded, so .num cannot freeride on .numeric)
-            if re.search(r"\." + re.escape(t) + r"(?![\w-])", hoja):
+            if t in pagina or t in js or t in _ESTADO_CLASES:
                 continue
             rojos.append(f"{nombre}: .{t}")
     assert not rojos, (
-        "class tokens with no consumer (dead markup, or a utility the vendored "
-        "sheet does not ship — recompile: tailwindcss v4.3.3 standalone CLI "
-        "-i src/ocharness/web/_estilo_input.css "
-        "-o src/ocharness/web/vendor/tailwind-4.3.3.min.css --minify): " + str(rojos)
+        "class tokens with no consumer (dead markup, or a stray Tailwind "
+        "utility typed into the markup — the Pages-first pages carry no "
+        "compiled sheet to resolve it): " + str(rojos)
     )
 
 

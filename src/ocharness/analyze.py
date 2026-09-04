@@ -13,8 +13,9 @@ its own `analysis-s<x>/` set and never edits the persisted s0/s1 reference):
   the new-plan extrapolation under S0/S1 with the anchor, the critical
   threshold pp/1M, the who-wins-by-user-profile table, the dp-vs-tokens
   curve data and the 4 fixed sensitivity sweeps;
-- `dashboard.html` — the static self-contained dashboard (no CDNs, no fetches:
-  the data rides inside the file): the recommendation band leads, every
+- `dashboard.html` — the dashboard page of the Pages bundle (the data rides
+  inside the file as JSON; the styling loads from the CDN because GitHub Pages
+  serves online): the recommendation band leads, every
   measured verdict carries its margin, and the charts are theme-aware SVG
   (system/light/dark tokens, the validated legacy-blue / new-orange palette).
   The cells table prices each cell nominally for a user-chosen token scenario
@@ -64,7 +65,6 @@ import dataclasses
 import html
 import json
 import pathlib
-import re
 import statistics
 import time
 
@@ -1156,103 +1156,9 @@ def write_bundle(
 
 
 # ---------------------------------------------------------------------------
-# the static self-contained dashboard: one HTML file, zero external resources
+# the two Pages pages: .replace()-filled templates, data inline as JSON,
+# styling from the CDN (GitHub Pages serves online)
 # ---------------------------------------------------------------------------
-
-
-def _tabla_html(encabezados: list[str], filas: list[list[str]]) -> str:
-    """A small static table as HTML (values escaped, right-aligned numerics)."""
-    ths = "".join(
-        f'<th class="{"v" if i else ""}">{html.escape(e)}</th>' for i, e in enumerate(encabezados)
-    )
-    cuerpo = ""
-    for fila in filas:
-        celdas = "".join(
-            f'<td class="{"v" if i else ""}">{html.escape(str(e))}</td>' for i, e in enumerate(fila)
-        )
-        cuerpo += f"<tr>{celdas}</tr>"
-    return f"<table><thead><tr>{ths}</tr></thead><tbody>{cuerpo}</tbody></table>"
-
-
-def _who_wins_html(doc: dict) -> str:
-    """The static who-wins table: one row per workload profile, one count set
-    per scenario (the model/scenario filters above act on the cells instead)."""
-    filas = []
-    for w in doc["who_wins"]:
-        s0, s1 = w["s0"], w["s1"]
-        filas.append(
-            [
-                w["workload"],
-                w["level"] or "",
-                f"{s0['legacy']} / {s0['new']} / {s0['tie']} / {s0['unmeasured']}",
-                f"{s1['legacy']} / {s1['new']} / {s1['tie']} / {s1['unmeasured']}",
-            ]
-        )
-    if not filas:
-        return '<p class="note">no measured cell under this filter</p>'
-    tabla = _tabla_html(
-        [
-            "workload (user profile)",
-            "level",
-            "S0 legacy / new / tie / unmeasured",
-            "S1 legacy / new / tie / unmeasured",
-        ],
-        filas,
-    )
-    return tabla + (
-        '<p class="note">counts of measured models whose winner is each system, '
-        "with a margin beyond 2 meter ticks or 5 %; unmeasured models count as "
-        "unmeasured, never as a win.</p>"
-    )
-
-
-def _sensibilidad_html(doc: dict) -> str:
-    """The 4 sweeps as a static summary: the axis moved and where it flipped."""
-    sens = doc["sensitivity"]
-    filas = []
-    for nombre, barrido, valores in (
-        ("table rates", sens["rates"], sens["rates"]["factors"]),
-        ("cache hit rate S", sens["cache"], sens["cache"]["s_values"]),
-        ("P_LEGADO (anchor)", sens["ancla"], sens["ancla"]["factors"]),
-    ):
-        filas.append(
-            [
-                nombre,
-                ", ".join(f"{v:g}" for v in valores),
-                ", ".join(
-                    f"{clave}: {len(barrido['flips'][clave])} flips" for clave in barrido["flips"]
-                )
-                or "no flips",
-            ]
-        )
-    kfila = [f"{f['model']}: {f['verdict'] or 'no comparison'}" for f in sens["k_axis"]["models"]]
-    filas.append(["k axis (cells under k)", "1 / 4 / 8", "; ".join(kfila) or "no cells"])
-    return _tabla_html(["sweep", "axis values", "verdict changes"], filas)
-
-
-def _calibracion_html(doc: dict) -> str:
-    """The hit-rate provenance per model + the unmaterialized paper discounts."""
-    lineas = []
-    for modelo, resuelto in sorted(doc["s_per_model"].items()):
-        fuente = "measured" if resuelto["source"] == "measured" else "assumed"
-        detalle = (
-            f", measured {resuelto['measured_hit_rate'] * 100:.0f}%"
-            if fuente == "measured" and resuelto["measured_hit_rate"] is not None
-            else ""
-        )
-        lineas.append(f"{modelo}: S={resuelto['s'] * 100:.0f}% ({fuente}{detalle})")
-    cuerpo = "".join(f"<p class='note'>{html.escape(t)}</p>" for t in lineas)
-    descuentos = doc.get("paper_discounts") or []
-    aviso = (
-        "<p class='note'>unmaterialized paper discounts: "
-        + ", ".join(html.escape(d) for d in descuentos)
-        + "</p>"
-        if descuentos
-        else ""
-    )
-    return (
-        cuerpo or "<p class='note'>no calibration data: every S1 is the assumed hit rate</p>"
-    ) + aviso
 
 
 def _plantilla_dashboard() -> str:
@@ -1277,31 +1183,15 @@ def _plantilla_calculator() -> str:
     )
 
 
-_VENDOR_DIR = pathlib.Path(__file__).parent / "web" / "vendor"
-
-
-def _estilo_base() -> str:
-    """The inlined vendored CSS shared by both pages: Tailwind v4 + shadcn/ui
-    zinc tokens plus the Lucide icon classes. CSS comments are stripped because
-    the produced page must stay free of http(s) URL literals (the offline
-    self-containment tests pin that); the license/attribution banners remain in
-    the committed vendor files and are documented in the repo docs. The icon
-    data URIs are base64, so the SVGs' xmlns attribute survives intact (browsers
-    require it on image/svg+xml roots) without exposing an http literal."""
-    tailwind = (_VENDOR_DIR / "tailwind-4.3.3.min.css").read_text(encoding="utf-8")
-    icons = (_VENDOR_DIR / "lucide-icons.css").read_text(encoding="utf-8")
-    css = tailwind + "\n" + icons
-    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
-    return css.strip()
-
-
 def render_dashboard(doc: dict, rates: dict | None = None) -> str:
-    """The dashboard: one self-contained HTML file. The analysis doc rides
-    inside it as JSON (no fetches, no CDN, no sibling files), the model filter,
-    the three-state theme and the cache slider are plain DOM, and every value
-    escapes through textContent, html.escape or the JS esc() helper. `rates`
-    (from `rates_map`) rides in its own JSON block: the slider's live
-    recomputation needs them; analysis.json never does."""
+    """The dashboard page of the Pages bundle: the analysis doc rides inside
+    it as JSON (a single file, no sibling fetches), the model filter, the
+    three-state theme and the cache slider are plain DOM, and every value
+    escapes through textContent, html.escape or the JS esc() helper. Styling
+    loads from the CDN — GitHub Pages serves online, so the Pages-first
+    contract ships no vendored sheet. `rates` (from `rates_map`) rides in its
+    own JSON block: the slider's live recomputation needs them; analysis.json
+    never does."""
     bp = doc["base_params"]
     bruto = doc["raw"]
     opciones = "".join(
@@ -1319,12 +1209,8 @@ def render_dashboard(doc: dict, rates: dict | None = None) -> str:
     tarifas = rates if rates is not None else {"per": 1_000_000, "rates": {}}
     return (
         _plantilla_dashboard()
-        .replace("__ESTILO_BASE__", _estilo_base())
         .replace("__RESUMEN__", html.escape(resumen))
         .replace("__OPCIONES__", opciones)
-        .replace("__WHO_WINS__", _who_wins_html(doc))
-        .replace("__SENSIBILIDAD__", _sensibilidad_html(doc))
-        .replace("__CALIBRACION__", _calibracion_html(doc))
         .replace("__NOTAS__", html.escape(doc["notes"]))
         .replace(
             "__RATES__",
@@ -1338,14 +1224,14 @@ def render_dashboard(doc: dict, rates: dict | None = None) -> str:
 
 
 def render_calculator(doc: dict, rates: dict | None = None) -> str:
-    """The calculator: a self-contained page carrying the plan token-budget
+    """The calculator page of the Pages bundle, carrying the plan token-budget
     matrices that left the dashboard in the split. `rates` is the FULL
     per-model map (from `rates_map_full`): every model the chosen table prices
     gets a row and a filter option, measured cell or not — the dashboard keeps
     its own cells-derived rates payload unchanged. The doc rides inside it as
     JSON (its base_params and per-model S drive the pricing); same rules as
-    render_dashboard: no fetches, no CDN, no sibling files, every value
-    escapes through html.escape or the JS esc() helper."""
+    render_dashboard: a single file with no sibling fetches, CDN styling,
+    every value escaped through html.escape or the JS esc() helper."""
     bp = doc["base_params"]
     tarifas = rates if rates is not None else {"per": 1_000_000, "rates": {}}
     opciones = "".join(
@@ -1361,7 +1247,6 @@ def render_calculator(doc: dict, rates: dict | None = None) -> str:
     )
     return (
         _plantilla_calculator()
-        .replace("__ESTILO_BASE__", _estilo_base())
         .replace("__RESUMEN__", html.escape(resumen))
         .replace("__OPCIONES__", opciones)
         .replace(

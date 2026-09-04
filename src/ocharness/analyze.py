@@ -64,6 +64,7 @@ import dataclasses
 import html
 import json
 import pathlib
+import re
 import statistics
 import time
 
@@ -1258,14 +1259,40 @@ def _plantilla_dashboard() -> str:
     """The dashboard template (dashboard_template.html, same package): the
     editable surface for the markup, CSS and JS. render_dashboard only fills
     the __TOKEN__ placeholders — the HTML never lives in a Python string."""
-    return pathlib.Path(__file__).with_name("dashboard_template.html").read_text(encoding="utf-8")
+    return (
+        pathlib.Path(__file__)
+        .parent.joinpath("web", "dashboard_template.html")
+        .read_text(encoding="utf-8")
+    )
 
 
 def _plantilla_calculator() -> str:
     """The calculator template (calculator_template.html, same package): the
     plan token-budget page's editable surface, filled the same pure .replace()
     way the dashboard's is."""
-    return pathlib.Path(__file__).with_name("calculator_template.html").read_text(encoding="utf-8")
+    return (
+        pathlib.Path(__file__)
+        .parent.joinpath("web", "calculator_template.html")
+        .read_text(encoding="utf-8")
+    )
+
+
+_VENDOR_DIR = pathlib.Path(__file__).parent / "web" / "vendor"
+
+
+def _estilo_base() -> str:
+    """The inlined vendored CSS shared by both pages: Tailwind v4 + shadcn/ui
+    zinc tokens plus the Lucide icon classes. CSS comments are stripped because
+    the produced page must stay free of http(s) URL literals (the offline
+    self-containment tests pin that); the license/attribution banners remain in
+    the committed vendor files and are documented in the repo docs. The icon
+    data URIs are base64, so the SVGs' xmlns attribute survives intact (browsers
+    require it on image/svg+xml roots) without exposing an http literal."""
+    tailwind = (_VENDOR_DIR / "tailwind-4.3.3.min.css").read_text(encoding="utf-8")
+    icons = (_VENDOR_DIR / "lucide-icons.css").read_text(encoding="utf-8")
+    css = tailwind + "\n" + icons
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    return css.strip()
 
 
 def render_dashboard(doc: dict, rates: dict | None = None) -> str:
@@ -1292,6 +1319,7 @@ def render_dashboard(doc: dict, rates: dict | None = None) -> str:
     tarifas = rates if rates is not None else {"per": 1_000_000, "rates": {}}
     return (
         _plantilla_dashboard()
+        .replace("__ESTILO_BASE__", _estilo_base())
         .replace("__RESUMEN__", html.escape(resumen))
         .replace("__OPCIONES__", opciones)
         .replace("__WHO_WINS__", _who_wins_html(doc))
@@ -1325,12 +1353,15 @@ def render_calculator(doc: dict, rates: dict | None = None) -> str:
         for m in sorted(tarifas["rates"])
     )
     resumen = (
-        f"table {html.escape(bp['table_version'])} | anchor ${bp['ancla']:g}/mo | "
+        # No anchor here: the calculator prices credits at face value from the
+        # table, so the legacy USD/pp anchor is dashboard-only provenance.
+        f"table {html.escape(bp['table_version'])} | "
         f"S1 assumed {bp['s'] * 100:g}% | generated "
         f"{time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(doc['generated_at']))} UTC"
     )
     return (
         _plantilla_calculator()
+        .replace("__ESTILO_BASE__", _estilo_base())
         .replace("__RESUMEN__", html.escape(resumen))
         .replace("__OPCIONES__", opciones)
         .replace(

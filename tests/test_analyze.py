@@ -397,6 +397,7 @@ def test_dashboard_is_selfcontained_and_offline(tmp_path):
     bajo = html.lower()
     assert "http://" not in bajo and "https://" not in bajo  # no CDN, no fetches
     assert "<script src" not in bajo and "<link " not in bajo
+    assert "@import" not in bajo  # string @import evades the url("// pin above
     # blob/object URLs from the local PNG export are fine: any external CSS
     # url() would carry http(s), already forbidden by the assertions above
     assert "url(http" not in bajo and 'url("//' not in bajo
@@ -411,7 +412,7 @@ def test_dashboard_is_selfcontained_and_offline(tmp_path):
     assert "pp/1M</th>" not in html and "/task</th>" not in html
     assert html.count('class="hdr-tokens') == 2  # legacy + new price headers
     # the markup/CSS/JS live in the template file, not a Python string
-    plantilla = pathlib.Path(analyze_module.__file__).parent / "dashboard_template.html"
+    plantilla = pathlib.Path(analyze_module.__file__).parent / "web" / "dashboard_template.html"
     assert plantilla.exists()
     assert "__RESUMEN__" in plantilla.read_text(encoding="utf-8")
     # the data rides inside the file (no sibling fetch): it parses back
@@ -637,16 +638,20 @@ def test_calculator_is_selfcontained_and_offline(tmp_path):
     bajo = html.lower()
     assert "http://" not in bajo and "https://" not in bajo  # no CDN, no fetches
     assert "<script src" not in bajo and "<link " not in bajo
+    assert "@import" not in bajo  # string @import evades the url("// pin above
     # blob/object URLs from the local PNG export are fine: any external CSS
     # url() would carry http(s), already forbidden by the assertions above
     assert "url(http" not in bajo and 'url("//' not in bajo
-    assert 'id="filter-model"' in html  # the model filter
-    assert 'id="slider-s"' in html  # the S(x) slider the plan pricing follows
-    assert "data-s" in html  # the cache presets that set it
+    assert 'id="filter-model"' in html  # the (hidden) multi-select the picker drives
+    assert 'id="slider-s"' not in html  # the range slider is gone by design (Phase 2)
+    # the S(x) control: cache preset buttons plus a custom 0-100 input — the
+    # same selectors the page's JS binds
+    assert "button.cache-preset" in html and 'data-s="85"' in html
+    assert 'id="cache-custom"' in html
     assert 'id="plan-custom-in"' in html and 'id="plan-custom-out"' in html
     assert 'name="theme"' in html  # the theme radios survive on this page too
     # the markup/CSS/JS live in the template file, not a Python string
-    plantillas = pathlib.Path(analyze_module.__file__).parent
+    plantillas = pathlib.Path(analyze_module.__file__).parent / "web"
     plantilla = plantillas / "calculator_template.html"
     assert plantilla.exists()
     cuerpo = plantilla.read_text(encoding="utf-8")
@@ -672,15 +677,116 @@ def test_calculator_is_selfcontained_and_offline(tmp_path):
     # every __TOKEN__ placeholder resolved: none survives in either page
     for pagina in (tablero, html):
         assert re.search(r"__[A-Z_]+__", pagina) is None
+
+    # the inlined vendored CSS is one byte-equal fill on both pages: the FIRST
+    # <style> block is exactly the __ESTILO_BASE__ fill (the page token block
+    # is a later <style>), so parity there means zero drift between sheets
+    def primer_estilo(pagina: str) -> str:
+        return pagina.split("<style>", 1)[1].split("</style>", 1)[0]
+
+    assert primer_estilo(tablero) == primer_estilo(html)
+    # the vendored layer follows the OS when the page carries no explicit theme
+    # (Gate 2 F1): the minified fill must carry the media gate that mirrors the
+    # page tokens' system fallback, excluding an explicit light choice
+    for estilo in (primer_estilo(tablero), primer_estilo(html)):
+        assert "prefers-color-scheme" in estilo
+        assert (
+            ":root:not([data-theme=light])" in estilo or ':root:not([data-theme="light"])' in estilo
+        )
     # the theme tokens are copied, not drifted: both templates carry the
     # identical :root / dark-mode block
     assert _bloque_tokens(plantillas / "dashboard_template.html") == _bloque_tokens(plantilla)
 
 
+# ---------------------------------------------------------------------------
+# stale-artifact trap: every template class token must resolve (Gate 2 F2)
+# ---------------------------------------------------------------------------
+
+# the tiny JS-state allowlist: state classes the JS builds from values
+# (v.winner -> "legacy"/"new", "tie"; the nodata chip; classList "active")
+_ESTADO_CLASES = {"active", "nodata", "tie", "legacy", "new"}
+
+
+def _tokens_clase(cuerpo: str) -> set[str]:
+    """Every static class token a template can put on an element: the HTML
+    class attributes plus the fragments built in JS (innerHTML strings like
+    '<span class=\"chip ' + v.winner', classList.add("active")). A value cut
+    by a quote/plus (JS concatenation) contributes only its real tokens."""
+    tokens: set[str] = set()
+    for m in re.finditer(r'class="([^"+]*)"', cuerpo):
+        tokens.update(t for t in m.group(1).split() if re.fullmatch(r"[A-Za-z][\w-]*", t))
+    for m in re.finditer(r"class='([^\"+]*)'", cuerpo):
+        tokens.update(t for t in m.group(1).split() if re.fullmatch(r"[A-Za-z][\w-]*", t))
+    for m in re.finditer(r'classList\.(?:add|remove|toggle)\("([^"]+)"\)', cuerpo):
+        tokens.update(m.group(1).split())
+    return tokens
+
+
+def _selectores_pagina(estilos: list[str]) -> set[str]:
+    """Class selectors of a template's page CSS (its token-based custom
+    <style> blocks — the vendored __ESTILO_BASE__ fill is not one)."""
+    pagina = "\n".join(e for e in estilos if "__ESTILO_BASE__" not in e)
+    css = re.sub(r"/\*.*?\*/", "", pagina, flags=re.S)
+    sels: set[str] = set()
+    for m in re.finditer(r"([^{}]+)\{", css):
+        sels.update(re.findall(r"\.([A-Za-z][\w-]*)", m.group(1)))
+    return sels
+
+
+def _selectores_js(cuerpo: str) -> set[str]:
+    """Class tokens the template's own JS binds: querySelector(All) and
+    closest() selector strings, classList arguments, and the ids reached
+    through the $() helper (a class token sharing that exact string marks the
+    same element)."""
+    ligaduras: set[str] = set()
+    for m in re.finditer(r'(?:querySelector(?:All)?|closest)\("([^"]+)"\)', cuerpo):
+        ligaduras.update(re.findall(r"\.([A-Za-z][\w-]*)", m.group(1)))
+    for m in re.finditer(r"\$\(\"([^\"]+)\"\)", cuerpo):
+        ligaduras.add(m.group(1))
+    return ligaduras
+
+
+def test_template_class_tokens_resolve_to_a_consumer():
+    """The stale-artifact trap: every static class token in both templates must
+    resolve to a real consumer — a page-CSS selector in that template's own
+    <style>, a selector the template's JS binds, a vendored .i-* icon class, a
+    compiled Tailwind utility present in the vendored sheet, or the tiny
+    JS-state allowlist. An uncompiled utility (say gap-2 typed into markup
+    without a recompile) fails red naming the rebuild step."""
+    web = pathlib.Path(analyze_module.__file__).parent / "web"
+    icones = set(
+        re.findall(
+            r"\.(i-[a-z0-9-]+)\b", (web / "vendor" / "lucide-icons.css").read_text(encoding="utf-8")
+        )
+    )
+    hoja = (web / "vendor" / "tailwind-4.3.3.min.css").read_text(encoding="utf-8")
+    rojos: list[str] = []
+    for nombre in ("dashboard_template.html", "calculator_template.html"):
+        cuerpo = (web / nombre).read_text(encoding="utf-8")
+        tokens = _tokens_clase(cuerpo)
+        pagina = _selectores_pagina(re.findall(r"<style>(.*?)</style>", cuerpo, re.S))
+        js = _selectores_js(cuerpo)
+        for t in sorted(tokens):
+            if t in pagina or t in js or t in icones or t in _ESTADO_CLASES:
+                continue
+            # compiled utility: the vendored sheet must carry .token itself
+            # (word-bounded, so .num cannot freeride on .numeric)
+            if re.search(r"\." + re.escape(t) + r"(?![\w-])", hoja):
+                continue
+            rojos.append(f"{nombre}: .{t}")
+    assert not rojos, (
+        "class tokens with no consumer (dead markup, or a utility the vendored "
+        "sheet does not ship — recompile: tailwindcss v4.3.3 standalone CLI "
+        "-i src/ocharness/web/_estilo_input.css "
+        "-o src/ocharness/web/vendor/tailwind-4.3.3.min.css --minify): " + str(rojos)
+    )
+
+
 def test_calculator_prices_every_model_the_table_lists(tmp_path):
     """The calculator's model set is the FULL Ollama-reported pricing table —
-    every model the chosen table prices, measured or not — while the dashboard
-    keeps its cells-derived rates payload exactly as it always was."""
+    every model the chosen table prices, measured or not, and the multi-select
+    starts with all of them selected — while the dashboard keeps its
+    cells-derived rates payload exactly as it always was."""
     pricing = tmp_path / "pricing-extra"
     write_table(
         pricing,
@@ -700,6 +806,12 @@ def test_calculator_prices_every_model_the_table_lists(tmp_path):
     # the calculator's rows and options cover the whole table, delta included
     assert set(tarifas["rates"]) == {"alpha", "beta", "gamma", "delta"}
     assert 'value="delta"' in calc
+    # the picker's default state: the hidden multi-select carries every
+    # embedded-rate model as an option, and the JS state starts with ALL of
+    # them selected
+    assert '<select id="filter-model" multiple' in calc
+    assert "var ALL_MODELS = Object.keys(RATES.rates" in calc
+    assert "models: ALL_MODELS.slice()" in calc
     # the dashboard's payload stays cells-derived: delta is nowhere on it
     dash_tarifas = json.loads(tablero.split(marcador, 1)[1].split("</script>", 1)[0])
     assert set(dash_tarifas["rates"]) == {"alpha", "beta", "gamma"}
@@ -721,7 +833,7 @@ def test_navbar_links_the_two_pages_and_marks_the_current_one(tmp_path):
     assert '<a href="calculator.html" aria-current="page">Calculator</a>' in calc
     # every navbar href resolves to a file the bundle actually ships:
     # index.html exists only after the gh-pages rename, never inside the bundle
-    plantillas = pathlib.Path(analyze_module.__file__).parent
+    plantillas = pathlib.Path(analyze_module.__file__).parent / "web"
     for nombre in ("dashboard_template.html", "calculator_template.html"):
         cuerpo = (plantillas / nombre).read_text(encoding="utf-8")
         nav = cuerpo[cuerpo.index('<nav class="topnav"') : cuerpo.index("</nav>")]

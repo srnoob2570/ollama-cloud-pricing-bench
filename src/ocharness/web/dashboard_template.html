@@ -10,6 +10,8 @@
 <meta property="og:description" content="Which plan actually costs less, measured on real workloads: verdicts, thresholds and cache sensitivity in paid dollars.">
 <meta name="theme-color" content="#f8f7f2" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#12110e" media="(prefers-color-scheme: dark)">
+<!-- vendored offline styles: Tailwind + shadcn tokens; Lucide icons -->
+<style>__ESTILO_BASE__</style>
 <style>
 /* three-state theme tokens: system is the default (no attribute), light and
    dark are selectable. Chart colors NEVER appear here outside these tokens. */
@@ -23,6 +25,7 @@
   --legacy: #2a78d6; --new: #eb6834;            /* series: legacy / new (validated) */
   --legacy-soft: rgba(42,120,214,.14); --new-soft: rgba(235,104,52,.14);
   --tie: #7c7a71;
+  --radius: 0.625rem;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -45,9 +48,12 @@
   --legacy-soft: rgba(57,135,229,.18); --new-soft: rgba(217,89,38,.18);
 }
 * { box-sizing: border-box; }
+
+/* shadcn/ui zinc shell: the vendored layer above already carries the token
+   map; these rules are the page-specific chrome that cannot be expressed as
+   utilities until the stylesheet is recompiled against the final templates. */
 html { scroll-behavior: smooth; }
-body { margin: 0; padding: clamp(28px, 6vh, 56px) 24px 64px; background: var(--plane);
-  color: var(--ink);
+body { margin: 0; padding: 0 24px 64px; background: var(--background); color: var(--foreground);
   font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
   text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; }
 ::selection { background: var(--new-soft); }
@@ -55,76 +61,101 @@ body { margin: 0; padding: clamp(28px, 6vh, 56px) 24px 64px; background: var(--p
   html { scroll-behavior: auto; }
   *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
-/* one radius scale: panels 12px, controls 8px, badges 6px, chips full-pill */
-.wrap { max-width: 1200px; margin: 0 auto; }
+
+.wrap { max-width: 1200px; margin: 0 auto; padding-top: clamp(28px, 6vh, 56px); }
 .skip { position: absolute; left: -9999px; }
-.skip:focus { left: 16px; top: 12px; background: var(--surface); color: var(--ink);
-  border: 1px solid var(--ring); border-radius: 8px; padding: 6px 10px; z-index: 5; }
+.skip:focus { left: 16px; top: 12px; background: var(--card); color: var(--card-foreground);
+  border: 1px solid var(--border); border-radius: var(--radius-md); padding: 6px 10px; z-index: 50; }
+
 /* the two-page navbar: relative links only (the bundle ships both pages), the
-   current page marked with aria-current and painted through the theme tokens */
-.topnav { max-width: 1200px; margin: 0 auto 20px; display: flex; gap: 6px; align-items: center; }
-.topnav a { font-size: 12.5px; color: var(--ink-2); text-decoration: none;
-  background: var(--surface); border: 1px solid var(--ring); border-radius: 8px;
-  padding: 4px 10px; transition: border-color .15s ease, color .15s ease, background .15s ease; }
-.topnav a:hover { border-color: var(--axis); color: var(--ink); background: var(--hover); }
-.topnav a[aria-current="page"] { color: var(--ink); font-weight: 600; background: var(--hover); }
-:focus-visible { outline: 2px solid var(--legacy); outline-offset: 2px; }
+   current page marked with aria-current and styled as a subtle shadcn nav item */
+.topnav { position: sticky; top: 0; z-index: 40; max-width: 1200px; margin: 0 auto 20px;
+  padding: 10px 0; display: flex; gap: 6px; align-items: center;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
+  background: color-mix(in oklab, var(--background) 80%, transparent);
+  backdrop-filter: blur(8px); }
+.topnav a { font-size: 12.5px; color: var(--muted-foreground); text-decoration: none;
+  background: transparent; border-radius: var(--radius-md); padding: 6px 10px;
+  transition: background .15s ease, color .15s ease; font-weight: 500; }
+.topnav a:hover { background: var(--accent); color: var(--accent-foreground); }
+.topnav a[aria-current="page"] { color: var(--accent-foreground); background: var(--accent); font-weight: 600; }
+
+:root { --shadcn-ring: oklch(0.708 0 0); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --shadcn-ring: oklch(0.556 0 0); } }
+:root[data-theme="dark"] { --shadcn-ring: oklch(0.556 0 0); }
+:focus-visible { outline: 2px solid var(--shadcn-ring); outline-offset: 2px; }
+
 h1 { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: clamp(27px, 4.2vw, 36px); margin: 0 0 6px; letter-spacing: -.02em;
   font-weight: 700; line-height: 1.12; text-wrap: balance; }
-h2 { font-size: 15px; letter-spacing: -.01em; color: var(--ink);
+h2 { font-size: 15px; letter-spacing: -.01em; color: var(--foreground);
   margin: 36px 0 14px; font-weight: 600; text-wrap: balance; }
-.sub { color: var(--muted); font-size: 13.5px; }
-/* IBM Plex Mono renders only for whoever has it installed; the stack degrades
-   to the OS mono otherwise, so charts and table always share one family */
+.sub { color: var(--muted-foreground); font-size: 13.5px; }
+
 .mono { font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums; }
 .badge { display: inline-block; font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
-  border: 1px solid var(--ring); border-radius: 6px; padding: 1px 6px; color: var(--ink-2);
-  background: var(--surface); margin-left: 6px; vertical-align: 1px; }
-.panel { background: var(--surface); border: 1px solid var(--ring); border-radius: 12px;
-  padding: 18px 20px; margin: 0 0 16px; box-shadow: var(--panel-shadow); }
-/* controls: label-above-control (11px caps, ink-2 for AA contrast, not muted),
-   one radius for every control (8px), hover/focus/active states on each */
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 1px 6px;
+  color: var(--muted-foreground); background: var(--secondary); margin-left: 6px; vertical-align: 1px; }
+
+.panel { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 18px 20px; margin: 0 0 16px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 6px 16px -4px rgba(0,0,0,.06); }
+
 .controls { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-end; margin: 14px 0 4px; }
-.ctl { display: flex; flex-direction: column; gap: 5px; }
+.ctl { display: flex; flex-direction: column; gap: 6px; }
 .ctl-row { display: flex; gap: 6px; align-items: center; }
 .ctl-label, legend { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
-  color: var(--ink-2); font-weight: 600; }
+  color: var(--muted-foreground); font-weight: 600; }
 legend { padding: 0; margin-bottom: 5px; }
-select, input[type="number"] { font: inherit; color: var(--ink); background: var(--surface);
-  border: 1px solid var(--ring); border-radius: 8px; padding: 5px 9px;
-  transition: border-color .15s ease; }
-select:hover, input[type="number"]:hover { border-color: var(--axis); }
+
+select, input[type="number"] { font: inherit; color: var(--foreground); background: var(--background);
+  border: 1px solid var(--input); border-radius: var(--radius-md); padding: 5px 9px;
+  transition: border-color .15s ease, box-shadow .15s ease; height: 36px; }
+select:hover, input[type="number"]:hover { border-color: var(--border); }
+select:focus, input[type="number"]:focus { border-color: var(--shadcn-ring); outline: none;
+  box-shadow: 0 0 0 2px var(--shadcn-ring); }
 #filter-model { width: 180px; }
 #input-tokens-in, #input-tokens-out { width: 110px; }
-button.preset { font: inherit; font-size: 12px; color: var(--ink-2); background: var(--surface);
-  border: 1px solid var(--ring); border-radius: 8px; padding: 5px 9px; cursor: pointer;
-  transition: border-color .15s ease, color .15s ease, background .15s ease; }
-button.preset:hover { border-color: var(--axis); color: var(--ink); background: var(--hover); }
+
+button.preset { font: inherit; font-size: 12px; color: var(--foreground); background: var(--secondary);
+  border: 1px solid var(--border); border-radius: var(--radius-md); padding: 5px 9px; cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease, transform .05s ease;
+  display: inline-flex; align-items: center; gap: 5px; height: 32px; }
+button.preset:hover { background: var(--accent); color: var(--accent-foreground); border-color: var(--border); }
 button.preset:active { transform: translateY(1px); }
-/* theme as a segmented control: the native radios stay in the DOM (the JS and
-   the localStorage persistence are untouched), only their paint is ours */
+
 fieldset { font: inherit; border: 0; padding: 0; margin: 0; }
-.seg { display: inline-flex; border: 1px solid var(--ring); border-radius: 8px;
-  overflow: hidden; background: var(--surface); }
-.seg label { position: relative; padding: 5px 12px; font-size: 12.5px; color: var(--ink-2);
-  cursor: pointer; transition: background .15s ease, color .15s ease; }
-.seg label + label { border-left: 1px solid var(--ring); }
-.seg label:hover { background: var(--hover); color: var(--ink); }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-md);
+  overflow: hidden; background: var(--background); padding: 2px; gap: 2px; }
+.seg label { position: relative; padding: 5px 10px; font-size: 12.5px; color: var(--muted-foreground);
+  cursor: pointer; transition: background .15s ease, color .15s ease;
+  border-radius: var(--radius-sm); display: inline-flex; align-items: center; gap: 4px; }
+.seg label + label { border: 0; }
+.seg label:hover { background: var(--accent); color: var(--accent-foreground); }
 .seg input { position: absolute; opacity: 0; pointer-events: none; }
-.seg label:has(input:checked) { background: var(--hover); color: var(--ink); font-weight: 600; }
-.seg label:has(input:focus-visible) { outline: 2px solid var(--legacy); outline-offset: -2px; }
-input[type="range"] { accent-color: var(--new); vertical-align: middle; width: 260px; }
+.seg label:has(input:checked) { background: var(--accent); color: var(--accent-foreground); font-weight: 600; }
+.seg label:has(input:focus-visible) { outline: 2px solid var(--shadcn-ring); outline-offset: -2px; }
+
+input[type="range"] { -webkit-appearance: none; appearance: none; width: 260px; height: 6px;
+  background: var(--input); border-radius: 999px; outline: none; vertical-align: middle; }
+input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
+  width: 16px; height: 16px; border-radius: 50%; background: var(--primary);
+  border: 2px solid var(--background); box-shadow: 0 1px 3px rgba(0,0,0,.15); cursor: pointer; }
+input[type="range"]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%;
+  background: var(--primary); border: 2px solid var(--background); box-shadow: 0 1px 3px rgba(0,0,0,.15); cursor: pointer; }
+
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 .scroll-x { overflow: auto; max-height: 72vh; }
-th { position: sticky; top: 0; z-index: 1; background: var(--surface);
-  font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
-  text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--axis); font-weight: 600; }
-td { padding: 7px 8px; border-bottom: 1px solid var(--grid); vertical-align: middle; }
+th { position: sticky; top: 0; z-index: 1; background: var(--muted);
+  font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground);
+  text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); font-weight: 600; }
+td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 tbody tr { transition: background .15s ease; }
-tbody tr:hover { background: var(--hover); }
+tbody tr:hover { background: var(--accent); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
 .chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 2px 9px;
   border-radius: 999px; font-weight: 600; white-space: nowrap;
   font-variant-numeric: tabular-nums; }
@@ -133,39 +164,41 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .chip.legacy .dot { background: var(--legacy); }
 .chip.new { color: var(--new); background: var(--new-soft); }
 .chip.new .dot { background: var(--new); }
-.chip.tie { color: var(--ink-2); border: 1px dashed var(--axis); }
-.chip.nodata { color: var(--muted); font-weight: 500; }
+.chip.tie { color: var(--muted-foreground); border: 1px dashed var(--border); }
+.chip.nodata { color: var(--muted-foreground); font-weight: 500; }
+
 .mbar { display: inline-flex; align-items: center; gap: 7px; }
-.mbar .track { position: relative; width: 84px; height: 10px; background: var(--grid);
+.mbar .track { position: relative; width: 84px; height: 10px; background: var(--input);
   border-radius: 3px; overflow: hidden; }
 .mbar .fill { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
 .mbar .fill.legacy { left: 0; background: var(--legacy); }
 .mbar .fill.new { right: 0; background: var(--new); }
 .mbar b { font-weight: 600; min-width: 48px; text-align: right; }
+
 .big { font-size: 28px; font-weight: 700; letter-spacing: -.02em;
   line-height: 1.15; margin: 4px 0 4px; text-wrap: balance; }
 .h-legacy { color: var(--legacy); } .h-new { color: var(--new); }
+
 .pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.pill { background: var(--surface); border: 1px solid var(--ring); border-radius: 8px;
+.pill { background: var(--secondary); border: 1px solid var(--border); border-radius: var(--radius-md);
   padding: 8px 12px; font-size: 12.5px; min-width: 150px; }
-.pill b { display: block; font-size: 11px; color: var(--muted); font-weight: 600;
+.pill b { display: block; font-size: 11px; color: var(--muted-foreground); font-weight: 600;
   text-transform: uppercase; letter-spacing: .05em; margin-bottom: 3px; }
-.legend { display: flex; gap: 14px; align-items: center; font-size: 12px; color: var(--ink-2);
+
+.legend { display: flex; gap: 14px; align-items: center; font-size: 12px; color: var(--muted-foreground);
   margin: 8px 0 0; flex-wrap: wrap; }
 .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
   margin-right: 5px; vertical-align: -1px; }
-.note { font-size: 12px; color: var(--muted); }
-/* long methodological prose: full panel width, comfortable leading and no
-   orphan-straggler lines */
-.panel > p.note, main > p.note, .legend + p.note { line-height: 1.65;
-  text-wrap: pretty; }
-details { border-top: 1px solid var(--grid); padding-top: 10px; margin-top: 10px; }
-summary { cursor: pointer; color: var(--ink-2); font-weight: 600; font-size: 13px;
-  transition: color .15s ease; }
-summary:hover { color: var(--ink); }
+
+.note { font-size: 12px; color: var(--muted-foreground); }
+.panel > p.note, main > p.note, .legend + p.note { line-height: 1.65; text-wrap: pretty; }
+
+details { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
+summary { cursor: pointer; color: var(--foreground); font-weight: 600; font-size: 13px;
+  transition: color .15s ease; display: inline-flex; align-items: center; gap: 6px; }
+summary:hover { color: var(--muted-foreground); }
+
 svg { display: block; max-width: 100%; }
-/* the charts draw at their viewBox aspect and scale to the panel: the fixed
-   pixel width left the wide panels half empty */
 #chart-threshold svg, #chart-margins svg, #chart-dp svg { width: 100%; height: auto; }
 </style>
 </head>
@@ -207,9 +240,9 @@ svg { display: block; max-width: 100%; }
     <fieldset>
       <legend>theme</legend>
       <div class="seg" role="radiogroup" aria-label="theme">
-        <label><input type="radio" name="theme" value="system" checked><span>system</span></label>
-        <label><input type="radio" name="theme" value="light"><span>light</span></label>
-        <label><input type="radio" name="theme" value="dark"><span>dark</span></label>
+        <label><input type="radio" name="theme" value="system" checked><i class="i-monitor" aria-hidden="true"></i> system</label>
+        <label><input type="radio" name="theme" value="light"><i class="i-sun" aria-hidden="true"></i> light</label>
+        <label><input type="radio" name="theme" value="dark"><i class="i-moon" aria-hidden="true"></i> dark</label>
       </div>
     </fieldset>
     <span id="estado-filtro" class="note"></span>
@@ -299,7 +332,7 @@ svg { display: block; max-width: 100%; }
 
 <details>
   <summary>Robustness: who wins by profile, sensitivity sweeps, cache calibration, legacy quota
-    vs tokens</summary>
+    vs tokens <i class="i-chevron-down" aria-hidden="true"></i></summary>
   <h2>Who wins, by user profile (persisted S0/S1 reference)</h2>
   <div class="panel">__WHO_WINS__</div>
   <h2>Sensitivity sweeps</h2>
@@ -584,7 +617,7 @@ function renderThreshold() {
   // and faint gridlines the rows cross, so the new-price tick's position reads
   // against numbers (the same tick pattern the dp-tokens curve uses)
   var ejes = '<line x1="' + labelW + '" y1="' + baseY + '" x2="' + (W - right) + '" y2="' +
-    baseY + '" stroke="var(--axis)" stroke-width="1"/>';
+    baseY + '" stroke="var(--grid)" stroke-width="1"/>';
   var grid = "";
   var dataMax = top / 1.05;
   [0, dataMax / 2, dataMax].forEach(function (v) {
@@ -655,9 +688,9 @@ function renderMargins() {
   var plot = (W - labelW - 16) / 2, half = plot - labelRoom;
   var cx = labelW + plot, baseY = verdicts.length * rowH + 6, H = baseY + 42;
   var svg = '<line x1="' + cx + '" y1="6" x2="' + cx + '" y2="' + baseY +
-    '" stroke="var(--axis)" stroke-width="1"/>' +
+    '" stroke="var(--grid)" stroke-width="1"/>' +
     '<line x1="' + labelW + '" y1="' + baseY + '" x2="' + (W - 16) + '" y2="' + baseY +
-    '" stroke="var(--axis)" stroke-width="1"/>';
+    '" stroke="var(--grid)" stroke-width="1"/>';
   // % ticks and faint gridlines on both sides: the 100 % cap reads as a cap
   [50, CAP].forEach(function (v) {
     [cx - v / CAP * half, cx + v / CAP * half].forEach(function (x) {
@@ -739,9 +772,9 @@ function renderDp() {
     return v >= 1000 ? Math.round(v / 1000) + "k" : String(Math.round(v * 10) / 10);
   }
   var ejes = '<line x1="' + padL + '" y1="' + (H - padB) + '" x2="' + (W - padR) + '" y2="' +
-    (H - padB) + '" stroke="var(--axis)" stroke-width="1"/>' +
+    (H - padB) + '" stroke="var(--grid)" stroke-width="1"/>' +
     '<line x1="' + padL + '" y1="' + padT + '" x2="' + padL + '" y2="' + (H - padB) +
-    '" stroke="var(--axis)" stroke-width="1"/>';
+    '" stroke="var(--grid)" stroke-width="1"/>';
   // the scale was implied before: now the axes carry tick labels and captions
   // (ticks sit at 0 / mid / data max, inside the padded plot, never on the rim)
   var dataMaxX = maxX / 1.05, dataMaxY = maxY / 1.05;

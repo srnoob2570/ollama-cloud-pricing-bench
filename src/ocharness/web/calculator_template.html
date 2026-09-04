@@ -7,6 +7,8 @@
 <meta name="description" content="How many tokens the Pro and Max plans' monthly credits buy, per model, at any in : out token split — priced live on the official Ollama Cloud table.">
 <meta name="theme-color" content="#f8f7f2" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#12110e" media="(prefers-color-scheme: dark)">
+<!-- vendored offline styles: Tailwind + shadcn tokens; Lucide icons -->
+<style>__ESTILO_BASE__</style>
 <style>
 /* three-state theme tokens: system is the default (no attribute), light and
    dark are selectable. Chart colors NEVER appear here outside these tokens. */
@@ -20,6 +22,7 @@
   --legacy: #2a78d6; --new: #eb6834;            /* series: legacy / new (validated) */
   --legacy-soft: rgba(42,120,214,.14); --new-soft: rgba(235,104,52,.14);
   --tie: #7c7a71;
+  --radius: 0.625rem;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -42,9 +45,12 @@
   --legacy-soft: rgba(57,135,229,.18); --new-soft: rgba(217,89,38,.18);
 }
 * { box-sizing: border-box; }
+
+/* shadcn/ui zinc shell: the vendored layer above already carries the token
+   map; these rules are the page-specific chrome that cannot be expressed as
+   utilities until the stylesheet is recompiled against the final templates. */
 html { scroll-behavior: smooth; }
-body { margin: 0; padding: clamp(28px, 6vh, 56px) 24px 64px; background: var(--plane);
-  color: var(--ink);
+body { margin: 0; padding: 0 24px 64px; background: var(--background); color: var(--foreground);
   font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
   text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; }
 ::selection { background: var(--new-soft); }
@@ -52,103 +58,152 @@ body { margin: 0; padding: clamp(28px, 6vh, 56px) 24px 64px; background: var(--p
   html { scroll-behavior: auto; }
   *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
-/* one radius scale: panels 12px, controls 8px, badges 6px, chips full-pill */
-.wrap { max-width: 1200px; margin: 0 auto; }
+
+.wrap { max-width: 1200px; margin: 0 auto; padding-top: clamp(28px, 6vh, 56px); }
 .skip { position: absolute; left: -9999px; }
-.skip:focus { left: 16px; top: 12px; background: var(--surface); color: var(--ink);
-  border: 1px solid var(--ring); border-radius: 8px; padding: 6px 10px; z-index: 5; }
+.skip:focus { left: 16px; top: 12px; background: var(--card); color: var(--card-foreground);
+  border: 1px solid var(--border); border-radius: var(--radius-md); padding: 6px 10px; z-index: 50; }
+
 /* the two-page navbar: relative links only (the bundle ships both pages), the
-   current page marked with aria-current and painted through the theme tokens */
-.topnav { max-width: 1200px; margin: 0 auto 20px; display: flex; gap: 6px; align-items: center; }
-.topnav a { font-size: 12.5px; color: var(--ink-2); text-decoration: none;
-  background: var(--surface); border: 1px solid var(--ring); border-radius: 8px;
-  padding: 4px 10px; transition: border-color .15s ease, color .15s ease, background .15s ease; }
-.topnav a:hover { border-color: var(--axis); color: var(--ink); background: var(--hover); }
-.topnav a[aria-current="page"] { color: var(--ink); font-weight: 600; background: var(--hover); }
-:focus-visible { outline: 2px solid var(--legacy); outline-offset: 2px; }
+   current page marked with aria-current and styled as a subtle shadcn nav item */
+.topnav { position: sticky; top: 0; z-index: 40; max-width: 1200px; margin: 0 auto 20px;
+  padding: 10px 0; display: flex; gap: 6px; align-items: center;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
+  background: color-mix(in oklab, var(--background) 80%, transparent);
+  backdrop-filter: blur(8px); }
+.topnav a { font-size: 12.5px; color: var(--muted-foreground); text-decoration: none;
+  background: transparent; border-radius: var(--radius-md); padding: 6px 10px;
+  transition: background .15s ease, color .15s ease; font-weight: 500; }
+.topnav a:hover { background: var(--accent); color: var(--accent-foreground); }
+.topnav a[aria-current="page"] { color: var(--accent-foreground); background: var(--accent); font-weight: 600; }
+
+:root { --shadcn-ring: oklch(0.708 0 0); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --shadcn-ring: oklch(0.556 0 0); } }
+:root[data-theme="dark"] { --shadcn-ring: oklch(0.556 0 0); }
+:focus-visible { outline: 2px solid var(--shadcn-ring); outline-offset: 2px; }
+
 h1 { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: clamp(27px, 4.2vw, 36px); margin: 0 0 6px; letter-spacing: -.02em;
   font-weight: 700; line-height: 1.12; text-wrap: balance; }
-.sub { color: var(--muted); font-size: 13.5px; }
-/* IBM Plex Mono renders only for whoever has it installed; the stack degrades
-   to the OS mono otherwise, so charts and table always share one family */
+.sub { color: var(--muted-foreground); font-size: 13.5px; }
+
 .mono { font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums; }
-.badge { display: inline-block; font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
-  border: 1px solid var(--ring); border-radius: 6px; padding: 1px 6px; color: var(--ink-2);
-  background: var(--surface); margin-left: 6px; vertical-align: 1px; }
-.panel { background: var(--surface); border: 1px solid var(--ring); border-radius: 12px;
-  padding: 18px 20px; margin: 0 0 16px; box-shadow: var(--panel-shadow); }
-/* one panel per plan under the page's single h1: the plan head is the
-   panel's title, so it takes ink and weight instead of the muted .sub */
-.plan-head { margin: 0 0 10px; font-size: 14px; font-weight: 600;
-  letter-spacing: -.01em; color: var(--ink); text-wrap: balance; }
-/* the plan matrices' cache footnote: the same muted scale as .note, under each table */
-tfoot td { padding-top: 8px; font-size: 11px; color: var(--muted); text-align: left; }
-/* vertical hairlines between the ratio groups: the first sub-column of each
-   split carries the left border so the groups read as separated blocks */
-.sep-l { border-left: 1px solid var(--grid); }
-/* header centering: the split names and their in/out/total sub-headers read as
-   centered captions over each group; the numeric cells stay right-aligned */
-.ctr { text-align: center; }
-/* per-plan export buttons: floated right beside the plan head, reusing the
-   preset button styling through the shared class */
-.plan-export-group { float: right; display: flex; gap: 6px; margin-left: 8px; }
-/* controls: label-above-control (11px caps, ink-2 for AA contrast, not muted),
-   one radius for every control (8px), hover/focus/active states on each */
-.controls { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-end; margin: 14px 0 4px; }
-.ctl { display: flex; flex-direction: column; gap: 5px; }
+
+.panel { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 18px 20px; margin: 0 0 16px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 6px 16px -4px rgba(0,0,0,.06); }
+
+.controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; align-items: start; margin: 14px 0 4px; }
+.ctl { display: flex; flex-direction: column; gap: 6px; }
 .ctl-row { display: flex; gap: 6px; align-items: center; }
 .ctl-label, legend { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
-  color: var(--ink-2); font-weight: 600; }
+  color: var(--muted-foreground); font-weight: 600; }
 legend { padding: 0; margin-bottom: 5px; }
-select, input[type="number"] { font: inherit; color: var(--ink); background: var(--surface);
-  border: 1px solid var(--ring); border-radius: 8px; padding: 5px 9px;
-  transition: border-color .15s ease; }
-select:hover, input[type="number"]:hover { border-color: var(--axis); }
-#filter-model { width: 180px; }
-button.preset { font: inherit; font-size: 12px; color: var(--ink-2); background: var(--surface);
-  border: 1px solid var(--ring); border-radius: 8px; padding: 5px 9px; cursor: pointer;
-  transition: border-color .15s ease, color .15s ease, background .15s ease; }
-button.preset:hover { border-color: var(--axis); color: var(--ink); background: var(--hover); }
+
+select, input[type="number"] { font: inherit; color: var(--foreground); background: var(--background);
+  border: 1px solid var(--input); border-radius: var(--radius-md); padding: 5px 9px;
+  transition: border-color .15s ease, box-shadow .15s ease; height: 36px; }
+select:hover, input[type="number"]:hover { border-color: var(--border); }
+select:focus, input[type="number"]:focus { border-color: var(--shadcn-ring); outline: none;
+  box-shadow: 0 0 0 2px var(--shadcn-ring); }
+
+button.preset { font: inherit; font-size: 12px; color: var(--foreground); background: var(--secondary);
+  border: 1px solid var(--border); border-radius: var(--radius-md); padding: 5px 9px; cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease, transform .05s ease;
+  display: inline-flex; align-items: center; gap: 5px; height: 32px; }
+button.preset:hover { background: var(--accent); color: var(--accent-foreground); border-color: var(--border); }
 button.preset:active { transform: translateY(1px); }
-/* theme as a segmented control: the native radios stay in the DOM (the JS and
-   the localStorage persistence are untouched), only their paint is ours */
+button.preset.active { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); font-weight: 600; }
+
 fieldset { font: inherit; border: 0; padding: 0; margin: 0; }
-.seg { display: inline-flex; border: 1px solid var(--ring); border-radius: 8px;
-  overflow: hidden; background: var(--surface); }
-.seg label { position: relative; padding: 5px 12px; font-size: 12.5px; color: var(--ink-2);
-  cursor: pointer; transition: background .15s ease, color .15s ease; }
-.seg label + label { border-left: 1px solid var(--ring); }
-.seg label:hover { background: var(--hover); color: var(--ink); }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-md);
+  overflow: hidden; background: var(--background); padding: 2px; gap: 2px; }
+.seg label { position: relative; padding: 5px 10px; font-size: 12.5px; color: var(--muted-foreground);
+  cursor: pointer; transition: background .15s ease, color .15s ease;
+  border-radius: var(--radius-sm); display: inline-flex; align-items: center; gap: 4px; }
+.seg label + label { border: 0; }
+.seg label:hover { background: var(--accent); color: var(--accent-foreground); }
 .seg input { position: absolute; opacity: 0; pointer-events: none; }
-.seg label:has(input:checked) { background: var(--hover); color: var(--ink); font-weight: 600; }
-.seg label:has(input:focus-visible) { outline: 2px solid var(--legacy); outline-offset: -2px; }
-input[type="range"] { accent-color: var(--new); vertical-align: middle; width: 260px; }
+.seg label:has(input:checked) { background: var(--accent); color: var(--accent-foreground); font-weight: 600; }
+.seg label:has(input:focus-visible) { outline: 2px solid var(--shadcn-ring); outline-offset: -2px; }
+
+.icon { font-size: 14px; display: inline-block; vertical-align: -2px; }
+.icon-btn { font-size: 12px; }
+
+/* model picker: custom multi-select dropdown, search + check list, chips above */
+.model-picker { position: relative; }
+.model-picker-btn { width: 100%; display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; font: inherit; font-size: 13px; color: var(--foreground); background: var(--background);
+  border: 1px solid var(--input); border-radius: var(--radius-md); padding: 6px 10px; cursor: pointer;
+  transition: border-color .15s ease; text-align: left; height: 36px; }
+.model-picker-btn:hover { border-color: var(--border); }
+.model-picker-btn:focus-visible { outline: 2px solid var(--shadcn-ring); outline-offset: 2px; }
+.model-picker-dropdown { position: absolute; z-index: 4; top: calc(100% + 4px); left: 0; right: 0;
+  background: var(--popover); color: var(--popover-foreground); border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 12px rgba(0,0,0,.08), 0 16px 32px -8px rgba(0,0,0,.12);
+  padding: 8px; max-height: 320px; overflow: auto; }
+.model-picker-search { display: flex; align-items: center; gap: 6px; padding: 4px 6px;
+  border: 1px solid var(--input); border-radius: var(--radius-md); margin-bottom: 6px; }
+.model-picker-search input { border: 0; background: transparent; padding: 4px 0; width: 100%; font: inherit; color: var(--foreground); outline: none; }
+.model-picker-search .icon { color: var(--muted-foreground); }
+.model-picker-actions { display: flex; gap: 6px; margin-bottom: 6px; }
+.model-picker-actions button { flex: 1; justify-content: center; font-size: 11px; padding: 4px 8px; }
+.model-picker-list { display: flex; flex-direction: column; gap: 1px; }
+.model-picker-item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: var(--radius-sm);
+  cursor: pointer; font-size: 12.5px; color: var(--foreground); transition: background .12s ease; }
+.model-picker-item:hover { background: var(--accent); color: var(--accent-foreground); }
+.model-picker-item[aria-selected="true"] { background: var(--primary); color: var(--primary-foreground); font-weight: 600; }
+.model-picker-check { width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; flex: none;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.model-picker-item[aria-selected="true"] .model-picker-check { border-color: transparent; }
+.model-picker-check .icon { font-size: 14px; }
+.model-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; min-height: 24px; }
+.chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; padding: 2px 8px;
+  border-radius: 999px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums;
+  background: var(--secondary); color: var(--foreground); border: 1px solid var(--border); }
+.chip.nodata { color: var(--muted-foreground); font-weight: 500; background: transparent; border: 1px dashed var(--border); }
+.chip-remove { appearance: none; border: 0; background: transparent; padding: 0; margin: 0 0 0 2px;
+  cursor: pointer; color: var(--muted-foreground); display: inline-flex; align-items: center; transition: color .15s ease; line-height: 1; font-size: 12px; }
+.chip-remove:hover { color: var(--foreground); }
+
+/* custom in : out inputs: compact numeric fields that sit as peers in the
+   controls grid, not flex-grow giants that crowd the cache/theme groups */
+#plan-custom-in, #plan-custom-out {
+  width: 5ch;
+  min-width: 48px;
+  text-align: center;
+  padding-inline: 4px;
+  flex: none;
+}
+
+/* cache custom input inline with presets */
+.cache-presets { flex-wrap: wrap; }
+.cache-custom { display: inline-flex; align-items: center; gap: 4px; }
+.cache-custom input { width: 56px; text-align: center; padding: 5px 6px; }
+.cache-custom-suffix { font-size: 12px; color: var(--muted-foreground); font-weight: 600; }
+
+/* plan matrices */
+.plan-head { margin: 0 0 10px; font-size: 14px; font-weight: 600;
+  letter-spacing: -.01em; color: var(--foreground); text-wrap: balance; }
+.plan-export-group { float: right; display: flex; gap: 6px; margin-left: 8px; }
+.sep-l { border-left: 1px solid var(--border); }
+.ctr { text-align: center; }
+tfoot td { padding-top: 8px; font-size: 11px; color: var(--muted-foreground); text-align: left; }
+
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 .scroll-x { overflow: auto; max-height: 72vh; }
-th { position: sticky; top: 0; z-index: 1; background: var(--surface);
-  font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
-  text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--axis); font-weight: 600; }
-td { padding: 7px 8px; border-bottom: 1px solid var(--grid); vertical-align: middle; }
+th { position: sticky; top: 0; z-index: 1; background: var(--muted);
+  font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground);
+  text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); font-weight: 600; }
+td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 tbody tr { transition: background .15s ease; }
-tbody tr:hover { background: var(--hover); }
+tbody tr:hover { background: var(--accent); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-.chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 2px 9px;
-  border-radius: 999px; font-weight: 600; white-space: nowrap;
-  font-variant-numeric: tabular-nums; }
-.chip .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.chip.legacy { color: var(--legacy); background: var(--legacy-soft); }
-.chip.legacy .dot { background: var(--legacy); }
-.chip.new { color: var(--new); background: var(--new-soft); }
-.chip.new .dot { background: var(--new); }
-.chip.tie { color: var(--ink-2); border: 1px dashed var(--axis); }
-.chip.nodata { color: var(--muted); font-weight: 500; }
-.note { font-size: 12px; color: var(--muted); }
-/* long methodological prose: full panel width, comfortable leading and no
-   orphan-straggler lines */
-.panel > p.note, main > p.note { line-height: 1.65;
-  text-wrap: pretty; }
+.note { font-size: 12px; color: var(--muted-foreground); }
+.panel > p.note, main > p.note { line-height: 1.65; text-wrap: pretty; }
 </style>
 </head>
 <body>
@@ -163,10 +218,32 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 <div class="panel">
   <div class="controls">
-    <div class="ctl">
-      <label class="ctl-label" for="filter-model">model</label>
-      <select id="filter-model"><option value="">all models</option>__OPCIONES__</select>
+    <div class="ctl" style="min-width:260px;">
+      <div class="ctl-row" style="justify-content:space-between;">
+        <label class="ctl-label" for="filter-model">model</label>
+        <span id="model-count" class="mono" style="font-size:11px; color:var(--muted-foreground);">all models</span>
+      </div>
+      <select id="filter-model" multiple style="display:none">__OPCIONES__</select>
+      <div class="model-picker" id="model-picker">
+        <button type="button" class="model-picker-btn" id="model-picker-btn" aria-haspopup="listbox" aria-expanded="false">
+          <span class="model-picker-text" id="model-picker-text">all models</span>
+          <i class="i-chevron-down icon" aria-hidden="true"></i>
+        </button>
+        <div class="model-picker-dropdown" id="model-picker-dropdown" role="listbox" aria-multiselectable="true" style="display:none;">
+          <div class="model-picker-search">
+            <i class="i-search icon" aria-hidden="true"></i>
+            <input type="text" id="model-search" placeholder="Search models…" autocomplete="off">
+          </div>
+          <div class="model-picker-actions">
+            <button type="button" class="preset" id="model-select-all">all</button>
+            <button type="button" class="preset" id="model-clear-all">none</button>
+          </div>
+          <div class="model-picker-list" id="model-picker-list"></div>
+        </div>
+      </div>
+      <div class="model-chips" id="model-chips"></div>
     </div>
+
     <div class="ctl">
       <label class="ctl-label" for="plan-custom-in">custom in : out</label>
       <div class="ctl-row">
@@ -175,25 +252,32 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
         <input type="number" id="plan-custom-out" min="0" step="any" value="1" class="mono">
       </div>
     </div>
+
+    <div class="ctl" style="min-width:240px;">
+      <label class="ctl-label">cache hit-rate S(x)</label>
+      <div class="ctl-row cache-presets">
+        <button type="button" class="preset cache-preset" data-s="0">0%</button>
+        <button type="button" class="preset cache-preset" data-s="50">50%</button>
+        <button type="button" class="preset cache-preset active" data-s="85">85%</button>
+        <button type="button" class="preset cache-preset" data-s="95">95%</button>
+        <div class="cache-custom">
+          <input type="number" id="cache-custom" min="0" max="100" step="1" value="85" class="mono" aria-label="custom cache percentage">
+          <span class="cache-custom-suffix">%</span>
+        </div>
+      </div>
+    </div>
+
     <fieldset>
       <legend>theme</legend>
       <div class="seg" role="radiogroup" aria-label="theme">
-        <label><input type="radio" name="theme" value="system" checked><span>system</span></label>
-        <label><input type="radio" name="theme" value="light"><span>light</span></label>
-        <label><input type="radio" name="theme" value="dark"><span>dark</span></label>
+        <label><input type="radio" name="theme" value="system" checked><i class="i-monitor" aria-hidden="true"></i> system</label>
+        <label><input type="radio" name="theme" value="light"><i class="i-sun" aria-hidden="true"></i> light</label>
+        <label><input type="radio" name="theme" value="dark"><i class="i-moon" aria-hidden="true"></i> dark</label>
       </div>
     </fieldset>
   </div>
-  <label for="slider-s"><b>Cache hit-rate S(x)</b>, presentation layer only:
-    <input type="range" id="slider-s" min="0" max="100" value="85" step="1">
-    <b id="slider-val" class="mono">85%</b></label>
-  <p style="margin:6px 0 0">
-    <button type="button" class="preset mono cache-preset" data-s="0">0%</button>
-    <button type="button" class="preset mono cache-preset" data-s="50">50%</button>
-    <button type="button" class="preset mono cache-preset" data-s="85">85%</button>
-    <button type="button" class="preset mono cache-preset" data-s="95">95%</button>
-  </p>
-  <p class="note" style="margin-top:8px">Credits are priced at face value: the plans&rsquo;
+
+  <p class="note" style="margin-top:12px">Credits are priced at face value: the plans&rsquo;
     &times;3 credit ratio is inherent in the credits (Pro $20 paid &rarr; $60 credits, Max
     $100 &rarr; $300 credits), so the rows need no paid-dollar division. The
     plans&rsquo; credits are a monthly grant, so every figure below is a monthly token
@@ -202,8 +286,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
     (OpenCode, Claude Code logs) sit at 40:1&ndash;190:1 raw tokens (60:1 is the conservative
     pick) &mdash; and the custom column prices whatever split you type in the fields above.
     Real sessions also run ~90% of input as cache reads at a ~0.1x rate, cost-weighting them
-    to ~3:1&ndash;6:1: that discount is what the S(x) slider above models &mdash; a measured
-    S keeps precedence, and models without a published cached-input discount sit at
+    to ~3:1&ndash;6:1: that discount is what the S(x) control above models. A measured S keeps precedence per model, and models without a published cached-input discount sit at
     S(x) &equiv; S0. Each cell is the input, output and total tokens the plan&rsquo;s credits buy at
     that split. This is a presentation-layer estimate: nothing persisted changes.</p>
 </div>
@@ -234,14 +317,15 @@ var PLANES = [
 ];
 // the matrix columns: the preset in : out token splits, ordered input-heavy to
 // output-heavy, bare (the note carries the measured-runs provenance); the
-// reasoning/generation splits are gone per decision — the custom column
-// prices any other split
+// reasoning/generation splits are gone per decision — the custom column prices
+// any other split
 var RATIOS = [
   {ratio:60, text:'60 : 1'},
   {ratio:10, text:'10 : 1'},
   {ratio:4, text:'4 : 1'}
 ];
-var estado = { model: "", slider: SLIDER_DEFAULT, planCustomIn: 1, planCustomOut: 1 };
+var ALL_MODELS = Object.keys(RATES.rates || {});
+var estado = { models: ALL_MODELS.slice(), slider: SLIDER_DEFAULT, planCustomIn: 1, planCustomOut: 1 };
 
 function $(id) { return document.getElementById(id); }
 function esc(s) {
@@ -258,7 +342,7 @@ function measuredS(model) {
   return spm && spm.source === "measured" && isNum(spm.s) ? spm.s : null;
 }
 function effectiveS(model) {
-  // measured keeps precedence: the slider governs only the assumed models
+  // measured keeps precedence: the custom control governs only the assumed models
   var m = measuredS(model);
   return m === null ? estado.slider / 100 : m;
 }
@@ -276,7 +360,7 @@ function planTokens(model, credits, ratio) {
   var r = rateOf(model);
   if (!r || !(ratio > 0)) return null;
   var s = effectiveS(model);
-  if (!r.has_cache_discount) s = 0;  // no published discount: S(x) is S0, the slider cannot move it
+  if (!r.has_cache_discount) s = 0;  // no published discount: S(x) is S0, the control cannot move it
   var wIn = ratio / (1 + ratio), wOut = 1 / (1 + ratio);
   var perToken = (wIn * (1 - s) * r.input + wIn * s * r.cached_input + wOut * r.output) / PER;
   if (!(perToken > 0)) return null;
@@ -309,9 +393,9 @@ function renderPlanTokens() {
   // custom split, the same model filter as the dashboard's cells table; the
   // panel's title spells the credit figures at face value so the static file
   // carries them too, and each table's tfoot footnotes the live cache % the
-  // S(x) slider drives; the head also carries the PNG/clipboard export buttons
+  // S(x) control drives; the head also carries the PNG/clipboard export buttons
   var modelos = Object.keys(RATES.rates).filter(function (m) {
-    return !estado.model || m === estado.model;
+    return estado.models.indexOf(m) !== -1;
   });
   var columnas = planColumns();
   var tablas = PLANES.map(function (plane, indice) {
@@ -335,9 +419,9 @@ function renderPlanTokens() {
     return '<div class="panel scroll-x"><p class="plan-head">' + plane.head +
       '<span class="plan-export-group">' +
       '<button type="button" class="preset plan-export" data-plane="' + indice +
-      '" data-mode="download">PNG</button>' +
+      '" data-mode="download"><i class="i-download icon-btn" aria-hidden="true"></i> PNG</button>' +
       '<button type="button" class="preset plan-export" data-plane="' + indice +
-      '" data-mode="copy">Copy</button></span></p>' +
+      '" data-mode="copy"><i class="i-copy icon-btn" aria-hidden="true"></i> Copy</button></span></p>' +
       '<table><thead><tr><th class="num">in : out ratio</th>' + ths +
       '</tr><tr><th>model</th>' + subths + "</tr></thead><tbody>" + filas +
       '</tbody><tfoot><tr><td colspan="' + (1 + columnas.length * 3) + '">cache hit: ' + estado.slider +
@@ -353,9 +437,9 @@ function exportPlanImage(planeIndex, mode, btn) {
   var plane = PLANES[planeIndex];
   if (!plane) return;
   var titulo = plane.name + " — $" + plane.paid + " paid → $" + plane.credits + " credits";
-  var pie = "cache: " + estado.slider + "% — the S(x) slider above · each cell: ↓ input, ↑ output, then the total";
+  var pie = "cache: " + estado.slider + "% — the S(x) control above · each cell: ↓ input, ↑ output, then the total";
   var modelos = Object.keys(RATES.rates).filter(function (m) {
-    return !estado.model || m === estado.model;
+    return estado.models.indexOf(m) !== -1;
   });
   var columnas = planColumns();
   var raiz = getComputedStyle(document.documentElement);
@@ -491,35 +575,135 @@ function descargarImagen(plane, blob) {
 function aviso(btn, texto) {
   // transient button feedback, reverted so the label reads normal again
   if (!btn) return;
-  var previo = btn.textContent;
-  btn.textContent = texto;
-  setTimeout(function () { btn.textContent = previo; }, 1200);
+  var previo = btn.innerHTML;
+  btn.innerHTML = texto;
+  setTimeout(function () { btn.innerHTML = previo; }, 1200);
 }
 
 function renderAll() {
   renderPlanTokens();
+  updateModelChips();
 }
 
-$("filter-model").addEventListener("change", function (e) {
-  estado.model = e.target.value;
+/* model multi-select ------------------------------------------------------- */
+function buildModelPicker() {
+  var select = $("filter-model");
+  var list = $("model-picker-list");
+  var options = Array.prototype.slice.call(select.options);
+  list.innerHTML = options.map(function(opt) {
+    var selected = estado.models.indexOf(opt.value) !== -1;
+    return '<label class="model-picker-item" role="option" aria-selected="' + selected + '" data-value="' + esc(opt.value) + '">' +
+      '<span class="model-picker-check">' + (selected ? '<i class="i-check" aria-hidden="true"></i>' : '') + '</span>' +
+      '<span class="model-picker-name">' + esc(opt.value) + '</span>' +
+      '</label>';
+  }).join("");
+}
+
+function updateModelChips() {
+  var chips = $("model-chips");
+  if (estado.models.length === ALL_MODELS.length) {
+    chips.innerHTML = '<span class="chip">all models</span>';
+    $("model-picker-text").textContent = "all models";
+    $("model-count").textContent = "all " + ALL_MODELS.length;
+  } else if (estado.models.length === 0) {
+    chips.innerHTML = '<span class="chip">no models</span>';
+    $("model-picker-text").textContent = "no models";
+    $("model-count").textContent = "0";
+  } else {
+    chips.innerHTML = estado.models.map(function(m) {
+      return '<span class="chip">' + esc(m) +
+        '<button type="button" class="chip-remove" data-value="' + esc(m) + '" aria-label="Remove ' + esc(m) + '">' +
+        '<i class="i-x" aria-hidden="true"></i>' +
+        '</button></span>';
+    }).join("");
+    $("model-picker-text").textContent = estado.models.length + " model" + (estado.models.length === 1 ? "" : "s");
+    $("model-count").textContent = estado.models.length + " of " + ALL_MODELS.length;
+  }
+}
+
+function toggleModel(val) {
+  var idx = estado.models.indexOf(val);
+  if (idx !== -1) {
+    estado.models.splice(idx, 1);
+  } else {
+    estado.models.push(val);
+    estado.models.sort(function(a, b) { return ALL_MODELS.indexOf(a) - ALL_MODELS.indexOf(b); });
+  }
+  buildModelPicker();
+  updateModelChips();
   renderAll();
+}
+
+$("model-picker-btn").addEventListener("click", function(e) {
+  e.stopPropagation();
+  var dropdown = $("model-picker-dropdown");
+  var isOpen = dropdown.style.display !== "none";
+  dropdown.style.display = isOpen ? "none" : "block";
+  this.setAttribute("aria-expanded", String(!isOpen));
+  if (!isOpen) {
+    $("model-search").value = "";
+    buildModelPicker();
+    setTimeout(function() { $("model-search").focus(); }, 0);
+  }
 });
-var slider = $("slider-s");
-slider.value = String(SLIDER_DEFAULT);
-slider.addEventListener("input", function () {
-  estado.slider = Number(slider.value);
-  $("slider-val").textContent = estado.slider + "%";
-  renderAll();
+
+document.addEventListener("click", function(e) {
+  if (!e.target.closest("#model-picker")) {
+    $("model-picker-dropdown").style.display = "none";
+    $("model-picker-btn").setAttribute("aria-expanded", "false");
+  }
 });
-$("slider-val").textContent = SLIDER_DEFAULT + "%";
-Array.prototype.forEach.call(document.querySelectorAll("button.cache-preset"), function (b) {
-  b.addEventListener("click", function () {
-    estado.slider = Number(b.getAttribute("data-s"));
-    slider.value = String(estado.slider);
-    $("slider-val").textContent = estado.slider + "%";
-    renderAll();
+
+$("model-picker-list").addEventListener("click", function(e) {
+  var item = e.target.closest(".model-picker-item");
+  if (!item) return;
+  var val = item.getAttribute("data-value");
+  toggleModel(val);
+  // refresh the clicked item only for performance, then rebuild on next open
+  var selected = estado.models.indexOf(val) !== -1;
+  item.setAttribute("aria-selected", selected);
+  item.querySelector(".model-picker-check").innerHTML = selected
+    ? '<i class="i-check" aria-hidden="true"></i>'
+    : '';
+});
+
+$("model-search").addEventListener("input", function() {
+  var q = this.value.toLowerCase();
+  Array.prototype.forEach.call(document.querySelectorAll(".model-picker-item"), function(item) {
+    var name = item.querySelector(".model-picker-name").textContent.toLowerCase();
+    item.style.display = name.indexOf(q) !== -1 ? "" : "none";
   });
 });
+
+$("model-select-all").addEventListener("click", function(e) {
+  e.stopPropagation();
+  estado.models = ALL_MODELS.slice();
+  buildModelPicker();
+  updateModelChips();
+  renderAll();
+});
+
+$("model-clear-all").addEventListener("click", function(e) {
+  e.stopPropagation();
+  estado.models = [];
+  buildModelPicker();
+  updateModelChips();
+  renderAll();
+});
+
+$("model-chips").addEventListener("click", function(e) {
+  var btn = e.target.closest(".chip-remove");
+  if (!btn) return;
+  var val = btn.getAttribute("data-value");
+  var idx = estado.models.indexOf(val);
+  if (idx !== -1) {
+    estado.models.splice(idx, 1);
+    updateModelChips();
+    renderAll();
+  }
+});
+
+/* custom in : out ---------------------------------------------------------- */
 function bindPlanCustom(id, clave) {
   var input = $(id);
   input.addEventListener("input", function () {
@@ -532,6 +716,37 @@ function bindPlanCustom(id, clave) {
 }
 bindPlanCustom("plan-custom-in", "planCustomIn");
 bindPlanCustom("plan-custom-out", "planCustomOut");
+
+/* cache presets + custom --------------------------------------------------- */
+function updateCachePresetActive() {
+  Array.prototype.forEach.call(document.querySelectorAll("button.cache-preset"), function (b) {
+    var s = Number(b.getAttribute("data-s"));
+    if (s === estado.slider) {
+      b.classList.add("active");
+    } else {
+      b.classList.remove("active");
+    }
+  });
+}
+
+Array.prototype.forEach.call(document.querySelectorAll("button.cache-preset"), function (b) {
+  b.addEventListener("click", function () {
+    estado.slider = Number(b.getAttribute("data-s"));
+    $("cache-custom").value = String(estado.slider);
+    updateCachePresetActive();
+    renderAll();
+  });
+});
+
+$("cache-custom").addEventListener("input", function () {
+  var n = Number(this.value);
+  if (isFinite(n) && n >= 0 && n <= 100) {
+    estado.slider = Math.round(n);
+  }
+  updateCachePresetActive();
+  renderAll();
+});
+
 // the plan-export buttons re-render on every renderAll: bind once by delegation
 $("plan-tokens").addEventListener("click", function (e) {
   var b = e.target.closest("button.plan-export");
@@ -560,6 +775,7 @@ Array.prototype.forEach.call(document.querySelectorAll('input[name="theme"]'), f
   applyTheme(guardado);
 })();
 
+updateCachePresetActive();
 renderAll();
 </script>
 </body>

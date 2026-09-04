@@ -53,9 +53,9 @@ bench --help     # every subcommand takes --base DIR (default .) and --json
 ```
 
 Everything operates on a working directory (`--base`, default `.`) that holds `pricing/`
-(the versioned price tables), `runs/` + `batches/` (the immutable raw dataset), and, as
-work happens, run manifests, `analysis/` (derivatives, dashboard), `predictability/`
-(locked estimates) and `releases/`.
+(the versioned price tables), `runs/` + `batches/` (the immutable raw dataset) and, as
+work happens, run manifests, `analysis/` (derivatives, dashboard + calculator),
+`predictability/` (locked estimates) and `releases/`.
 
 ### The spending gate (enforced by the tool, not by memory)
 
@@ -79,10 +79,22 @@ work happens, run manifests, `analysis/` (derivatives, dashboard), `predictabili
 | `probe-concurrency --model X [--k-max K]` | Fires short volleys at increasing k to measure the real per-key cut-off (429/queueing), then runs the k∈{1,4,8} cells re-anchored to it (a planned k above the cut-off runs at the cut-off, documented in the dataset). |
 | `calibrate-cache [--model X] [--spaced-gaps 5 30 90]` | Replays one fixed ~20K prefix per T2-slate model (cold reference, r=4 intra-batch, spaced replays); when conclusive, the measured hit-rate replaces the S1 assumption per model, with S0 as the floor. |
 | `predict [--phase blind\|informed ...] [--report]` | The predictability flow (§8): the 14 measurable-set cells (strong four T2 + T3, v1.1 re-scope) estimated blind (only the fixture's public description + rates), locked with timestamp and hash before the cell runs; informed re-estimation after; `--report` emits the comparative MAPE (legacy pp vs new $, bootstrap CI), anchored to the persisted S0/S1 pair, excluding sub-resolution cells and flagging them. Zero quota. |
-| `analyze [--ancla P] [--s S] [--table-version V] [--level L] [--model M]` | **The re-run without re-measuring**: every derivative (medians with p25–p75/p95 per model×workload, per-task S0/S1 costs, critical-threshold pp/1M, who-wins-by-profile, the dp-tokens curve, the 4 sensitivity sweeps) and the static dashboard (theme-token SVG charts, verdict-first, cache slider, plan token-budget estimate with table image export (PNG download / clipboard copy)), regenerated from the raw data alone, offline. A custom `--s` stamps its own `analysis-s<x>/` set (methodology version in the header) and never edits the persisted S0/S1 reference. |
+| `analyze [--ancla P] [--s S] [--table-version V] [--level L] [--model M]` | **The re-run without re-measuring**: every derivative (medians with p25–p75/p95 per model×workload, per-task S0/S1 costs, critical-threshold pp/1M, who-wins-by-profile, the dp-tokens curve, the 4 sensitivity sweeps), regenerated from the raw data alone, offline, as a three-file bundle — `analysis.json` plus two navbar-linked self-contained pages: the dashboard (`dashboard.html`: verdict-first, the cells table, theme-token break-even/margin charts, the cache slider, robustness sweeps) and the calculator (`calculator.html`: the plan token-budget matrices for all 19 table models, multi-select filtering, cache presets + a custom input, table image export (PNG download / clipboard copy)). A custom `--s` stamps its own `analysis-s<x>/` set (methodology version in the header) and never edits the persisted S0/S1 reference. |
 | `analyze --release <tag> [--repo owner/name]` | The same analysis over a fetched dataset release, verified against its metadata sha256 map and priced by the release's own table. |
 | `status [--level L]` | Pending/done/aborted/in-flight batches and the quota consumed per level, read from the manifests alone. |
 | `release --run <run_id> [--repo owner/name]` | Packages one run's dataset: requests + batches + the binding manifest + the price-table snapshot + a `metadata.json` (code commit, table version + sha256, protocol version, a sha256 map over every file), and publishes it as a GitHub release. **One release per run, never rewritten**; the live API key (and any bearer-token-shaped string) must not appear in any packaged byte or the release refuses. |
+
+### The pages' vendored styling (inlined, offline)
+
+Both pages are styled with shadcn/ui-style zinc tokens through a vendored, compiled
+Tailwind stylesheet (Tailwind v4.3.3, MIT) and Lucide icons (lucide-static v1.40.0,
+ISC). The sources live in `src/ocharness/web/` (the HTML templates, the
+`_estilo_input.css` build input, the compiled `vendor/` sheets and the
+`tools/lucide_css.py` icon generator); the compiled CSS and the icon classes are
+inlined at render time, so both pages stay fully self-contained: no remote fetches, no
+CDNs, they work offline. Rebuilding the stylesheet (one command) is documented in
+`_estilo_input.css` itself; regenerating the icons: `python3
+src/ocharness/web/tools/lucide_css.py`.
 
 ### Re-running when prices change (zero quota)
 

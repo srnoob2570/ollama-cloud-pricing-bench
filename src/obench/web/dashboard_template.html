@@ -304,7 +304,10 @@
             }
 
             /* the two-page navbar: relative links only (the bundle ships both pages), the
-   current page marked with aria-current; brand mark left, theme toggle right */
+   current page marked with aria-current; brand mark left, theme toggle right.
+   Full-bleed: the bar escapes the body's 24px side padding with negative
+   margins, and its content re-aligns to the 1240px .wrap with a dynamic
+   side padding, so the blur and the hairline reach both viewport edges */
             .topnav {
                 position: sticky;
                 top: 0;
@@ -313,9 +316,8 @@
                 align-items: center;
                 flex-wrap: wrap;
                 gap: 8px 20px;
-                max-width: 1240px;
-                margin: 0 auto;
-                padding: 12px 0;
+                margin: 0 -24px;
+                padding: 12px max(24px, calc((100% - 1240px) / 2));
                 border-bottom: 1px solid var(--border);
                 background: color-mix(
                     in oklab,
@@ -589,13 +591,8 @@
                 flex: 1 1 auto;
                 min-width: 150px;
             }
-            /* the model control stays compact: it hugs its content up to a
-               240px cap so a long model name cannot stretch the select
-               across the row */
-            .controls-row .model-ctl {
-                flex: 0 1 auto;
-                min-width: 150px;
-                max-width: 240px;
+            .ctl-model {
+                flex: 1 1 260px;
             }
             .ctl {
                 display: flex;

@@ -173,9 +173,9 @@ svg.lucide { width: 1em; height: 1em; flex: none; }
   gap: 20px 24px; align-items: start; }
 .ctl { display: flex; flex-direction: column; gap: 6px; }
 .ctl-row { display: flex; gap: 6px; align-items: center; }
-.ctl-row.custom-ratio { display: grid; grid-template-columns: 1fr auto 1fr; gap: 6px; align-items: center; }
 .ctl-model { min-width: 260px; }
-.ctl-head { justify-content: space-between; }
+/* one label grammar: the count sits beside its label, never floated across */
+.ctl-head { justify-content: flex-start; gap: 8px; }
 .ctl-count { font-size: 11px; color: var(--muted-foreground); }
 .ctl-label { font-size: 11px; font-weight: 600; letter-spacing: .02em;
   color: var(--muted-foreground); }
@@ -231,7 +231,10 @@ button.cache-preset { font-variant-numeric: tabular-nums; }
   border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .model-picker-item[aria-selected="true"] .model-picker-check { border-color: transparent; }
 .model-picker-check .icon { font-size: 14px; }
-.model-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; min-height: 24px; }
+.model-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+/* the chips row is an active-selection summary: silent while the default
+   (every model) is in force */
+.model-chips:empty { display: none; }
 
 /* model chips: neutral — the verdict hues belong to the dashboard's data */
 .chip { display: inline-flex; align-items: center; gap: 5px; font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
@@ -243,21 +246,36 @@ button.cache-preset { font-variant-numeric: tabular-nums; }
   cursor: pointer; color: var(--muted-foreground); display: inline-flex; align-items: center; transition: color .15s ease; line-height: 1; font-size: 12px; }
 .chip-remove:hover { color: var(--foreground); }
 
-/* custom in : out inputs: compact numeric fields that share their group's
-   width so the grid cell has no dead space, while staying proportionally small */
-#plan-custom-in, #plan-custom-out {
-  width: auto;
-  min-width: 48px;
-  max-width: 110px;
-  text-align: center;
-  padding-inline: 4px;
-}
+/* the in : out ratio: one grouped control — the two fields bound inside a
+   shared border, tagged in/out, the separator deliberate */
+.ratio-group { display: inline-flex; align-items: center; gap: 6px; height: 36px;
+  padding: 0 10px; border: 1px solid var(--input); border-radius: var(--radius-md);
+  background: var(--background); align-self: flex-start;
+  transition: border-color .15s ease, box-shadow .15s ease; }
+.ratio-group:focus-within { border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 30%, transparent); }
+.ratio-tag { font-size: 10px; font-weight: 600; letter-spacing: .04em;
+  color: var(--muted-foreground); }
+.ratio-sep { color: var(--muted-foreground); font-weight: 600; }
+.ratio-group input[type="number"] { border: 0; background: transparent; box-shadow: none;
+  height: 34px; width: 52px; padding: 0; text-align: center; }
+.ratio-group input[type="number"]:hover { border-color: transparent; }
+.ratio-group input[type="number"]:focus { box-shadow: none; }
 
-/* cache custom input inline with presets */
+/* the free S(x) value: an underline input field with its unit attached —
+   unmistakably editable next to the boxed preset buttons */
 .cache-presets { flex-wrap: wrap; }
-.cache-custom { display: inline-flex; align-items: center; gap: 4px; }
-.cache-custom input { width: 56px; text-align: center; padding: 5px 6px; }
-.cache-custom-suffix { font-size: 12px; color: var(--muted-foreground); font-weight: 600; }
+.s-custom { display: inline-flex; align-items: center; height: 32px; padding: 0 6px 0 2px;
+  border: 0; border-bottom: 2px solid var(--muted); transition: border-color .15s ease;
+  cursor: text; }
+.s-custom:hover { border-bottom-color: var(--ink-2); }
+.s-custom:focus-within { border-bottom-color: var(--ring); }
+.s-custom input[type="number"] { border: 0; background: transparent; box-shadow: none;
+  height: 28px; width: 44px; padding: 0 2px; text-align: right; }
+.s-custom input[type="number"]:hover { border-color: transparent; }
+.s-custom input[type="number"]:focus { box-shadow: none; }
+.s-unit { font-size: 12px; font-weight: 600; color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums; }
 
 /* the plan matrices lead the page: each panel is headed by its credit budget
    in large mono, the paid price and export actions beside it */
@@ -288,6 +306,10 @@ tbody tr:hover { background: var(--hover); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .note { font-size: 12.5px; color: var(--muted-foreground); }
 .panel > p.note, main > p.note { line-height: 1.7; text-wrap: pretty; }
+/* the protocol note: a demoted footnote zone, hairline-separated from the
+   controls it explains; text verbatim, fully visible */
+.note.protocol { margin: 16px 0 0; padding-top: 12px; border-top: 1px solid var(--border);
+  font-size: 11.5px; line-height: 1.6; max-width: 120ch; }
 </style>
 </head>
 <body>
@@ -344,30 +366,32 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
     </div>
 
     <div class="ctl">
-      <label class="ctl-label" for="plan-custom-in">custom in : out</label>
-      <div class="ctl-row custom-ratio">
+      <span class="ctl-label">custom in : out</span>
+      <div class="ratio-group" role="group" aria-label="custom in : out ratio">
+        <span class="ratio-tag">in</span>
         <input type="number" id="plan-custom-in" min="0" step="any" value="1" class="mono" aria-label="custom input ratio">
-        <span class="ctl-label">:</span>
+        <span class="ratio-sep" aria-hidden="true">:</span>
         <input type="number" id="plan-custom-out" min="0" step="any" value="1" class="mono" aria-label="custom output ratio">
+        <span class="ratio-tag">out</span>
       </div>
     </div>
 
     <div class="ctl">
-      <label class="ctl-label">cache hit-rate S(x)</label>
+      <span class="ctl-label">cache hit-rate S(x)</span>
       <div class="ctl-row cache-presets">
         <button type="button" class="preset cache-preset" data-s="0">0%</button>
         <button type="button" class="preset cache-preset" data-s="50">50%</button>
         <button type="button" class="preset cache-preset active" data-s="85">85%</button>
         <button type="button" class="preset cache-preset" data-s="95">95%</button>
-        <div class="cache-custom">
+        <label class="s-custom" for="cache-custom">
           <input type="number" id="cache-custom" min="0" max="100" step="1" value="85" class="mono" aria-label="custom cache percentage">
-          <span class="cache-custom-suffix">%</span>
-        </div>
+          <span class="s-unit">%</span>
+        </label>
       </div>
     </div>
   </div>
 
-  <p class="note" style="margin-top:12px">Credits are priced at face value: the plans&rsquo;
+  <p class="note protocol">Credits are priced at face value: the plans&rsquo;
     &times;3 credit ratio is inherent in the credits (Pro $20 paid &rarr; $60 credits, Max
     $100 &rarr; $300 credits), so the rows need no paid-dollar division. The
     plans&rsquo; credits are a monthly grant, so every figure below is a monthly token
@@ -747,7 +771,9 @@ function closeModelPicker(focusTrigger) {
 function updateModelChips() {
   var chips = $("model-chips");
   if (estado.models.length === ALL_MODELS.length) {
-    chips.innerHTML = '<span class="chip">all models</span>';
+    // the default (every model) needs no chip echo: the picker button and the
+    // count already state it, so the summary row stays silent
+    chips.innerHTML = "";
     $("model-picker-text").textContent = "all models";
     $("model-count").textContent = "all " + ALL_MODELS.length;
   } else if (estado.models.length === 0) {

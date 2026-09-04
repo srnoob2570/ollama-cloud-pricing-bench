@@ -200,12 +200,27 @@ svg.lucide { width: 1em; height: 1em; flex: none; }
 .controls-row { display: flex; gap: 18px 22px; flex-wrap: wrap; align-items: flex-end; }
 .controls-row .ctl { flex: 1 1 auto; min-width: 150px; }
 .ctl { display: flex; flex-direction: column; gap: 6px; }
-.ctl-row { display: flex; gap: 6px; align-items: center; }
 .status-line { font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
   font-size: 11.5px; color: var(--muted-foreground); padding-top: 10px;
   border-top: 1px solid var(--border); }
 .ctl-label { font-size: 11px; font-weight: 600; letter-spacing: .02em;
   color: var(--muted-foreground); }
+
+/* the token scenario reads as one control: the in/out fields bound by tags,
+   and the ratio presets — which rewrite BOTH fields — grouped behind a
+   hairline divider so their scope is legible */
+.scenario { flex: 2 1 380px; }
+.scenario-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.scenario-tag { font-size: 10px; font-weight: 600; letter-spacing: .04em;
+  color: var(--muted-foreground); }
+.scenario-div { width: 1px; height: 20px; background: var(--border); margin: 0 6px; flex: none; }
+/* S(x): one labeled control — the slider, its live value and the presets
+   that drive the same value share one row */
+.s-ctl { gap: 6px; }
+.s-group { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; }
+.s-group input[type="range"] { flex: 1 1 240px; width: auto; max-width: 420px; }
+.s-val { font-size: 13px; min-width: 44px; }
+.s-presets { display: flex; gap: 6px; flex-wrap: wrap; }
 
 select, input[type="number"] { font: inherit; font-size: 13px; color: var(--foreground);
   background: var(--background); border: 1px solid var(--input); border-radius: var(--radius-md);
@@ -280,6 +295,10 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .note { font-size: 12.5px; color: var(--muted-foreground); }
 .panel > p.note, main > p.note, .legend + p.note { line-height: 1.7; text-wrap: pretty; }
 .footnote { margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--border); }
+/* the protocol note: a demoted footnote zone, hairline-separated from the
+   controls it explains; text verbatim, fully visible */
+.note.protocol { margin: 16px 0 0; padding-top: 12px; border-top: 1px solid var(--border);
+  font-size: 11.5px; line-height: 1.6; max-width: 120ch; }
 
 svg { display: block; max-width: 100%; }
 #chart-threshold svg, #chart-margins svg { width: 100%; height: auto; }
@@ -323,31 +342,26 @@ svg { display: block; max-width: 100%; }
         <label class="ctl-label" for="filter-model">model</label>
         <select id="filter-model"><option value="">all models</option>__OPCIONES__</select>
       </div>
-      <div class="ctl">
-        <label class="ctl-label" for="input-tokens-in">tokens in</label>
-        <input type="number" id="input-tokens-in" min="1" step="1000" value="1000000" class="mono">
-      </div>
-      <div class="ctl">
-        <label class="ctl-label" for="input-tokens-out">tokens out</label>
-        <div class="ctl-row">
+      <div class="ctl scenario">
+        <span class="ctl-label" id="scenario-label">token scenario</span>
+        <div class="scenario-group" role="group" aria-labelledby="scenario-label">
+          <label class="scenario-tag" for="input-tokens-in">in</label>
+          <input type="number" id="input-tokens-in" min="1" step="1000" value="1000000" class="mono">
+          <label class="scenario-tag" for="input-tokens-out">out</label>
           <input type="number" id="input-tokens-out" min="1" step="1000" value="250000" class="mono">
+          <span class="scenario-div" aria-hidden="true"></span>
           <button type="button" class="preset mono" data-in="1000000" data-out="250000" aria-label="set scenario to 4:1">4:1</button>
           <button type="button" class="preset mono" data-in="625000" data-out="625000" aria-label="set scenario to 1:1">1:1</button>
           <button type="button" class="preset mono" data-in="250000" data-out="1000000" aria-label="set scenario to 1:4">1:4</button>
         </div>
       </div>
     </div>
-    <div class="controls-row">
-      <div class="ctl">
-        <label class="ctl-label" for="slider-s">cache hit-rate S(x), presentation layer only</label>
-        <div class="ctl-row">
-          <input type="range" id="slider-s" min="0" max="100" value="85" step="1" aria-describedby="slider-val slider-note">
-          <b id="slider-val" class="mono">85%</b>
-        </div>
-      </div>
-      <div class="ctl">
-        <span class="ctl-label">presets</span>
-        <div class="ctl-row">
+    <div class="ctl s-ctl">
+      <label class="ctl-label" for="slider-s">cache hit-rate S(x), presentation layer only</label>
+      <div class="s-group">
+        <input type="range" id="slider-s" min="0" max="100" value="85" step="1" aria-describedby="slider-val slider-note">
+        <b id="slider-val" class="mono s-val">85%</b>
+        <div class="s-presets">
           <button type="button" class="preset mono cache-preset" data-s="0">0%</button>
           <button type="button" class="preset mono cache-preset" data-s="50">50%</button>
           <button type="button" class="preset mono cache-preset active" data-s="85">85%</button>
@@ -357,7 +371,7 @@ svg { display: block; max-width: 100%; }
     </div>
     <div class="status-line" id="estado-filtro" aria-live="polite"></div>
   </div>
-  <p class="note" id="slider-note">The slider and the token scenario inputs recompute the new-plan
+  <p class="note protocol" id="slider-note">The slider and the token scenario inputs recompute the new-plan
     costs, the critical threshold and the verdict margins in live JS, from the embedded
     per-cell tokens, rates and anchor. Nothing persisted changes. The raw is immutable and
     derivatives regenerate only with versioned parameters.
@@ -859,7 +873,7 @@ function renderMargins() {
 function renderStatus() {
   var scene = compactTokens(estado.tin) + " in + " + compactTokens(estado.tout) + " out";
   $("estado-filtro").textContent = (estado.model || "all models") +
-    " - cache slider at " + estado.slider + "% - prices at " + scene;
+    " | cache slider at " + estado.slider + "% | prices at " + scene;
   Array.prototype.forEach.call(document.querySelectorAll(".hdr-tokens"), function (el) {
     el.textContent = compactTokens(estado.tin) + "+" + compactTokens(estado.tout);
   });

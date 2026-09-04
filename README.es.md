@@ -45,7 +45,7 @@ de predecir"? ¿qué incentivos tiene Ollama y a quién beneficia el cambio?
 
 ## Uso: la CLI `bench`
 
-El harness es un único binario (`src/ocharness/`, Python >= 3.12, httpx;
+El harness es un único binario (`src/obench/`, Python >= 3.12, httpx;
 dependencias mínimas, sin TUI ni base de datos):
 
 ```bash
@@ -91,7 +91,7 @@ inmutable) y, conforme avanza el trabajo, manifiestos de corrida, `analysis/`
 
 Ambas páginas incrustan sus datos como JSON (bloques script `analysis-data` /
 `rates-data`) y llevan la capa de tokens graphite estilo shadcn incrustada en cada
-plantilla bajo `src/ocharness/web/` — sin pasos de build, nada que regenerar. El
+plantilla bajo `src/obench/web/` — sin pasos de build, nada que regenerar. El
 estilo, en cambio, se carga desde CDNs al ver las páginas: el build de navegador
 de Tailwind v4 vía jsdelivr, las fuentes Inter e IBM Plex Mono vía Google
 Fonts y los iconos Lucide vía el build UMD de unpkg fijado en 1.40.0
@@ -134,5 +134,5 @@ y la aplana con cuota cero.
 | [`CONTEXT.md`](./CONTEXT.md) | Glosario del dominio (inglés, con términos en español como referencias) |
 | `docs/research/` | Línea base de pricing, verificación del medidor, comparables de mercado |
 | `pricing/2026-08-31.json` | Tabla oficial versionada (entrada del harness) |
-| `src/ocharness/` + `tests/` | CLI `bench`: compuerta de gasto, dry-run, fake de ollama.com |
+| `src/obench/` + `tests/` | CLI `bench`: compuerta de gasto, dry-run, fake de ollama.com |
 | `runs/`, `batches/`, `analysis/`, `releases/` | Datos de trabajo del harness: JSONL crudo, derivadas, releases de dataset descargadas |

@@ -49,7 +49,7 @@ _PAD_SENTENCES = (
 
 def _rng(workload: str) -> random.Random:
     """One generator per workload: adding a workload never shifts another's bytes."""
-    return random.Random(f"ocharness-t2|{T2_SEED}|{workload}")
+    return random.Random(f"obench-t2|{T2_SEED}|{workload}")
 
 
 # ---------------------------------------------------------------------

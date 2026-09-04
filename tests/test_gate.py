@@ -7,8 +7,8 @@ import json
 import pytest
 from conftest import standard_table, write_table
 
-from ocharness.cli import main
-from ocharness.gate import GateClosed, require_dry_run
+from obench.cli import main
+from obench.gate import GateClosed, require_dry_run
 
 
 def _pricing(tmp_path, version: str = "2026-08-31") -> str:
@@ -107,7 +107,7 @@ def test_one_dry_run_enables_one_run(tmp_path, fake_cli):
 
 
 def test_mark_is_atomic_and_versioned(tmp_path):
-    from ocharness.gate import mark_dry_run
+    from obench.gate import mark_dry_run
 
     mark_dry_run(tmp_path, "T1", {"table_version": "2026-08-31", "rows": [{"a": 1}]})
     marca = json.loads((tmp_path / "runs" / "gate-T1.json").read_text(encoding="utf-8"))

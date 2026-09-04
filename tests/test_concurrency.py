@@ -14,7 +14,7 @@ import pathlib
 
 from test_run import read_jsonl  # the one-JSONL-file assertion helper
 
-from ocharness.concurrency import PROBE_K_FROM, WEEKS_PER_MONTH
+from obench.concurrency import PROBE_K_FROM, WEEKS_PER_MONTH
 
 MODEL = "glm-5.3-flash"
 
@@ -315,7 +315,7 @@ def test_probe_spend_is_flushed_before_the_first_cell_bracket(tmp_path, fake_cli
 
 
 def test_raw_lines_honor_the_schemas_and_leak_no_key(tmp_path, fake_cli):
-    from ocharness.schema import (
+    from obench.schema import (
         validate_batch_line,
         validate_probe_line,
         validate_request_line,
@@ -558,7 +558,7 @@ def test_the_k_cells_run_under_a_proven_lane(tmp_path, fake_cli):
         if l.strip()
     ]
     assert len(canarios) == 1 and canarios[0]["alarm"] is False
-    from ocharness import lane
+    from obench import lane
 
     assert canarios[0]["model"] == lane.CANARY_MODEL  # the fixed reference model
     # The cells' requests are salted; the probe's volleys are exempt.

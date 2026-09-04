@@ -20,11 +20,11 @@ import re
 from conftest import write_table
 from test_dry_run import run_cli  # noqa: F401  (the shared CLI-seam runner, kept for parity)
 
-from ocharness.client import PROTOCOL_VERSION
-from ocharness.concurrency import usd_per_pp
-from ocharness.analyze import SESSION_R
-from ocharness import analyze as analyze_module
-from ocharness.schema import validate_batch_line, validate_request_line
+from obench.client import PROTOCOL_VERSION
+from obench.concurrency import usd_per_pp
+from obench.analyze import SESSION_R
+from obench import analyze as analyze_module
+from obench.schema import validate_batch_line, validate_request_line
 
 # The default anchor ($100/mo) bridged to USD per weekly pp (tested primitive).
 U = usd_per_pp(100.0)
@@ -34,7 +34,7 @@ def analyze_cli(tmp_path, *args) -> tuple[int, str, str]:
     salida, errores = io.StringIO(), io.StringIO()
     try:
         with contextlib.redirect_stdout(salida), contextlib.redirect_stderr(errores):
-            from ocharness.cli import main
+            from obench.cli import main
 
             codigo = main(["--base", str(tmp_path), "analyze", *args])
     except SystemExit as e:  # argparse exits 2 on usage errors

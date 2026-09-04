@@ -86,7 +86,7 @@ _REFACTORING_TASK = (
 
 def _rng(workload: str) -> random.Random:
     """One generator per workload: adding a workload never shifts another's bytes."""
-    return random.Random(f"ocharness-t3|{T3_SEED}|{workload}")
+    return random.Random(f"obench-t3|{T3_SEED}|{workload}")
 
 
 # ---------------------------------------------------------------------

@@ -16,7 +16,7 @@ import json
 import httpx
 from test_dry_run import run_cli, with_pricing
 
-from ocharness.schema import validate_batch_line, validate_request_line
+from obench.schema import validate_batch_line, validate_request_line
 
 # The fake's lag_reads = 2: a bracket's registration converges in 2 polls (the
 # count-check read, then a moving read, then a confirming one) -> 4 meter reads
@@ -455,8 +455,8 @@ def test_settled_read_failure_still_records_the_batchs_spend(tmp_path, fake_cli)
 
 def test_checker_failure_keeps_the_billed_evidence(tmp_path, fake_cli, monkeypatch):
     """Checker drift stops the run loudly but never discards billed requests."""
-    import ocharness.checkers as checkers_mod
-    from ocharness.checkers import CheckersError
+    import obench.checkers as checkers_mod
+    from obench.checkers import CheckersError
 
     prepare(tmp_path)
 
@@ -582,7 +582,7 @@ def test_every_measured_request_is_salted_and_the_evidence_persists(tmp_path, fa
     )
     assert hashlib.sha256(nonce.encode()).hexdigest() == ok["nonce_sha256"]
     # The nonce is regenerable from the manifest's lane spec + cell coordinates.
-    from ocharness import lane
+    from obench import lane
 
     manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
     lane_cfg = manifiesto["lane"]
@@ -601,7 +601,7 @@ def test_every_measured_request_is_salted_and_the_evidence_persists(tmp_path, fa
     assert len(celdas) == 24
     assert len({c["body"]["messages"][0]["content"].split("\n\n", 1)[0] for c in celdas}) == 24
     # The fixtures are untouched: the batch's fixture_hash matches the bare specs.
-    from ocharness.fixtures import build, fixture_hash
+    from obench.fixtures import build, fixture_hash
 
     assert {r["fixture_hash"] for r in requests} == {
         fixture_hash(build("T1", w, n))
@@ -671,7 +671,7 @@ def test_canary_bills_on_the_fixed_reference_model_not_the_run_model(tmp_path, f
     model's replay volley can fall below the meter's 0.001-tick resolution and
     read a false ratio of 0.0 (deepseek-v4-flash, 2026-09-02), and only on
     kimi-k3 does the 11-14% band carry evidence."""
-    from ocharness import lane
+    from obench import lane
 
     prepare(tmp_path)
     code, _out, err = run_t1(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")
@@ -766,13 +766,13 @@ def test_passive_detector_flags_a_collapsed_bracket(tmp_path, fake_cli):
     """A bracket whose #28 token budget predicts a readable weekly dpp but
     measures none carries the collapse flag: on the manifest entry and in the
     batch line's notes (the threshold itself is deferred until v3 data)."""
-    from ocharness import runner as runner_mod
+    from obench import runner as runner_mod
 
     def presupuesto_grande(registros, dpp_weekly):
         # A budget whose prediction collapses: predicted >= 3.5 ticks, none seen.
         return {"expected_pp": 5.0, "measured_pp": dpp_weekly, "collapsed": True}
 
-    import ocharness.runner as runner_mod2
+    import obench.runner as runner_mod2
 
     prepare(tmp_path)
     original = runner_mod2._passive_detector

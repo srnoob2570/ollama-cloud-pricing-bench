@@ -21,9 +21,9 @@ from test_dry_run import run_cli, with_pricing
 from test_predict import full_study, report
 from test_run import read_jsonl, run_t1
 
-from ocharness import workloads
-from ocharness.cost import new_task_cost
-from ocharness.pricing import PriceTable
+from obench import workloads
+from obench.cost import new_task_cost
+from obench.pricing import PriceTable
 
 # A clock no rounding survives: ...1234567 loses digits at 6 places (...123457)
 # and at 3 places (...123), so any persisted rounding changes the value.
@@ -86,7 +86,7 @@ def test_dry_run_budget_persists_the_exact_cost(tmp_path):
     )
     marca = json.loads((tmp_path / "runs" / "gate-T1.json").read_text(encoding="utf-8"))
     tabla = PriceTable.load(tmp_path / "pricing")
-    from ocharness.lane import nonce_tokens_estimate
+    from obench.lane import nonce_tokens_estimate
 
     for fila in marca["estimado"]["rows"]:
         carga = next(w for w in workloads.WORKLOADS_BY_LEVEL["T1"] if w.name == fila["workload"])
@@ -227,7 +227,7 @@ def test_no_rounding_on_any_persisted_path():
     Math.round presentation never matches the word-boundary pattern."""
     patron = re.compile(r"(?<![\w.])round\(")
     exentos = {"testing/fake.py", "fixtures_t3.py"}
-    raiz = pathlib.Path(__file__).resolve().parents[1] / "src" / "ocharness"
+    raiz = pathlib.Path(__file__).resolve().parents[1] / "src" / "obench"
     for ruta in sorted(raiz.rglob("*.py")):
         relativo = ruta.relative_to(raiz).as_posix()
         if relativo in exentos:
@@ -266,7 +266,7 @@ def test_the_passive_detector_flags_only_a_collapse():
     """The detector's predicate: below one tick (the tick read through the
     comparison band) against a >= 3.5-tick budget collapses; anything readable
     is recorded without a flag, and a sub-floor budget never flags."""
-    from ocharness import runner
+    from obench import runner
 
     registro = [{"done": {"prompt_eval_count": 30_000, "eval_count": 0}}]
     # Prefill body (in-share 1.0): 30K tokens x 2.6 pp/1M = 0.078 pp expected.

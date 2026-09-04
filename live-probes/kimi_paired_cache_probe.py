@@ -38,8 +38,8 @@ import sys
 import time
 
 sys.path.insert(0, "src")
-from ocharness import fixtures  # noqa: E402
-from ocharness.client import OllamaCloud  # noqa: E402
+from obench import fixtures  # noqa: E402
+from obench.client import OllamaCloud  # noqa: E402
 
 MODEL = "kimi-k3"
 SEED = 2488655082790996814  # the T2 rep-1 seed for (long_context, kimi-k3)

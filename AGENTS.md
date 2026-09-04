@@ -1,4 +1,4 @@
-# ocharness — working conventions
+# Obench — working conventions
 
 ## Where the rules live
 - `CONTEXT.md` is the glossary: terms of record + avoid-lists (pp, anchor, bracketed

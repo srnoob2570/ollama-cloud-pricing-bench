@@ -22,7 +22,7 @@ PYTEST_UNAVAILABLE_EXIT = 90  # the sandbox itself could not start: never a mode
 
 # The handshake the parent looks for: printed only once pytest imported, so
 # its absence in the captured output proves the sandbox never graded anything.
-SANDBOX_READY = "ocharness-sandbox: ready"
+SANDBOX_READY = "obench-sandbox: ready"
 
 
 def _guard(*_args, **_kwargs):
@@ -81,7 +81,7 @@ def main() -> int:
         import pytest
     except ImportError:
         print(
-            "ocharness-sandbox: pytest is not importable by the sandbox interpreter - "
+            "obench-sandbox: pytest is not importable by the sandbox interpreter - "
             "the checkers cannot run (install the project's dev dependencies)",
             file=sys.stderr,
         )

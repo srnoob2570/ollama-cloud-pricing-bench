@@ -36,7 +36,7 @@ import pathlib
 
 from .pricing import PriceTable
 
-DATASET_KIND = "ocharness-dataset-readable"
+DATASET_KIND = "obench-dataset-readable"
 # The tarball's arcname prefix for the derived files (their release-relative
 # names are `dataset/<file>`); the local staging directory uses the same
 # basename layout so package() can stamp and add them in one pass.

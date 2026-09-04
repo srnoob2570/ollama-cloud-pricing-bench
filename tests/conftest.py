@@ -10,7 +10,7 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
-from ocharness.testing.fake import FakeOllama
+from obench.testing.fake import FakeOllama
 
 
 @pytest.fixture()
@@ -36,7 +36,7 @@ def fake_cli(fake, monkeypatch):
     script their horizons and report flags explicitly.
     """
     monkeypatch.setenv("OLLAMA_API_KEY", "test-key")
-    from ocharness import client
+    from obench import client
 
     monkeypatch.setattr(client, "default_transport", lambda: fake.async_transport())
     fake.catalog = sorted(standard_table())

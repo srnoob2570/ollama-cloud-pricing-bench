@@ -12,7 +12,7 @@ import json
 
 from test_dry_run import run_cli, with_pricing
 
-from ocharness.fixtures import CALIBRATION_PROMPT, QA_SHORT_ANSWERS, THROUGHPUT_PROMPT, seed
+from obench.fixtures import CALIBRATION_PROMPT, QA_SHORT_ANSWERS, THROUGHPUT_PROMPT, seed
 
 PRIMERA_PREGUNTA = "What is the capital of France?"
 

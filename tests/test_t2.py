@@ -16,10 +16,10 @@ import pytest
 
 from test_dry_run import run_cli, with_pricing
 
-from ocharness import fixtures, fixtures_t2
-from ocharness.fixtures import build, fixture_hash
-from ocharness.schema import validate_batch_line, validate_request_line
-from ocharness.workloads import T2 as T2_WORKLOADS
+from obench import fixtures, fixtures_t2
+from obench.fixtures import build, fixture_hash
+from obench.schema import validate_batch_line, validate_request_line
+from obench.workloads import T2 as T2_WORKLOADS
 
 T2_NAMES = tuple(w.name for w in T2_WORKLOADS)
 
@@ -317,7 +317,7 @@ def test_pooled_requests_carry_their_own_workload_evidence(tmp_path, fake_cli):
     fake_cli.tool_calls_for = declared_calls
     prepare(tmp_path)
     assert run_t2(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")[0] == 0
-    from ocharness import lane
+    from obench import lane
 
     batches = read_batches(tmp_path)
     agrupados = [b for b in batches if b["workload"] is None]
@@ -516,7 +516,7 @@ def test_pooled_batch_lines_validate_their_pool_shape():
     """The dataset contract (ticket #39): pooled lines carry workload null +
     pool {workloads, reps}; a bracket without a workload must name its pool;
     the counts are positive ints."""
-    from ocharness.schema import SchemaError, validate_batch_line
+    from obench.schema import SchemaError, validate_batch_line
 
     def lote(**cambios):
         base = {

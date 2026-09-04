@@ -44,7 +44,7 @@ The goal is to answer with data, not to compare nominal prices:
 
 ## Usage: the `bench` CLI
 
-The harness is one binary (`src/ocharness/`, Python >= 3.12, httpx; minimal
+The harness is one binary (`src/obench/`, Python >= 3.12, httpx; minimal
 deps, no TUI, no database):
 
 ```bash
@@ -88,7 +88,7 @@ work happens, run manifests, `analysis/` (derivatives, dashboard + calculator),
 
 Both pages embed their data inline as JSON (`analysis-data` / `rates-data` script
 blocks) and ship the shadcn-style graphite token layer inline in each template under
-`src/ocharness/web/` — no build step, nothing to regenerate. Styling instead loads
+`src/obench/web/` — no build step, nothing to regenerate. Styling instead loads
 from CDNs at view time: Tailwind's v4 browser build via jsdelivr, the Inter and
 IBM Plex Mono fonts via Google Fonts, and the Lucide icons via the unpkg UMD build
 pinned at 1.40.0 (`data-lucide` + `lucide.createIcons()`). Viewing the published pages
@@ -135,7 +135,7 @@ quota.
 | `docs/research/comparables-open-weights.md` | Per-family open-weights price comparables |
 | `docs/research/logs/` | Raw logs of the meter verification |
 | `pricing/2026-08-31.json` | Versioned official price table (the harness's input) |
-| `src/ocharness/` + `tests/` | The `bench` CLI: spending gate, dry-run, fake ollama.com seam |
+| `src/obench/` + `tests/` | The `bench` CLI: spending gate, dry-run, fake ollama.com seam |
 | `runs/`, `batches/`, `analysis/`, `releases/` | The harness's working data: raw JSONL, derivatives, fetched dataset releases |
 
 ## Sibling repos in this workspace

@@ -25,9 +25,9 @@ import pathlib
 from conftest import standard_table, write_table
 from test_dry_run import json_doc, run_cli
 
-from ocharness import predict, workloads
-from ocharness.client import PROTOCOL_VERSION
-from ocharness.schema import validate_batch_line, validate_estimate_line, validate_request_line
+from obench import predict, workloads
+from obench.client import PROTOCOL_VERSION
+from obench.schema import validate_batch_line, validate_estimate_line, validate_request_line
 
 PRICING = "pricing"  # relative to --base: the tests write the table there
 

@@ -21,8 +21,8 @@ import pytest
 from conftest import write_table
 from test_dry_run import run_cli
 
-from ocharness.client import PROTOCOL_VERSION
-from ocharness.schema import validate_batch_line, validate_request_line
+from obench.client import PROTOCOL_VERSION
+from obench.schema import validate_batch_line, validate_request_line
 
 REPO = "acme/datasets"
 
@@ -39,7 +39,7 @@ FAKE_GH = """\
 #!/usr/bin/env python3
 import json, os, pathlib, shutil, sys
 
-state = pathlib.Path(os.environ["OCHARNESS_FAKE_GH_STATE"])
+state = pathlib.Path(os.environ["OBENCH_FAKE_GH_STATE"])
 argv = sys.argv[1:]
 with (state / "calls.jsonl").open("a", encoding="utf-8") as f:
     print(json.dumps(argv), file=f)
@@ -113,7 +113,7 @@ def fake_gh(tmp_path, monkeypatch) -> pathlib.Path:
     gh = carpeta_bin / "gh"
     gh.write_text(FAKE_GH, encoding="utf-8")
     gh.chmod(0o755)
-    monkeypatch.setenv("OCHARNESS_FAKE_GH_STATE", str(estado))
+    monkeypatch.setenv("OBENCH_FAKE_GH_STATE", str(estado))
     monkeypatch.setenv("PATH", str(carpeta_bin) + os.pathsep + os.environ["PATH"])
     return estado
 
@@ -293,7 +293,7 @@ def test_release_publishes_a_run_end_to_end(tmp_path, fake_cli, fake_gh):
     )
     # The metadata stamps the raw<->code<->table pairing...
     meta = json.loads((gh_assets(fake_gh, tag) / "metadata.json").read_text(encoding="utf-8"))
-    assert meta["kind"] == "ocharness-dataset"
+    assert meta["kind"] == "obench-dataset"
     assert meta["run_id"] == run_id and meta["level"] == "T1"
     assert meta["table_version"] == "2026-08-31"
     assert meta["protocol_version"] == PROTOCOL_VERSION
@@ -479,7 +479,7 @@ def test_release_carries_the_code_commit(tmp_path, fake_cli, fake_gh):
     commit would fail the release with an opaque 422)."""
     from test_run import prepare
 
-    from ocharness import releases
+    from obench import releases
 
     env = {
         **os.environ,
@@ -1141,7 +1141,7 @@ def test_refetch_preserves_the_analysis_bundles(tmp_path, fake_cli, fake_gh):
     # the raw with an rmtree + re-extract: the stamped set survives it
     # byte-for-byte (a later successful analyze legitimately regenerates the
     # bundle after the fetch - derivatives recompute, the fetch never deletes)
-    from ocharness import releases
+    from obench import releases
 
     releases.fetch(tmp_path, tag=tag, repo=REPO, table_version="2026-08-31")
     assert sellada.exists() and sellada.read_bytes() == antes
@@ -1191,7 +1191,7 @@ def test_dataset_command_regenerates_from_a_published_release(tmp_path, fake_cli
         "requests.csv",
     ]
     plano = json.loads((destino / "dataset.json").read_text(encoding="utf-8"))
-    assert plano["kind"] == "ocharness-dataset-readable"
+    assert plano["kind"] == "obench-dataset-readable"
     assert plano["run_id"] == run_id and plano["table_version"] == "2026-08-31"
     assert len(plano["tables"]["requests"]) == 19 * 24
     # generated_from pins the sources the flattening read (the sha256 map's shape)
@@ -1281,7 +1281,7 @@ def test_fetch_still_accepts_a_published_legacy_release(tmp_path, fake_cli, fake
     (activos / "metadata.json").rename(activos / f"metadata-{run_id}.json")
     (activos / "notes.md").rename(activos / f"notes-{run_id}.md")
 
-    from ocharness import releases
+    from obench import releases
 
     arbol, meta = releases.fetch(tmp_path, tag=tag, repo=REPO)
     assert meta["run_id"] == run_id

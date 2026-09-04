@@ -18,8 +18,8 @@ import pathlib
 from test_dry_run import run_cli, with_pricing
 from test_run import read_jsonl
 
-from ocharness.calibration import resolve_s
-from ocharness.schema import validate_batch_line, validate_request_line
+from obench.calibration import resolve_s
+from obench.schema import validate_batch_line, validate_request_line
 
 MODEL = "glm-5.3-flash"
 # A tiny ladder the fake's horizons can split: the gaps between the spaced
@@ -106,8 +106,8 @@ def fresh_mark(tmp_path) -> None:
 def test_persistence_survives_a_replay_without_token_evidence():
     """A failed spaced replay (no done: no token evidence) between misses must
     not crash the persistence bucket with an empty max() over hit indices."""
-    from ocharness import calibration
-    from ocharness.pricing import PriceTable
+    from obench import calibration
+    from obench.pricing import PriceTable
 
     tabla = PriceTable.load(pathlib.Path(__file__).resolve().parents[1] / "pricing")
     lineas = {
@@ -173,8 +173,8 @@ def test_persistence_survives_a_replay_without_token_evidence():
 def test_zero_token_reports_are_broken_telemetry_never_perfect_hits():
     """A warm replay reporting prompt_eval_count=0 is a broken report: it must
     contribute no sample (not a 1.0 hit rate) and no hit evidence."""
-    from ocharness import calibration
-    from ocharness.pricing import PriceTable
+    from obench import calibration
+    from obench.pricing import PriceTable
 
     tabla = PriceTable.load(pathlib.Path(__file__).resolve().parents[1] / "pricing")
     lineas = {
@@ -227,7 +227,7 @@ def test_zero_token_reports_are_broken_telemetry_never_perfect_hits():
 
 def test_calibration_prefix_is_shared_with_long_context():
     """The replay's ~20K prefix is the long_context register's own opening span."""
-    from ocharness import fixtures
+    from obench import fixtures
 
     replay = fixtures.build("T2", "cache_cold", 1)[0].prompt
     larga = fixtures.build("T2", "long_context", 1)[0].prompt

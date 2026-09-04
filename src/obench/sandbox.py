@@ -38,7 +38,7 @@ import subprocess
 import sys
 import time
 
-import ocharness
+import obench
 
 from .sandbox_runner import SANDBOX_READY
 
@@ -89,10 +89,10 @@ def run_pytest(task_dir: pathlib.Path) -> dict:
     destino = pathlib.Path(task_dir)
     # The config file names its task: concurrent in-loop run_tests actions of
     # one batch (a k>1 cell) must never share one ini path.
-    config = destino.parent / f".ocharness-pytest-{destino.name}.ini"
+    config = destino.parent / f".obench-pytest-{destino.name}.ini"
     config.write_text("[pytest]\n", encoding="utf-8")
     env = _subprocess_env(destino)
-    argv = [sys.executable, "-m", "ocharness.sandbox_runner", "-c", str(config)]
+    argv = [sys.executable, "-m", "obench.sandbox_runner", "-c", str(config)]
     limite = SANDBOX_TIMEOUT_S
     t0 = time.monotonic()
     proc = subprocess.Popen(
@@ -162,9 +162,9 @@ def _subprocess_env(task_dir: pathlib.Path) -> dict:
         "HOME": str(task_dir),
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONHASHSEED": "0",
-        # `-m ocharness.sandbox_runner` needs the package importable (src layout
-        # or site-packages: the directory that CONTAINS `ocharness`).
-        "PYTHONPATH": str(pathlib.Path(ocharness.__file__).resolve().parents[1]),
+        # `-m obench.sandbox_runner` needs the package importable (src layout
+        # or site-packages: the directory that CONTAINS `obench`).
+        "PYTHONPATH": str(pathlib.Path(obench.__file__).resolve().parents[1]),
     }
     if os.environ.get("TMPDIR"):
         env["TMPDIR"] = os.environ["TMPDIR"]

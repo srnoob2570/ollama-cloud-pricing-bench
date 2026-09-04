@@ -15,10 +15,10 @@ import time
 
 from test_dry_run import run_cli, with_pricing
 
-from ocharness import fixtures_t3
-from ocharness import sandbox as sandbox_mod
-from ocharness.fixtures import build, fixture_hash
-from ocharness.schema import validate_batch_line, validate_request_line
+from obench import fixtures_t3
+from obench import sandbox as sandbox_mod
+from obench.fixtures import build, fixture_hash
+from obench.schema import validate_batch_line, validate_request_line
 
 T3_NAMES = tuple(fixtures_t3.WORKLOADS)
 
@@ -332,7 +332,7 @@ def test_grading_is_hermetic_to_config_above_the_base(tmp_path, fake_cli):
 
 
 def test_seeds_stay_inside_the_api_decodable_range():
-    from ocharness.fixtures import seed
+    from obench.fixtures import seed
 
     semillas = {
         seed(w, m, rep, i)
@@ -359,7 +359,7 @@ def test_a_sandbox_that_never_reaches_pytest_aborts_the_batch(tmp_path, fake_cli
             "sandbox_ok": False,
             "duration_s": 0.0,
             "output_sha256": "0" * 64,
-            "tail": "No module named ocharness",
+            "tail": "No module named obench",
         }
 
     monkeypatch.setattr(sandbox_mod, "run_checker", _sin_sandbox)
@@ -450,7 +450,7 @@ HANG_TEST = "import time\n\n\ndef test_hang():\n    while True:\n        time.sl
 def test_parse_action_extracts_a_json_object_with_trailing_prose():
     """The docstring's contract: first `{` to last `}` — prose after the object
     must not invalidate an otherwise parsable action."""
-    from ocharness.agent import parse_action
+    from obench.agent import parse_action
 
     accion = parse_action('{"action": "finish", "summary": "done"} - tests pass now.')
     assert accion == {"action": "finish", "summary": "done"}
@@ -500,9 +500,9 @@ def test_one_crashed_task_never_discards_its_siblings(tmp_path, monkeypatch):
     lands as its own degenerate record; the gather never discards the batch."""
     import asyncio
 
-    from ocharness import agent
-    from ocharness.fixtures import RequestSpec
-    from ocharness.runner import BatchSpec
+    from obench import agent
+    from obench.fixtures import RequestSpec
+    from obench.runner import BatchSpec
 
     async def _crash(*_a, **_k):
         raise OSError("disk full")

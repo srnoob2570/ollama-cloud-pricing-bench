@@ -1,12 +1,12 @@
 [project]
-name = "ocharness"
+name = "obench"
 version = "0.1.0"
 description = "Effective-cost benchmark harness for Ollama Cloud (methodology v1)"
 requires-python = ">=3.12"
 dependencies = ["httpx>=0.27", "xlsxwriter>=3.1"]
 
 [project.scripts]
-bench = "ocharness.cli:main"
+bench = "obench.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]
@@ -16,7 +16,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ocharness"]
+packages = ["src/obench"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

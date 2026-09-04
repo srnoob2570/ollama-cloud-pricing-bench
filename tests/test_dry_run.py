@@ -8,7 +8,7 @@ import json
 
 from conftest import standard_table, write_table
 
-from ocharness.cli import main
+from obench.cli import main
 
 
 def run_cli(tmp_path, *args) -> tuple[int, str, str]:
@@ -186,9 +186,9 @@ def test_t3_budget_prices_the_agent_loops_worst_case(tmp_path, fake, capsys):
     consultations, each re-sending the task plus the transcript grown so far,
     each with its nonce — the gate approves the worst case, never a fraction
     of it ('a run may never bill more than the dry-run approved')."""
-    from ocharness import lane
-    from ocharness.fixtures_t3 import MAX_STEPS
-    from ocharness.workloads import SLATE_T3
+    from obench import lane
+    from obench.fixtures_t3 import MAX_STEPS
+    from obench.workloads import SLATE_T3
 
     pricing = with_pricing(tmp_path)
     doc = json_doc(tmp_path, "dry-run", "--level", "T3", "--reps", "1", "--pricing-dir", pricing)

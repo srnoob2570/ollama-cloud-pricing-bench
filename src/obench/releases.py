@@ -50,7 +50,7 @@ import time
 from . import dataset_export
 from .pricing import PriceTable, TableError
 
-DATASET_KIND = "ocharness-dataset"
+DATASET_KIND = "obench-dataset"
 RELEASES_DIR = "releases"
 TAG_PREFIX = "run-"
 GH_TIMEOUT_S = 600.0  # asset uploads can be slow
@@ -355,7 +355,7 @@ def _notes_text(meta: dict) -> str:
         f"# bench dataset {meta['run_id']}\n\n"
         f"- level: {meta.get('level')} - table_version: {meta['table_version']} - "
         f"protocol_version: {meta['protocol_version']}\n"
-        f"- produced by ocharness at {commit}{sucio}\n"
+        f"- produced by obench at {commit}{sucio}\n"
         f"- {meta['counts']['request_lines']} request lines, "
         f"{meta['counts']['batch_lines']} batch lines{congelado}\n\n"
         "The tarball carries a readable copy of the raw evidence: "
@@ -518,7 +518,7 @@ def load_metadata(raiz) -> dict:
     """The fetched dataset's stamp, validated (kind + the pairing's keys)."""
     ruta = pathlib.Path(raiz) / "metadata.json"
     if not ruta.exists():
-        raise ReleaseError(f"no metadata.json under {ruta.parent} - not an ocharness dataset")
+        raise ReleaseError(f"no metadata.json under {ruta.parent} - not an obench dataset")
     try:
         texto = ruta.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
@@ -528,7 +528,7 @@ def load_metadata(raiz) -> dict:
     except json.JSONDecodeError as e:
         raise ReleaseError(f"metadata.json is not valid JSON: {e}") from None
     if not isinstance(meta, dict) or meta.get("kind") != DATASET_KIND:
-        raise ReleaseError("metadata.json is not an ocharness dataset stamp (kind mismatch)")
+        raise ReleaseError("metadata.json is not an obench dataset stamp (kind mismatch)")
     faltantes = [
         k for k in ("run_id", "table_version", "protocol_version", "files") if k not in meta
     ]

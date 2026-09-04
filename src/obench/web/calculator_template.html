@@ -487,12 +487,14 @@
                 box-shadow: var(--panel-shadow);
             }
 
-            /* controls: one wrapping grid; the model picker takes the wide cell */
+            /* controls: one packed row — the ratio and cache groups size to their
+   content, the model picker absorbs the remaining width; narrow screens wrap
+   each group onto its own line at content width instead of stretching cells */
             .controls {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                display: flex;
+                flex-wrap: wrap;
                 gap: 20px 24px;
-                align-items: start;
+                align-items: flex-start;
             }
             .ctl {
                 display: flex;
@@ -505,7 +507,7 @@
                 align-items: center;
             }
             .ctl-model {
-                min-width: 260px;
+                flex: 1 1 260px;
             }
             /* one label grammar: the count sits beside its label, never floated across */
             .ctl-head {
@@ -1729,6 +1731,28 @@
                 pickerFocusIndex = -1;
             }
 
+            // in-place selection marks: a toggle must never rebuild the list, because
+            // resetting the dropdown's innerHTML scrolls it back to the top and the
+            // user loses the item they were toggling mid-list
+            function refreshPickerMarks() {
+                Array.prototype.forEach.call(
+                    document.querySelectorAll(".model-picker-item"),
+                    function (item) {
+                        var selected =
+                            estado.models.indexOf(
+                                item.getAttribute("data-value"),
+                            ) !== -1;
+                        item.setAttribute("aria-selected", selected);
+                        item.querySelector(
+                            ".model-picker-check",
+                        ).innerHTML = selected
+                            ? '<i data-lucide="check" aria-hidden="true"></i>'
+                            : "";
+                    },
+                );
+                refrescoIconos();
+            }
+
             function getVisiblePickerItems() {
                 return Array.prototype.filter.call(
                     document.querySelectorAll(".model-picker-item"),
@@ -1817,7 +1841,7 @@
                         return ALL_MODELS.indexOf(a) - ALL_MODELS.indexOf(b);
                     });
                 }
-                buildModelPicker();
+                refreshPickerMarks();
                 updateModelChips();
                 renderAll();
             }
@@ -1853,16 +1877,11 @@
                 e.stopPropagation();
                 var item = e.target.closest(".model-picker-item");
                 if (!item) return;
-                var val = item.getAttribute("data-value");
-                toggleModel(val);
-                var selected = estado.models.indexOf(val) !== -1;
-                item.setAttribute("aria-selected", selected);
-                item.querySelector(".model-picker-check").innerHTML = selected
-                    ? '<i data-lucide="check" aria-hidden="true"></i>'
-                    : "";
-                refrescoIconos();
-                // keep the dropdown open so the user can toggle more models
-                if (pickerOpen) $("model-search").focus();
+                toggleModel(item.getAttribute("data-value"));
+                // keep the dropdown open so the user can toggle more models; the refocus
+                // must not scroll: focusing the search box (top of the dropdown) would
+                // otherwise yank a mid-list toggle back to the top of the list
+                if (pickerOpen) $("model-search").focus({ preventScroll: true });
             });
 
             $("model-picker-dropdown").addEventListener(
@@ -1918,19 +1937,23 @@
             $("model-select-all").addEventListener("click", function (e) {
                 e.stopPropagation();
                 estado.models = ALL_MODELS.slice();
-                buildModelPicker();
+                refreshPickerMarks();
                 updateModelChips();
                 renderAll();
-                if (pickerOpen) $("model-search").focus();
+                // same no-scroll rule as the item toggle: an open dropdown must keep
+                // its scroll position when the focus returns to the search box
+                if (pickerOpen)
+                    $("model-search").focus({ preventScroll: true });
             });
 
             $("model-clear-all").addEventListener("click", function (e) {
                 e.stopPropagation();
                 estado.models = [];
-                buildModelPicker();
+                refreshPickerMarks();
                 updateModelChips();
                 renderAll();
-                if (pickerOpen) $("model-search").focus();
+                if (pickerOpen)
+                    $("model-search").focus({ preventScroll: true });
             });
 
             $("model-chips").addEventListener("click", function (e) {

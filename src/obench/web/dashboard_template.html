@@ -649,6 +649,15 @@
                 gap: 6px;
                 align-items: center;
             }
+            /* one label grammar: the count sits beside its label, never floated across */
+            .ctl-head {
+                justify-content: flex-start;
+                gap: 8px;
+            }
+            .ctl-count {
+                font-size: 11px;
+                color: var(--muted-foreground);
+            }
             .cache-presets {
                 flex-wrap: wrap;
             }
@@ -715,13 +724,6 @@
                 box-shadow: 0 0 0 3px
                     color-mix(in oklab, var(--ring) 30%, transparent);
             }
-            /* the select fills its column, which stays compact: it hugs its
-               content up to a 240px cap so a long model name cannot stretch
-               the control across the row */
-            #filter-model {
-                width: 100%;
-                max-width: 240px;
-            }
             #input-tokens-in,
             #input-tokens-out {
                 width: 120px;
@@ -762,6 +764,185 @@
             }
             button.cache-preset {
                 font-variant-numeric: tabular-nums;
+            }
+
+            .icon {
+                font-size: 14px;
+                display: inline-block;
+                vertical-align: -2px;
+            }
+
+            /* model picker: custom multi-select dropdown, search + check list, chips above */
+            .model-picker {
+                position: relative;
+            }
+            .model-picker-btn {
+                width: 100%;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+                font: inherit;
+                font-size: 13px;
+                color: var(--foreground);
+                background: var(--background);
+                border: 1px solid var(--input);
+                border-radius: var(--radius-md);
+                padding: 6px 10px;
+                cursor: pointer;
+                transition: border-color 0.15s ease;
+                text-align: left;
+                height: 36px;
+            }
+            .model-picker-btn:hover {
+                border-color: var(--axis);
+            }
+            .model-picker-btn:focus-visible {
+                outline: 2px solid var(--ring);
+                outline-offset: 2px;
+            }
+            .model-picker-dropdown {
+                position: absolute;
+                z-index: 4;
+                top: calc(100% + 6px);
+                left: 0;
+                right: 0;
+                background: var(--popover);
+                color: var(--popover-foreground);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-lg);
+                box-shadow:
+                    0 6px 16px rgba(2, 8, 16, 0.1),
+                    0 20px 44px -12px rgba(2, 8, 16, 0.22);
+                padding: 8px;
+                max-height: 320px;
+                overflow: auto;
+            }
+            .model-picker-search {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                padding: 4px 6px;
+                border: 1px solid var(--input);
+                border-radius: var(--radius-md);
+                margin-bottom: 6px;
+            }
+            .model-picker-search input {
+                border: 0;
+                background: transparent;
+                padding: 4px 0;
+                width: 100%;
+                font: inherit;
+                color: var(--foreground);
+                outline: none;
+            }
+            .model-picker-search .icon {
+                color: var(--muted-foreground);
+            }
+            .model-picker-actions {
+                display: flex;
+                gap: 6px;
+                margin-bottom: 6px;
+            }
+            .model-picker-actions button {
+                flex: 1;
+                justify-content: center;
+                font-size: 11px;
+                padding: 4px 8px;
+            }
+            .model-picker-list {
+                display: flex;
+                flex-direction: column;
+                gap: 1px;
+            }
+            .model-picker-item {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 5px 8px;
+                border-radius: var(--radius-sm);
+                cursor: pointer;
+                font-size: 12.5px;
+                color: var(--foreground);
+                transition: background 0.12s ease;
+            }
+            .model-picker-item:hover {
+                background: var(--accent);
+                color: var(--accent-foreground);
+            }
+            .model-picker-item:focus {
+                outline: 2px solid var(--ring);
+                outline-offset: -2px;
+                background: var(--accent);
+                color: var(--accent-foreground);
+            }
+            .model-picker-item[aria-selected="true"] {
+                background: var(--primary);
+                color: var(--primary-foreground);
+                font-weight: 600;
+            }
+            .model-picker-check {
+                width: 16px;
+                height: 16px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                flex: none;
+                border: 1px solid var(--border);
+                border-radius: var(--radius-sm);
+            }
+            .model-picker-item[aria-selected="true"] .model-picker-check {
+                border-color: transparent;
+            }
+            .model-picker-check .icon {
+                font-size: 14px;
+            }
+            .model-chips {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 5px;
+                margin-top: 8px;
+            }
+            /* the chips row is an active-selection summary: silent while the default
+               (every model) is in force */
+            .model-chips:empty {
+                display: none;
+            }
+
+            /* model chips: neutral — the verdict hues belong to the dashboard's data
+               (scoped to the chips row: the verdict chips elsewhere keep their hue) */
+            .model-chips .chip {
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                font-family:
+                    "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+                font-size: 11px;
+                padding: 2px 8px;
+                border-radius: 999px;
+                font-weight: 600;
+                white-space: nowrap;
+                font-variant-numeric: tabular-nums;
+                background: var(--secondary);
+                color: var(--foreground);
+                border: 1px solid var(--border);
+            }
+            .model-chips .chip-remove {
+                appearance: none;
+                border: 0;
+                background: transparent;
+                padding: 0;
+                margin: 0 0 0 2px;
+                cursor: pointer;
+                color: var(--muted-foreground);
+                display: inline-flex;
+                align-items: center;
+                transition: color 0.15s ease;
+                line-height: 1;
+                font-size: 12px;
+            }
+            .model-chips .chip-remove:hover {
+                color: var(--foreground);
             }
 
             table {
@@ -1020,13 +1201,85 @@
                 <div class="controls">
                     <div class="controls-row">
                         <div class="ctl model-ctl">
-                            <label class="ctl-label" for="filter-model"
-                                >model</label
+                            <div class="ctl-row ctl-head">
+                                <label class="ctl-label" for="filter-model"
+                                    >model</label
+                                >
+                                <span id="model-count" class="mono ctl-count"
+                                    >all models</span
+                                >
+                            </div>
+                            <select
+                                id="filter-model"
+                                multiple
+                                style="display: none"
                             >
-                            <select id="filter-model">
-                                <option value="">all models</option>
                                 __OPCIONES__
                             </select>
+                            <div class="model-picker" id="model-picker">
+                                <button
+                                    type="button"
+                                    class="model-picker-btn"
+                                    id="model-picker-btn"
+                                    aria-haspopup="listbox"
+                                    aria-expanded="false"
+                                    aria-controls="model-picker-dropdown"
+                                >
+                                    <span
+                                        class="model-picker-text"
+                                        id="model-picker-text"
+                                        >all models</span
+                                    >
+                                    <i
+                                        data-lucide="chevron-down"
+                                        class="icon"
+                                        aria-hidden="true"
+                                    ></i>
+                                </button>
+                                <div
+                                    class="model-picker-dropdown"
+                                    id="model-picker-dropdown"
+                                    role="listbox"
+                                    aria-multiselectable="true"
+                                    style="display: none"
+                                >
+                                    <div class="model-picker-search">
+                                        <i
+                                            data-lucide="search"
+                                            class="icon"
+                                            aria-hidden="true"
+                                        ></i>
+                                        <input
+                                            type="text"
+                                            id="model-search"
+                                            placeholder="Search models…"
+                                            autocomplete="off"
+                                            aria-label="Search models"
+                                        />
+                                    </div>
+                                    <div class="model-picker-actions">
+                                        <button
+                                            type="button"
+                                            class="preset"
+                                            id="model-select-all"
+                                        >
+                                            all
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="preset"
+                                            id="model-clear-all"
+                                        >
+                                            none
+                                        </button>
+                                    </div>
+                                    <div
+                                        class="model-picker-list"
+                                        id="model-picker-list"
+                                    ></div>
+                                </div>
+                            </div>
+                            <div class="model-chips" id="model-chips"></div>
                         </div>
                         <div class="ctl scenario">
                             <span class="ctl-label" id="scenario-label"
@@ -1253,8 +1506,18 @@
             // defaults make the columns read a 4:1 agent-style scenario at 1.25M tokens
             var TOKENS_IN_DEFAULT = 1000000,
                 TOKENS_OUT_DEFAULT = 250000;
+            // every model the cells cover, deduped and sorted in the same codepoint
+            // order the Python fill of __OPCIONES__ uses, so the picker list reads in
+            // the select's own option order
+            var ALL_MODELS = Array.from(
+                new Set(
+                    DATA.cells.map(function (c) {
+                        return c.model;
+                    }),
+                ),
+            ).sort();
             var estado = {
-                model: "",
+                models: ALL_MODELS.slice(),
                 slider: SLIDER_DEFAULT,
                 tin: TOKENS_IN_DEFAULT,
                 tout: TOKENS_OUT_DEFAULT,
@@ -1294,7 +1557,7 @@
 
             function cellsFiltered() {
                 return DATA.cells.filter(function (c) {
-                    return !estado.model || c.model === estado.model;
+                    return estado.models.indexOf(c.model) !== -1;
                 });
             }
             function rateOf(model) {
@@ -1879,7 +2142,7 @@
                     compactTokens(estado.tout) +
                     " out";
                 $("estado-filtro").textContent =
-                    (estado.model || "all models") +
+                    resumenModelos() +
                     " | cache " +
                     estado.slider +
                     "% | prices at " +
@@ -1916,9 +2179,286 @@
                 );
             }
 
-            $("filter-model").addEventListener("change", function (e) {
-                estado.model = e.target.value;
+            /* model multi-select ------------------------------------------------------- */
+            var pickerOpen = false;
+            var pickerFocusIndex = -1;
+
+            // the selection summary, one wording echoed by the picker button and the
+            // status line, so the two readouts can never drift apart
+            function resumenModelos() {
+                if (estado.models.length === ALL_MODELS.length)
+                    return "all models";
+                if (estado.models.length === 0) return "no models";
+                return (
+                    estado.models.length +
+                    " model" +
+                    (estado.models.length === 1 ? "" : "s")
+                );
+            }
+
+            function buildModelPicker() {
+                var select = $("filter-model");
+                var list = $("model-picker-list");
+                var options = Array.prototype.slice.call(select.options);
+                list.innerHTML = options
+                    .map(function (opt, idx) {
+                        var selected = estado.models.indexOf(opt.value) !== -1;
+                        return (
+                            '<label class="model-picker-item" role="option" tabindex="-1" aria-selected="' +
+                            selected +
+                            '" data-value="' +
+                            esc(opt.value) +
+                            '" data-index="' +
+                            idx +
+                            '">' +
+                            '<span class="model-picker-check">' +
+                            (selected
+                                ? '<i data-lucide="check" aria-hidden="true"></i>'
+                                : "") +
+                            "</span>" +
+                            '<span class="model-picker-name">' +
+                            esc(opt.value) +
+                            "</span>" +
+                            "</label>"
+                        );
+                    })
+                    .join("");
+                refrescoIconos();
+                pickerFocusIndex = -1;
+            }
+
+            // in-place selection marks: a toggle must never rebuild the list, because
+            // resetting the dropdown's innerHTML scrolls it back to the top and the
+            // user loses the item they were toggling mid-list
+            function refreshPickerMarks() {
+                Array.prototype.forEach.call(
+                    document.querySelectorAll(".model-picker-item"),
+                    function (item) {
+                        var selected =
+                            estado.models.indexOf(
+                                item.getAttribute("data-value"),
+                            ) !== -1;
+                        item.setAttribute("aria-selected", selected);
+                        item.querySelector(
+                            ".model-picker-check",
+                        ).innerHTML = selected
+                            ? '<i data-lucide="check" aria-hidden="true"></i>'
+                            : "";
+                    },
+                );
+                refrescoIconos();
+            }
+
+            function getVisiblePickerItems() {
+                return Array.prototype.filter.call(
+                    document.querySelectorAll(".model-picker-item"),
+                    function (item) {
+                        return item.style.display !== "none";
+                    },
+                );
+            }
+
+            function focusPickerItem(index) {
+                var items = getVisiblePickerItems();
+                if (!items.length) return;
+                if (index < 0) index = 0;
+                if (index >= items.length) index = items.length - 1;
+                pickerFocusIndex = index;
+                items.forEach(function (item, i) {
+                    item.setAttribute("tabindex", i === index ? "0" : "-1");
+                });
+                items[index].focus();
+            }
+
+            function openModelPicker() {
+                pickerOpen = true;
+                $("model-picker-dropdown").style.display = "block";
+                $("model-picker-btn").setAttribute("aria-expanded", "true");
+                $("model-search").value = "";
+                buildModelPicker();
+                setTimeout(function () {
+                    $("model-search").focus();
+                }, 0);
+            }
+
+            function closeModelPicker(focusTrigger) {
+                pickerOpen = false;
+                $("model-picker-dropdown").style.display = "none";
+                $("model-picker-btn").setAttribute("aria-expanded", "false");
+                pickerFocusIndex = -1;
+                if (focusTrigger) $("model-picker-btn").focus();
+            }
+
+            function updateModelChips() {
+                var chips = $("model-chips");
+                if (estado.models.length === ALL_MODELS.length) {
+                    // the default (every model) needs no chip echo: the picker button and the
+                    // count already state it, so the summary row stays silent
+                    chips.innerHTML = "";
+                    $("model-picker-text").textContent = resumenModelos();
+                    $("model-count").textContent = "all " + ALL_MODELS.length;
+                } else if (estado.models.length === 0) {
+                    chips.innerHTML = '<span class="chip">no models</span>';
+                    $("model-picker-text").textContent = resumenModelos();
+                    $("model-count").textContent = "0";
+                } else {
+                    chips.innerHTML = estado.models
+                        .map(function (m) {
+                            return (
+                                '<span class="chip">' +
+                                esc(m) +
+                                '<button type="button" class="chip-remove" data-value="' +
+                                esc(m) +
+                                '" aria-label="Remove ' +
+                                esc(m) +
+                                '">' +
+                                '<i data-lucide="x" aria-hidden="true"></i>' +
+                                "</button></span>"
+                            );
+                        })
+                        .join("");
+                    $("model-picker-text").textContent = resumenModelos();
+                    $("model-count").textContent =
+                        estado.models.length + " of " + ALL_MODELS.length;
+                }
+                refrescoIconos();
+            }
+
+            function toggleModel(val) {
+                var idx = estado.models.indexOf(val);
+                if (idx !== -1) {
+                    estado.models.splice(idx, 1);
+                } else {
+                    estado.models.push(val);
+                    estado.models.sort(function (a, b) {
+                        return ALL_MODELS.indexOf(a) - ALL_MODELS.indexOf(b);
+                    });
+                }
+                refreshPickerMarks();
+                updateModelChips();
                 renderAll();
+            }
+
+            $("model-picker-btn").addEventListener("click", function (e) {
+                e.stopPropagation();
+                if (pickerOpen) closeModelPicker(true);
+                else openModelPicker();
+            });
+
+            $("model-picker-btn").addEventListener("keydown", function (e) {
+                if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    if (pickerOpen) closeModelPicker(false);
+                    else openModelPicker();
+                }
+            });
+
+            document.addEventListener("click", function (e) {
+                if (!e.target.closest("#model-picker")) {
+                    closeModelPicker(false);
+                }
+            });
+
+            document.addEventListener("keydown", function (e) {
+                if (e.key === "Escape" && pickerOpen) {
+                    e.preventDefault();
+                    closeModelPicker(true);
+                }
+            });
+
+            $("model-picker-list").addEventListener("click", function (e) {
+                e.stopPropagation();
+                var item = e.target.closest(".model-picker-item");
+                if (!item) return;
+                toggleModel(item.getAttribute("data-value"));
+                // keep the dropdown open so the user can toggle more models; the refocus
+                // must not scroll: focusing the search box (top of the dropdown) would
+                // otherwise yank a mid-list toggle back to the top of the list
+                if (pickerOpen) $("model-search").focus({ preventScroll: true });
+            });
+
+            $("model-picker-dropdown").addEventListener(
+                "keydown",
+                function (e) {
+                    var items = getVisiblePickerItems();
+                    if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        focusPickerItem(pickerFocusIndex + 1);
+                    } else if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        if (pickerFocusIndex <= 0) {
+                            $("model-search").focus();
+                            pickerFocusIndex = -1;
+                        } else {
+                            focusPickerItem(pickerFocusIndex - 1);
+                        }
+                    } else if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        if (pickerFocusIndex >= 0 && items[pickerFocusIndex]) {
+                            items[pickerFocusIndex].click();
+                        }
+                    }
+                },
+            );
+
+            $("model-search").addEventListener("input", function () {
+                var q = this.value.toLowerCase();
+                Array.prototype.forEach.call(
+                    document.querySelectorAll(".model-picker-item"),
+                    function (item) {
+                        var name = item
+                            .querySelector(".model-picker-name")
+                            .textContent.toLowerCase();
+                        item.style.display =
+                            name.indexOf(q) !== -1 ? "" : "none";
+                    },
+                );
+                pickerFocusIndex = -1;
+            });
+
+            $("model-search").addEventListener("keydown", function (e) {
+                if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    var items = getVisiblePickerItems();
+                    if (items.length) focusPickerItem(0);
+                } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    closeModelPicker(true);
+                }
+            });
+
+            $("model-select-all").addEventListener("click", function (e) {
+                e.stopPropagation();
+                estado.models = ALL_MODELS.slice();
+                refreshPickerMarks();
+                updateModelChips();
+                renderAll();
+                // same no-scroll rule as the item toggle: an open dropdown must keep
+                // its scroll position when the focus returns to the search box
+                if (pickerOpen)
+                    $("model-search").focus({ preventScroll: true });
+            });
+
+            $("model-clear-all").addEventListener("click", function (e) {
+                e.stopPropagation();
+                estado.models = [];
+                refreshPickerMarks();
+                updateModelChips();
+                renderAll();
+                if (pickerOpen)
+                    $("model-search").focus({ preventScroll: true });
+            });
+
+            $("model-chips").addEventListener("click", function (e) {
+                var btn = e.target.closest(".chip-remove");
+                if (!btn) return;
+                var val = btn.getAttribute("data-value");
+                var idx = estado.models.indexOf(val);
+                if (idx !== -1) {
+                    estado.models.splice(idx, 1);
+                    updateModelChips();
+                    renderAll();
+                }
             });
             // the free cache input: the same estado.slider state and recompute path the
             // slider drove, clamped to 0-100 like the calculator's control; the value
@@ -2042,6 +2582,10 @@
                 }
             });
 
+            // the picker's first paint: the button text, the count and the chips row
+            // reflect the default (every model) before the first render; the dropdown
+            // itself starts closed
+            updateModelChips();
             renderAll();
             refrescoIconos();
         </script>

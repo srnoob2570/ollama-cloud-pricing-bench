@@ -209,7 +209,7 @@ svg.lucide { width: 1em; height: 1em; flex: none; }
 /* the token scenario reads as one control: the in/out fields bound by tags,
    and the ratio presets — which rewrite BOTH fields — grouped behind a
    hairline divider so their scope is legible */
-.scenario { flex: 2 1 380px; }
+.scenario { flex: 1 1 380px; }
 .scenario-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .scenario-tag { font-size: 10px; font-weight: 600; letter-spacing: .04em;
   color: var(--muted-foreground); }
@@ -229,7 +229,9 @@ select, input[type="number"] { font: inherit; font-size: 13px; color: var(--fore
 select:hover, input[type="number"]:hover { border-color: var(--axis); }
 select:focus, input[type="number"]:focus { border-color: var(--ring); outline: none;
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 30%, transparent); }
-#filter-model { width: 200px; }
+/* the select fills its column (parity with the calculator's ~420px picker),
+   so the row reads as two balanced clusters with no dead middle zone */
+#filter-model { width: 100%; }
 #input-tokens-in, #input-tokens-out { width: 120px; }
 
 button.preset { font: inherit; font-size: 12px; color: var(--secondary-foreground);

@@ -32,17 +32,19 @@ priced by its own table snapshot and never re-measures.
    jq -r .table_version releases/$TAG/metadata-*.json
    ```
 
-4. **Re-derive the dashboard from the release** (offline, writes
-   `releases/$TAG/analysis/dashboard.html`):
+4. **Re-derive the pages from the release** (offline, writes
+   `releases/$TAG/analysis/dashboard.html` and
+   `releases/$TAG/analysis/calculator.html`):
 
    ```
    uv run bench analyze --release "$TAG" --repo srnoob2570/ollama-cloud-pricing-bench \
      --table-version "$(jq -r .table_version releases/$TAG/metadata-*.json)"
    ```
 
-5. **Sanity-check the page** before publishing (ids, sections, no stale
-   copy): open `releases/$TAG/analysis/dashboard.html` or grep for the
-   sections you expect.
+5. **Sanity-check the pages** before publishing (ids, sections, no stale
+   copy): open `releases/$TAG/analysis/dashboard.html` and
+   `releases/$TAG/analysis/calculator.html` or grep for the sections you
+   expect.
 
 6. **Push `main`** (the code the page is rendered by):
 
@@ -50,14 +52,19 @@ priced by its own table snapshot and never re-measures.
    git push origin main
    ```
 
-7. **Publish gh-pages** (the page lives at `index.html` on that branch):
+7. **Publish gh-pages** (the dashboard lives at `index.html` on that branch
+   and under its own bundle name `dashboard.html` — so the calculator's nav
+   link resolves on a plain release bundle too — with the calculator beside it
+   at `calculator.html`):
 
    ```
    git fetch origin gh-pages
    git switch gh-pages
    cp "releases/$TAG/analysis/dashboard.html" index.html
-   git add index.html
-   git commit -m "pages: dashboard re-derived from $TAG"
+   cp "releases/$TAG/analysis/dashboard.html" dashboard.html
+   cp "releases/$TAG/analysis/calculator.html" calculator.html
+   git add index.html dashboard.html calculator.html
+   git commit -m "pages: dashboard + calculator re-derived from $TAG"
    git push origin gh-pages
    git switch main
    ```
@@ -70,7 +77,7 @@ priced by its own table snapshot and never re-measures.
 
 The same steps 4 + 7 run automatically via
 `.github/workflows/pages.yml` on a published release or a manual
-`workflow_dispatch` (it fetches the release, derives the page and pushes
+`workflow_dispatch` (it fetches the release, derives the pages and pushes
 `gh-pages` with the same commit message). The manual path above is the
 fallback when the `gh` token is invalid — fix it with `gh auth login` to
 reuse the workflow trigger.

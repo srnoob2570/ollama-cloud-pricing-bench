@@ -15,6 +15,7 @@ import contextlib
 import io
 import json
 import pathlib
+import re
 
 from conftest import write_table
 from test_dry_run import run_cli  # noqa: F401  (the shared CLI-seam runner, kept for parity)
@@ -436,6 +437,18 @@ def render_dashboard_v2(tmp_path: pathlib.Path, *args) -> str:
     return (tmp_path / "analysis" / "dashboard.html").read_text(encoding="utf-8")
 
 
+def render_bundle_v2(tmp_path: pathlib.Path, *args) -> tuple[str, str]:
+    """Both shipped pages through the CLI seam: (dashboard.html, calculator.html)."""
+    pricing = with_tables(tmp_path)
+    craft_dataset(tmp_path)
+    analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31", *args)
+    carpeta = tmp_path / "analysis"
+    return (
+        (carpeta / "dashboard.html").read_text(encoding="utf-8"),
+        (carpeta / "calculator.html").read_text(encoding="utf-8"),
+    )
+
+
 def test_dashboard_v2_charts_are_theme_token_svgs_and_pngs_leave_the_bundle(tmp_path):
     """The matplotlib PNGs leave the dashboard: the charts are inline SVG drawn
     from theme tokens, and the bundle ships no pngs/ folder at all."""
@@ -526,18 +539,32 @@ def test_dashboard_v2_marks_measured_s_and_notes_the_s0_models(tmp_path):
 
 
 def test_dashboard_v2_copy_is_english(tmp_path):
-    html = render_dashboard_v2(tmp_path).lower()
-    for palabra in ("margen", "empate", "asignado", "escenario", "ganador"):
-        assert palabra not in html
+    pricing = with_tables(tmp_path)
+    craft_dataset(tmp_path)
+    analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
+    for nombre in ("dashboard.html", "calculator.html"):
+        bajo = (tmp_path / "analysis" / nombre).read_text(encoding="utf-8").lower()
+        for palabra in ("margen", "empate", "asignado", "escenario", "ganador"):
+            assert palabra not in bajo
 
 
 def test_dashboard_v2_plan_token_budget_section(tmp_path):
-    """The plan token-budget matrix: one table per plan, the preset in : out
-    splits as bare columns plus a custom split from the section's own in/out
-    fields, all models as rows — how many input/output tokens the $20 and $100
-    plans' credits buy at that split, priced live from the embedded rates
-    (credits at face value, nothing persisted)."""
-    html = render_dashboard_v2(tmp_path)
+    """The plan token-budget matrix — split onto the standalone calculator page:
+    one table per plan, the preset in : out splits as bare columns plus a
+    custom split from the section's own in/out fields, ALL models the pricing
+    table lists as rows — how many input/output tokens the $20 and $100 plans'
+    credits buy at that split, priced live from the embedded rates (credits at
+    face value, nothing persisted). The dashboard carries none of it anymore."""
+    pricing = with_tables(tmp_path)
+    craft_dataset(tmp_path)
+    analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
+    html = (tmp_path / "analysis" / "calculator.html").read_text(encoding="utf-8")
+    tablero = (tmp_path / "analysis" / "dashboard.html").read_text(encoding="utf-8")
+    # the section's home is the calculator page now; the dashboard keeps no
+    # trace of the matrix, its controls or its export code
+    assert 'id="plan-tokens"' not in tablero
+    assert 'id="plan-custom-in"' not in tablero
+    assert "exportPlanImage" not in tablero
     assert 'id="plan-tokens"' in html
     # the in : out selector stays gone: presets ride as matrix columns
     assert 'id="plan-ratio"' not in html
@@ -565,10 +592,12 @@ def test_dashboard_v2_plan_token_budget_section(tmp_path):
     assert "a measured S keeps precedence per model" in html
     # the headers say what the figures are: a two-row thead — the split name
     # over a colspan=3 group, then the ↑ in / ↓ out / total sub-headers —
-    # both in the DOM table and the canvas export
-    assert "model / in : out ratio" in html
+    # both in the DOM table and the canvas export; the corner header is two
+    # stacked headers (in : out ratio over model), one per axis
+    assert "<th>model</th>" in html
+    assert '<th class="num">in : out ratio</th>' in html
     assert "each cell: ↓ input, ↑ output, then the total" in html
-    assert 'rowspan="2"' in html and 'colspan="3"' in html
+    assert 'colspan="3"' in html
     assert "↓ in" in html and "↑ out" in html
     assert "columnas.length * 3" in html
     assert "sep-l" in html  # vertical hairlines between the ratio groups
@@ -582,6 +611,127 @@ def test_dashboard_v2_plan_token_budget_section(tmp_path):
     bajo = html.lower()
     for palabra in ("margen", "empate", "asignado", "escenario", "ganador"):
         assert palabra not in bajo
+
+
+# ---------------------------------------------------------------------------
+# the calculator page (the plan token-budget section's standalone home)
+# ---------------------------------------------------------------------------
+
+
+def _bloque_tokens(ruta: pathlib.Path) -> str:
+    """A template's theme-token block: from the tokens' comment header to the
+    first base rule — the block every page of the bundle must share verbatim."""
+    cuerpo = ruta.read_text(encoding="utf-8")
+    inicio = cuerpo.index("/* three-state theme tokens")
+    fin = cuerpo.index("* { box-sizing: border-box; }")
+    return cuerpo[inicio:fin]
+
+
+def test_calculator_is_selfcontained_and_offline(tmp_path):
+    """The calculator meets the same offline criteria as the dashboard: one
+    file, zero external resources, both data blobs embedded and parsable, its
+    model options covering every model the embedded rates price. The same
+    analysis blob rides byte-equal in both pages, the theme-token block is
+    shared verbatim, and no unresolved __TOKEN__ placeholder survives."""
+    tablero, html = render_bundle_v2(tmp_path)
+    bajo = html.lower()
+    assert "http://" not in bajo and "https://" not in bajo  # no CDN, no fetches
+    assert "<script src" not in bajo and "<link " not in bajo
+    # blob/object URLs from the local PNG export are fine: any external CSS
+    # url() would carry http(s), already forbidden by the assertions above
+    assert "url(http" not in bajo and 'url("//' not in bajo
+    assert 'id="filter-model"' in html  # the model filter
+    assert 'id="slider-s"' in html  # the S(x) slider the plan pricing follows
+    assert "data-s" in html  # the cache presets that set it
+    assert 'id="plan-custom-in"' in html and 'id="plan-custom-out"' in html
+    assert 'name="theme"' in html  # the theme radios survive on this page too
+    # the markup/CSS/JS live in the template file, not a Python string
+    plantillas = pathlib.Path(analyze_module.__file__).parent
+    plantilla = plantillas / "calculator_template.html"
+    assert plantilla.exists()
+    cuerpo = plantilla.read_text(encoding="utf-8")
+    assert "__DATOS__" in cuerpo and "__RATES__" in cuerpo and "__OPCIONES__" in cuerpo
+    # the analysis doc rides inside the file (no sibling fetch): it parses back
+    marcador = '<script id="analysis-data" type="application/json">'
+    assert marcador in html
+    datos = json.loads(html.split(marcador, 1)[1].split("</script>", 1)[0])
+    assert {c["model"] for c in datos["cells"]} == {"alpha", "beta", "gamma"}
+    # one source of truth: the same doc, byte-equal, rides in both pages
+    assert (
+        html.split(marcador, 1)[1].split("</script>", 1)[0]
+        == (tablero.split(marcador, 1)[1].split("</script>", 1)[0])
+    )
+    # the rates blob parses back, and every priced model has its <option>
+    # (the all-models spirit of the dashboard's filter-options check)
+    marcador_rates = '<script id="rates-data" type="application/json">'
+    assert marcador_rates in html
+    tarifas = json.loads(html.split(marcador_rates, 1)[1].split("</script>", 1)[0])
+    assert tarifas["per"] == 1_000_000
+    for modelo in tarifas["rates"]:
+        assert f'value="{modelo}"' in html
+    # every __TOKEN__ placeholder resolved: none survives in either page
+    for pagina in (tablero, html):
+        assert re.search(r"__[A-Z_]+__", pagina) is None
+    # the theme tokens are copied, not drifted: both templates carry the
+    # identical :root / dark-mode block
+    assert _bloque_tokens(plantillas / "dashboard_template.html") == _bloque_tokens(plantilla)
+
+
+def test_calculator_prices_every_model_the_table_lists(tmp_path):
+    """The calculator's model set is the FULL Ollama-reported pricing table —
+    every model the chosen table prices, measured or not — while the dashboard
+    keeps its cells-derived rates payload exactly as it always was."""
+    pricing = tmp_path / "pricing-extra"
+    write_table(
+        pricing,
+        "2026-08-31",
+        {
+            **TABLE_V1,
+            "delta": {"input": 0.90, "cached_input": 0.45, "output": 1.80},  # never measured
+        },
+    )
+    craft_dataset(tmp_path)
+    analyze_doc(tmp_path, "--pricing-dir", str(pricing), "--table-version", "2026-08-31")
+    carpeta = tmp_path / "analysis"
+    calc = (carpeta / "calculator.html").read_text(encoding="utf-8")
+    tablero = (carpeta / "dashboard.html").read_text(encoding="utf-8")
+    marcador = '<script id="rates-data" type="application/json">'
+    tarifas = json.loads(calc.split(marcador, 1)[1].split("</script>", 1)[0])
+    # the calculator's rows and options cover the whole table, delta included
+    assert set(tarifas["rates"]) == {"alpha", "beta", "gamma", "delta"}
+    assert 'value="delta"' in calc
+    # the dashboard's payload stays cells-derived: delta is nowhere on it
+    dash_tarifas = json.loads(tablero.split(marcador, 1)[1].split("</script>", 1)[0])
+    assert set(dash_tarifas["rates"]) == {"alpha", "beta", "gamma"}
+    assert 'value="delta"' not in tablero
+
+
+def test_navbar_links_the_two_pages_and_marks_the_current_one(tmp_path):
+    """The split ships both pages in one bundle: a top navbar with relative
+    links (dashboard.html / calculator.html — the Pages publication copies
+    dashboard.html to BOTH index.html and dashboard.html, so both bundle names
+    and both nav links resolve everywhere) on each page, the current page
+    marked with aria-current and the theme-token active state."""
+    tablero, calc = render_bundle_v2(tmp_path)
+    # dashboard: Dashboard is the current page, Calculator the link out
+    assert '<a href="dashboard.html" aria-current="page">Dashboard</a>' in tablero
+    assert '<a href="calculator.html">Calculator</a>' in tablero
+    # calculator: the roles swap
+    assert '<a href="dashboard.html">Dashboard</a>' in calc
+    assert '<a href="calculator.html" aria-current="page">Calculator</a>' in calc
+    # every navbar href resolves to a file the bundle actually ships:
+    # index.html exists only after the gh-pages rename, never inside the bundle
+    plantillas = pathlib.Path(analyze_module.__file__).parent
+    for nombre in ("dashboard_template.html", "calculator_template.html"):
+        cuerpo = (plantillas / nombre).read_text(encoding="utf-8")
+        nav = cuerpo[cuerpo.index('<nav class="topnav"') : cuerpo.index("</nav>")]
+        for href in re.findall(r'href="([^"]+)"', nav):
+            assert href in {"dashboard.html", "calculator.html"}, href
+    # the navbar sits above the page's main content on both pages
+    assert tablero.index('class="topnav"') < tablero.index("<main")
+    assert calc.index('class="topnav"') < calc.index("<main")
+    # the active state paints through the theme tokens only
+    assert 'a[aria-current="page"]' in tablero and 'a[aria-current="page"]' in calc
 
 
 # ---------------------------------------------------------------------------

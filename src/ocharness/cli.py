@@ -902,7 +902,7 @@ def _print_analyze(doc: dict, carpeta: pathlib.Path, etiqueta: str | None = None
     )
     if doc["paper_discounts"]:
         print("  unmaterialized paper discounts: " + ", ".join(doc["paper_discounts"]))
-    print(f"  bundle: {carpeta} (analysis.json, dashboard.html)")
+    print(f"  bundle: {carpeta} (analysis.json, dashboard.html, calculator.html)")
 
 
 def _analyze_release(args: argparse.Namespace) -> int:
@@ -949,7 +949,13 @@ def _analyze_release(args: argparse.Namespace) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
     try:
-        carpeta = analyze.write_bundle(stage, doc, emit=_emit, rates=analyze.rates_map(tabla, doc))
+        carpeta = analyze.write_bundle(
+            stage,
+            doc,
+            emit=_emit,
+            rates=analyze.rates_map(tabla, doc),
+            calculator_rates=analyze.rates_map_full(tabla),
+        )
     except analyze.AnalyzeError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -1007,6 +1013,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             doc,
             emit=lambda m: print(m, file=sys.stderr, flush=True),
             rates=analyze.rates_map(tabla, doc),
+            calculator_rates=analyze.rates_map_full(tabla),
         )
     except analyze.AnalyzeError as e:
         print(f"error: {e}", file=sys.stderr)

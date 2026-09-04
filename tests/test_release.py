@@ -626,6 +626,7 @@ def test_analyze_consumes_the_release_offline(tmp_path, fake_cli, fake_gh):
     assert remoto["cells"] == local["cells"]  # same raw, same table, same params
     assert (tmp_path / "releases" / tag / "analysis" / "analysis.json").exists()
     assert (tmp_path / "releases" / tag / "analysis" / "dashboard.html").exists()
+    assert (tmp_path / "releases" / tag / "analysis" / "calculator.html").exists()
     descargas = [c for c in gh_calls(fake_gh) if c[:2] == ["release", "download"]]
     assert len(descargas) == 1 and tag in descargas[0]
 
@@ -1099,6 +1100,7 @@ def test_analyze_release_custom_s_stamps_the_set(tmp_path, fake_cli, fake_gh):
     sellada = tmp_path / "releases" / tag / "analysis-s0.35"
     assert (sellada / "analysis.json").exists()
     assert (sellada / "dashboard.html").exists()
+    assert (sellada / "calculator.html").exists()
     assert not (tmp_path / "releases" / tag / "analysis").exists()
 
 

@@ -1033,13 +1033,32 @@ def rates_map(tabla, doc: dict) -> dict:
     persisted changes — analysis.json carries no rates, the raw is immutable,
     and derivatives regenerate only with versioned parameters. A cell's model
     the chosen table no longer prices takes no rate: the dashboard already
-    renders it as no data and the slider cannot recompute it either."""
+    renders it as no data and the slider cannot recompute it either. The
+    calculator page embeds the FULL table's rates instead (rates_map_full)."""
     tarifas = {}
     for modelo in sorted({c["model"] for c in doc["cells"]}):
         try:
             r = tabla.rate(modelo)
         except TableError:
             continue
+        tarifas[modelo] = {
+            "input": r.input,
+            "cached_input": r.cached_input,
+            "output": r.output,
+            "has_cache_discount": r.has_cache_discount,
+        }
+    return {"per": tabla.per, "rates": tarifas}
+
+
+def rates_map_full(tabla) -> dict:
+    """The FULL Ollama-reported pricing table as per-model rates: every model
+    the chosen table prices — measured cells or not — because the calculator's
+    matrix prices any model the table carries, never only the analysis set's.
+    Rides in the CALCULATOR page's JSON only (presentation layer): the
+    dashboard keeps its cells-derived payload, nothing persisted changes."""
+    tarifas = {}
+    for modelo in sorted(tabla.models):
+        r = tabla.rate(modelo)
         tarifas[modelo] = {
             "input": r.input,
             "cached_input": r.cached_input,
@@ -1098,15 +1117,28 @@ def _refutar_referencia(base: pathlib.Path, doc: dict) -> None:
 
 
 def write_bundle(
-    base: pathlib.Path, doc: dict, emit=print, *, rates: dict | None = None
+    base: pathlib.Path,
+    doc: dict,
+    emit=print,
+    *,
+    rates: dict | None = None,
+    calculator_rates: dict | None = None,
 ) -> pathlib.Path:
     """Writes the analysis bundle under `base/analysis/` — or, when the doc's S
     differs from the versioned default, under the stamped re-run's own folder
     (`analysis-s0.35`): the persisted s0/s1 set is never edited by a custom S
     (methodology v1.2, #46), nor shrunk by a default-S re-run that filters the
-    slate (--model/--level). Returns the folder. `rates` (from
-    `rates_map`) rides only inside the dashboard: the slider's live
-    recomputation needs them, analysis.json does not."""
+    slate (--model/--level). Returns the folder. `rates` (from `rates_map`)
+    rides only inside the dashboard: the slider's live recomputation needs
+    them, analysis.json does not. `calculator_rates` (from `rates_map_full`)
+    rides only inside the calculator page: its matrix prices every model the
+    chosen table lists, so it embeds the table's full per-model rates — a call
+    without them ships an empty calculator, so the write is refused."""
+    if calculator_rates is None:
+        raise AnalyzeError(
+            "write_bundle needs the calculator's FULL rates: an empty calculator "
+            "prices zero models - pass calculator_rates from rates_map_full(tabla)"
+        )
     destino = bundle_dirname(doc)
     if destino == "analysis":
         _refutar_referencia(base, doc)
@@ -1116,6 +1148,9 @@ def write_bundle(
         json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     (carpeta / "dashboard.html").write_text(render_dashboard(doc, rates), encoding="utf-8")
+    (carpeta / "calculator.html").write_text(
+        render_calculator(doc, calculator_rates), encoding="utf-8"
+    )
     return carpeta
 
 
@@ -1226,6 +1261,13 @@ def _plantilla_dashboard() -> str:
     return pathlib.Path(__file__).with_name("dashboard_template.html").read_text(encoding="utf-8")
 
 
+def _plantilla_calculator() -> str:
+    """The calculator template (calculator_template.html, same package): the
+    plan token-budget page's editable surface, filled the same pure .replace()
+    way the dashboard's is."""
+    return pathlib.Path(__file__).with_name("calculator_template.html").read_text(encoding="utf-8")
+
+
 def render_dashboard(doc: dict, rates: dict | None = None) -> str:
     """The dashboard: one self-contained HTML file. The analysis doc rides
     inside it as JSON (no fetches, no CDN, no sibling files), the model filter,
@@ -1256,6 +1298,41 @@ def render_dashboard(doc: dict, rates: dict | None = None) -> str:
         .replace("__SENSIBILIDAD__", _sensibilidad_html(doc))
         .replace("__CALIBRACION__", _calibracion_html(doc))
         .replace("__NOTAS__", html.escape(doc["notes"]))
+        .replace(
+            "__RATES__",
+            json.dumps(tarifas, ensure_ascii=False).replace("</", "<\\/"),
+        )
+        .replace(
+            "__DATOS__",
+            json.dumps(doc, ensure_ascii=False).replace("</", "<\\/"),
+        )
+    )
+
+
+def render_calculator(doc: dict, rates: dict | None = None) -> str:
+    """The calculator: a self-contained page carrying the plan token-budget
+    matrices that left the dashboard in the split. `rates` is the FULL
+    per-model map (from `rates_map_full`): every model the chosen table prices
+    gets a row and a filter option, measured cell or not — the dashboard keeps
+    its own cells-derived rates payload unchanged. The doc rides inside it as
+    JSON (its base_params and per-model S drive the pricing); same rules as
+    render_dashboard: no fetches, no CDN, no sibling files, every value
+    escapes through html.escape or the JS esc() helper."""
+    bp = doc["base_params"]
+    tarifas = rates if rates is not None else {"per": 1_000_000, "rates": {}}
+    opciones = "".join(
+        f'<option value="{html.escape(m)}">{html.escape(m)}</option>'
+        for m in sorted(tarifas["rates"])
+    )
+    resumen = (
+        f"table {html.escape(bp['table_version'])} | anchor ${bp['ancla']:g}/mo | "
+        f"S1 assumed {bp['s'] * 100:g}% | generated "
+        f"{time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(doc['generated_at']))} UTC"
+    )
+    return (
+        _plantilla_calculator()
+        .replace("__RESUMEN__", html.escape(resumen))
+        .replace("__OPCIONES__", opciones)
         .replace(
             "__RATES__",
             json.dumps(tarifas, ensure_ascii=False).replace("</", "<\\/"),

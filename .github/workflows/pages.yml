@@ -42,7 +42,7 @@ jobs:
       - name: Install the harness
         run: uv sync
 
-      - name: Re-derive the dashboard from the release (its own table vintage)
+      - name: Re-derive the bundle pages from the release (its own table vintage)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -59,6 +59,8 @@ jobs:
           git fetch origin gh-pages
           git switch gh-pages
           cp "releases/$TAG/analysis/dashboard.html" index.html
-          git add index.html
-          git commit -m "pages: dashboard re-derived from $TAG" || echo "no dashboard change"
+          cp "releases/$TAG/analysis/dashboard.html" dashboard.html
+          cp "releases/$TAG/analysis/calculator.html" calculator.html
+          git add index.html dashboard.html calculator.html
+          git commit -m "pages: dashboard + calculator re-derived from $TAG" || echo "no page change"
           git push origin gh-pages

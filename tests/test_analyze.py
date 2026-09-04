@@ -395,7 +395,10 @@ def test_dashboard_is_selfcontained_and_offline(tmp_path):
     html = (tmp_path / "analysis" / "dashboard.html").read_text(encoding="utf-8")
     bajo = html.lower()
     assert "http://" not in bajo and "https://" not in bajo  # no CDN, no fetches
-    assert "<script src" not in bajo and "<link " not in bajo and "url(" not in bajo
+    assert "<script src" not in bajo and "<link " not in bajo
+    # blob/object URLs from the local PNG export are fine: any external CSS
+    # url() would carry http(s), already forbidden by the assertions above
+    assert "url(http" not in bajo and 'url("//' not in bajo
     assert 'id="filter-model"' in html  # the model filter
     assert 'id="slider-s"' in html  # the cache slider (the scenario control's successor)
     assert 'id="input-tokens-in"' in html  # the token scenario: input...
@@ -481,12 +484,13 @@ def test_dashboard_v2_verdict_band_leads_and_margins_ride_everywhere(tmp_path):
 
 
 def test_dashboard_v2_slider_recomputes_from_embedded_rates(tmp_path):
-    """The amendment v1.2: a presentation-layer slider (0-100 %, default 50 %)
+    """The amendment v1.2: a presentation-layer slider (0-100 %, default 85 %)
     recomputes new-plan costs, the critical threshold and the verdict margins
     in live JS from the embedded per-cell tokens + rates + anchor. Nothing
     persisted changes: the rates ride only in the dashboard."""
     html = render_dashboard_v2(tmp_path)
-    # the slider exists, spans 0-100 and defaults to the versioned 50 %
+    # the slider exists, spans 0-100 and defaults to 85 % (measured agent
+    # traffic runs ~90 % of input as cache reads; 85 is the conservative pick)
     marcador = '<script id="rates-data" type="application/json">'
     assert marcador in html
     tarifas = json.loads(html.split(marcador, 1)[1].split("</script>", 1)[0])
@@ -496,7 +500,13 @@ def test_dashboard_v2_slider_recomputes_from_embedded_rates(tmp_path):
         assert set(t) == {"input", "cached_input", "output", "has_cache_discount"}
     assert tarifas["rates"]["beta"]["has_cache_discount"] is False  # cached=input
     deslizador = html[html.index('id="slider-s"') : html.index('id="slider-s"') + 200]
-    assert 'min="0"' in deslizador and 'max="100"' in deslizador and 'value="50"' in deslizador
+    assert 'min="0"' in deslizador and 'max="100"' in deslizador and 'value="85"' in deslizador
+    # quick cache % presets ride the slider panel: floor, versioned S1, default, real high
+    assert "cache-preset" in html and 'data-s="85"' in html
+    # they carry their own binding (which moves the slider) and are excluded
+    # from the token presets' data-in/data-out binding, which would zero the scenario
+    assert "button.cache-preset" in html
+    assert "button.preset:not(.cache-preset)" in html
     # presentation-layer only: the note says so
     assert "presentation" in html.lower()
     assert "Nothing persisted changes" in html
@@ -519,6 +529,59 @@ def test_dashboard_v2_copy_is_english(tmp_path):
     html = render_dashboard_v2(tmp_path).lower()
     for palabra in ("margen", "empate", "asignado", "escenario", "ganador"):
         assert palabra not in html
+
+
+def test_dashboard_v2_plan_token_budget_section(tmp_path):
+    """The plan token-budget matrix: one table per plan, the preset in : out
+    splits as bare columns plus a custom split from the section's own in/out
+    fields, all models as rows — how many input/output tokens the $20 and $100
+    plans' credits buy at that split, priced live from the embedded rates
+    (credits at face value, nothing persisted)."""
+    html = render_dashboard_v2(tmp_path)
+    assert 'id="plan-tokens"' in html
+    # the in : out selector stays gone: presets ride as matrix columns
+    assert 'id="plan-ratio"' not in html
+    # the credit figures at face value, in the per-plan sub-headings:
+    # Pro $20 paid -> $60 credits, Max $100 paid -> $300 credits
+    assert "$20 paid" in html and "$60 credits" in html
+    # the credits are a monthly grant: every figure is a monthly budget
+    assert "monthly" in html
+    assert "$100 paid" in html and "$300 credits" in html
+    # the matrix columns are the bare splits (no category labels — they did not
+    # help), each header composed at runtime from RATIOS
+    for texto in ("60 : 1", "10 : 1", "4 : 1"):
+        assert texto in html
+    # the category labels left the headers per decision
+    for removed in ("Agent session", "Coding (no reasoning)", "Chat / RAG"):
+        assert removed not in html
+    # the reasoning/generation columns left the matrix per decision
+    for removed in ("Reasoning medium", "Reasoning high", "Reasoning max", "Generation"):
+        assert removed not in html
+    # the custom split rides in its own in/out fields, priced live
+    assert 'id="plan-custom-in"' in html and 'id="plan-custom-out"' in html
+    assert "Custom" in html
+    # each plan table footnotes the live cache % (a JS-source literal in the static file)
+    assert "<tfoot>" in html
+    assert "a measured S keeps precedence per model" in html
+    # the headers say what the figures are: a two-row thead — the split name
+    # over a colspan=3 group, then the ↑ in / ↓ out / total sub-headers —
+    # both in the DOM table and the canvas export
+    assert "model / in : out ratio" in html
+    assert "each cell: ↓ input, ↑ output, then the total" in html
+    assert 'rowspan="2"' in html and 'colspan="3"' in html
+    assert "↓ in" in html and "↑ out" in html
+    assert "columnas.length * 3" in html
+    assert "sep-l" in html  # vertical hairlines between the ratio groups
+    # arrow cells: ↑ input | ↓ output | total as three sub-cells per split
+    assert "↑" in html and "↓" in html
+    # the per-plan PNG/clipboard export: canvas-drawn, offline, one pair per plan
+    assert "exportPlanImage" in html and "toBlob" in html
+    assert "plan-export" in html
+    assert 'data-mode="download"' in html and 'data-mode="copy"' in html
+    # light sanity only: the copy guard is fully covered by the English test above
+    bajo = html.lower()
+    for palabra in ("margen", "empate", "asignado", "escenario", "ganador"):
+        assert palabra not in bajo
 
 
 # ---------------------------------------------------------------------------

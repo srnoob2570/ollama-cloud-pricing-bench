@@ -76,6 +76,21 @@ h2 { font-size: 15px; letter-spacing: -.01em; color: var(--ink);
   background: var(--surface); margin-left: 6px; vertical-align: 1px; }
 .panel { background: var(--surface); border: 1px solid var(--ring); border-radius: 12px;
   padding: 18px 20px; margin: 0 0 16px; box-shadow: var(--panel-shadow); }
+/* one panel per plan under the section's single h2: the plan head is the
+   panel's title, so it takes ink and weight instead of the muted .sub */
+.plan-head { margin: 0 0 10px; font-size: 14px; font-weight: 600;
+  letter-spacing: -.01em; color: var(--ink); text-wrap: balance; }
+/* the plan matrices' cache footnote: the same muted scale as .note, under each table */
+tfoot td { padding-top: 8px; font-size: 11px; color: var(--muted); text-align: left; }
+/* vertical hairlines between the ratio groups: the first sub-column of each
+   split carries the left border so the groups read as separated blocks */
+.sep-l { border-left: 1px solid var(--grid); }
+/* header centering: the split names and their in/out/total sub-headers read as
+   centered captions over each group; the numeric cells stay right-aligned */
+.ctr { text-align: center; }
+/* per-plan export buttons: floated right beside the plan head, reusing the
+   preset button styling through the shared class */
+.plan-export-group { float: right; display: flex; gap: 6px; margin-left: 8px; }
 /* controls: label-above-control (11px caps, ink-2 for AA contrast, not muted),
    one radius for every control (8px), hover/focus/active states on each */
 .controls { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-end; margin: 14px 0 4px; }
@@ -202,12 +217,15 @@ svg { display: block; max-width: 100%; }
     </fieldset>
     <span id="estado-filtro" class="note"></span>
   </div>
-</div>
-
-<div class="panel">
   <label for="slider-s"><b>Cache hit-rate S(x)</b>, presentation layer only:
-    <input type="range" id="slider-s" min="0" max="100" value="50" step="1">
-    <b id="slider-val" class="mono">50%</b></label>
+    <input type="range" id="slider-s" min="0" max="100" value="85" step="1">
+    <b id="slider-val" class="mono">85%</b></label>
+  <p style="margin:6px 0 0">
+    <button type="button" class="preset mono cache-preset" data-s="0">0%</button>
+    <button type="button" class="preset mono cache-preset" data-s="50">50%</button>
+    <button type="button" class="preset mono cache-preset" data-s="85">85%</button>
+    <button type="button" class="preset mono cache-preset" data-s="95">95%</button>
+  </p>
   <p class="note" id="slider-note">The slider and the token scenario inputs recompute the new-plan
     costs, the critical threshold and the verdict margins in live JS, from the embedded
     per-cell tokens, rates and anchor. Nothing persisted changes. The raw is immutable and
@@ -217,6 +235,34 @@ svg { display: block; max-width: 100%; }
     custom value that overrides measurements belongs to a stamped re-run with --s, never to this
     dashboard.</p>
 </div>
+
+<h2>How many tokens does your plan buy?</h2>
+<div class="panel">
+  <div class="controls">
+    <div class="ctl">
+      <label class="ctl-label" for="plan-custom-in">custom in : out</label>
+      <div class="ctl-row">
+        <input type="number" id="plan-custom-in" min="0" step="any" value="1" class="mono">
+        <span class="ctl-label">:</span>
+        <input type="number" id="plan-custom-out" min="0" step="any" value="1" class="mono">
+      </div>
+    </div>
+  </div>
+  <p class="note" style="margin-top:8px">Credits are priced at face value: the plans&rsquo;
+    &times;3 credit ratio is inherent in the credits (Pro $20 paid &rarr; $60 credits, Max
+    $100 &rarr; $300 credits), so the rows need no paid-dollar division. The
+    plans&rsquo; credits are a monthly grant, so every figure below is a monthly token
+    budget. Each column is an
+    in&nbsp;:&nbsp;out token split from measured runs &mdash; real interactive agent sessions
+    (OpenCode, Claude Code logs) sit at 40:1&ndash;190:1 raw tokens (60:1 is the conservative
+    pick) &mdash; and the custom column prices whatever split you type in the fields above.
+    Real sessions also run ~90% of input as cache reads at a ~0.1x rate, cost-weighting them
+    to ~3:1&ndash;6:1: that discount is what the S(x) slider above models &mdash; a measured
+    S keeps precedence, and models without a published cached-input discount sit at
+    S(x) &equiv; S0. Each cell is the input, output and total tokens the plan&rsquo;s credits buy at
+    that split. This is a presentation-layer estimate: nothing persisted changes.</p>
+</div>
+<div id="plan-tokens"></div>
 
 <h2>Cells (model &times; workload)</h2>
 <div class="panel scroll-x">
@@ -315,11 +361,30 @@ var TICKUSD = BP.tick_usd;   // one meter tick, in USD
 // re-denominates an old doc's numbers behind its own persisted chips.
 var CREDITRATIO = isNum(BP.credit_ratio) ? BP.credit_ratio : 1.0;
 var PER = RATES.per || 1000000;
-var SLIDER_DEFAULT = Math.round((typeof BP.s === "number" ? BP.s : 0.5) * 100);
+// the presentation default: 85% reflects measured agent traffic (~90% of the
+// input rides as cache reads); a measured S still keeps precedence per model
+var SLIDER_DEFAULT = 85;
 // the token scenario: input and output are priced at their own rates; the
 // defaults make the columns read a 4:1 agent-style scenario at 1.25M tokens
 var TOKENS_IN_DEFAULT = 1000000, TOKENS_OUT_DEFAULT = 250000;
-var estado = { model: "", slider: SLIDER_DEFAULT, tin: TOKENS_IN_DEFAULT, tout: TOKENS_OUT_DEFAULT };
+// the purchasable plans: money paid and the credits it buys at face value (the
+// x3 credit ratio is inherent in the credits, so no extra division applies);
+// each plan renders as its own matrix table, the preset in : out splits below
+// as its columns, and head spells the credit figures at face value
+var PLANES = [
+  {name:'Pro', paid:20, credits:60, head:'Pro &mdash; $20 paid &rarr; $60 credits'},
+  {name:'Max', paid:100, credits:300, head:'Max &mdash; $100 paid &rarr; $300 credits'}
+];
+// the matrix columns: the preset in : out token splits, ordered input-heavy to
+// output-heavy, bare (the note carries the measured-runs provenance); the
+// reasoning/generation splits are gone per decision — the custom column
+// prices any other split
+var RATIOS = [
+  {ratio:60, text:'60 : 1'},
+  {ratio:10, text:'10 : 1'},
+  {ratio:4, text:'4 : 1'}
+];
+var estado = { model: "", slider: SLIDER_DEFAULT, tin: TOKENS_IN_DEFAULT, tout: TOKENS_OUT_DEFAULT, planCustomIn: 1, planCustomOut: 1 };
 
 function $(id) { return document.getElementById(id); }
 function esc(s) {
@@ -430,6 +495,21 @@ function compactTokens(n) {
   if (n >= 1000) return Math.round(n / 1000) + "k";
   return String(n);
 }
+function planTokens(model, credits, ratio) {
+  // how many tokens a plan's credits buy at a given in : out split: the budget
+  // prices as one weighted read at the official table, the same rules as
+  // newCostAt2 (measured S keeps precedence; no published discount pins S(x)
+  // at S0), with no measured token mix of its own to lean on
+  var r = rateOf(model);
+  if (!r || !(ratio > 0)) return null;
+  var s = effectiveS(model);
+  if (!r.has_cache_discount) s = 0;  // no published discount: S(x) is S0, the slider cannot move it
+  var wIn = ratio / (1 + ratio), wOut = 1 / (1 + ratio);
+  var perToken = (wIn * (1 - s) * r.input + wIn * s * r.cached_input + wOut * r.output) / PER;
+  if (!(perToken > 0)) return null;
+  var total = credits / perToken;
+  return { tin: total * wIn, tout: total * wOut, total: total };
+}
 
 function chip(v) {
   if (!v || v.winner === "no data") return '<span class="chip nodata">no data</span>';
@@ -531,6 +611,216 @@ function renderTable() {
       "<td>" + marginBar(v) + "</td></tr>";
   }).join("");
   $("tabla-cuerpo").innerHTML = filas;
+}
+
+function planColumns() {
+  // the column list shared by the DOM render and the PNG export (raw text, no
+  // esc — HTML emitters wrap th with esc): the three preset splits plus a
+  // trailing custom split from the fields above (an invalid pair prices as no
+  // data and the header drops to a bare "Custom")
+  var customRatio = estado.planCustomIn > 0 && estado.planCustomOut > 0
+    ? estado.planCustomIn / estado.planCustomOut : null;
+  var columnas = RATIOS.map(function (r) {
+    return { th: r.text, ratio: r.ratio };
+  });
+  columnas.push({
+    th: customRatio !== null
+      ? "Custom " + estado.planCustomIn + " : " + estado.planCustomOut
+      : "Custom",
+    ratio: customRatio
+  });
+  return columnas;
+}
+
+function renderPlanTokens() {
+  // the plan budget matrix: one panel per plan, so the two matrices read as
+  // separate blocks; the preset in : out splits as columns plus a trailing
+  // custom split, the same model filter as the cells table; the panel's title
+  // spells the credit figures at face value so the static file carries them
+  // too, and each table's tfoot footnotes the live cache % the S(x) slider
+  // drives; the head also carries the PNG/clipboard export buttons
+  var modelos = Object.keys(RATES.rates).filter(function (m) {
+    return !estado.model || m === estado.model;
+  });
+  var columnas = planColumns();
+  var tablas = PLANES.map(function (plane, indice) {
+    var filas = modelos.map(function (m) {
+      var tds = columnas.map(function (col) {
+        var t = planTokens(m, plane.credits, col.ratio);
+        return isNull(t)
+          ? '<td colspan="3" class="sep-l"><span class="chip nodata">no data</span></td>'
+          : '<td class="num mono sep-l">↓' + compactTokens(t.tin) +
+            '</td><td class="num mono">↑' + compactTokens(t.tout) +
+            '</td><td class="num mono">' + compactTokens(t.total) + '</td>';
+      }).join("");
+      return '<tr><td class="mono">' + esc(m) + "</td>" + tds + "</tr>";
+    }).join("");
+    var ths = columnas.map(function (col) {
+      return '<th colspan="3" class="sep-l ctr">' + esc(col.th) + "</th>";
+    }).join("");
+    var subths = columnas.map(function () {
+      return '<th class="sep-l ctr">↓ in</th><th class="ctr">↑ out</th><th class="ctr">total</th>';
+    }).join("");
+    return '<div class="panel scroll-x"><p class="plan-head">' + plane.head +
+      '<span class="plan-export-group">' +
+      '<button type="button" class="preset plan-export" data-plane="' + indice +
+      '" data-mode="download">PNG</button>' +
+      '<button type="button" class="preset plan-export" data-plane="' + indice +
+      '" data-mode="copy">Copy</button></span></p>' +
+      '<table><thead><tr><th rowspan="2">model / in : out ratio</th>' + ths +
+      '</tr><tr>' + subths + "</tr></thead><tbody>" + filas +
+      '</tbody><tfoot><tr><td colspan="' + (1 + columnas.length * 3) + '">cache: ' + estado.slider +
+      "% &mdash; the S(x) slider above; a measured S keeps precedence per model &middot; each cell: ↓ input, ↑ output, then the total</td></tr></tfoot></table></div>";
+  }).join("");
+  $("plan-tokens").innerHTML = tablas;
+}
+
+function exportPlanImage(planeIndex, mode, btn) {
+  // draws one plan's matrix onto an offscreen canvas using the live theme
+  // tokens and exports it as a PNG: clipboard copy when asked and supported,
+  // file download otherwise; no external library — the offline test forbids one
+  var plane = PLANES[planeIndex];
+  if (!plane) return;
+  var titulo = plane.name + " — $" + plane.paid + " paid → $" + plane.credits + " credits";
+  var pie = "cache: " + estado.slider + "% — the S(x) slider above · each cell: ↓ input, ↑ output, then the total";
+  var modelos = Object.keys(RATES.rates).filter(function (m) {
+    return !estado.model || m === estado.model;
+  });
+  var columnas = planColumns();
+  var raiz = getComputedStyle(document.documentElement);
+  function tok(name) { return raiz.getPropertyValue(name).trim(); }
+  var sub = [
+    { cab: "↓ in", valor: function (t) { return "↓" + compactTokens(t.tin); } },
+    { cab: "↑ out", valor: function (t) { return "↑" + compactTokens(t.tout); } },
+    { cab: "total", valor: function (t) { return compactTokens(t.total); } }
+  ];
+  var escala = 2, edge = 16, fila = 26, pad = 10, cabecera = 46, tituloH = 24, pieH = 20;
+  var fuente = getComputedStyle(document.body).fontFamily;
+  var medidas = document.createElement("canvas").getContext("2d");
+  medidas.font = "12px " + fuente;
+  var anchoModelo = 150;
+  var anchos = [];
+  columnas.forEach(function (col) {
+    sub.forEach(function (s) {
+      var w = medidas.measureText(s.cab).width;
+      modelos.forEach(function (m) {
+        var t = planTokens(m, plane.credits, col.ratio);
+        if (!isNull(t)) w = Math.max(w, medidas.measureText(s.valor(t)).width);
+      });
+      anchos.push(Math.ceil(w) + pad * 2);
+    });
+  });
+  modelos.forEach(function (m) {
+    anchoModelo = Math.max(anchoModelo, Math.ceil(medidas.measureText(m).width) + pad * 2);
+  });
+  var ancho = Math.ceil(Math.max(
+    anchoModelo + anchos.reduce(function (a, b) { return a + b; }, 0),
+    medidas.measureText(titulo).width + pad * 2,
+    medidas.measureText(pie).width + pad * 2)) + edge * 2;
+  var alto = edge * 2 + tituloH + cabecera + fila * modelos.length + pieH;
+  var canvas = document.createElement("canvas");
+  canvas.width = ancho * escala;
+  canvas.height = alto * escala;
+  var ctx = canvas.getContext("2d");
+  ctx.scale(escala, escala);
+  ctx.font = "12px " + fuente;
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = tok("--plane");
+  ctx.fillRect(0, 0, ancho, alto);
+  ctx.fillStyle = tok("--ink");
+  ctx.font = "600 13px " + fuente;
+  ctx.textAlign = "left";
+  ctx.fillText(titulo, edge, edge + tituloH / 2);
+  var ys = edge + tituloH, yIni = ys;
+  ctx.font = "600 12px " + fuente;
+  ctx.fillStyle = tok("--surface");
+  ctx.fillRect(edge, ys, ancho - edge * 2, cabecera);
+  ctx.fillStyle = tok("--ink");
+  ctx.textAlign = "left";
+  ctx.fillText("model / in : out ratio", edge + pad, ys + cabecera / 2);
+  var xs = edge + anchoModelo;
+  var limites = [];
+  columnas.forEach(function (col, i) {
+    var xs0 = xs;
+    limites.push(xs0);
+    var span = anchos[i * 3] + anchos[i * 3 + 1] + anchos[i * 3 + 2];
+    ctx.textAlign = "center";
+    ctx.fillText(col.th, xs0 + span / 2, ys + 14);
+    var xs1 = xs0;
+    sub.forEach(function (s, j) {
+      ctx.textAlign = "center";
+      ctx.fillText(s.cab, xs1 + anchos[i * 3 + j] / 2, ys + 34);
+      xs1 += anchos[i * 3 + j];
+    });
+    xs += span;
+  });
+  ctx.strokeStyle = tok("--grid");
+  ctx.beginPath();
+  ctx.moveTo(edge, ys + cabecera);
+  ctx.lineTo(ancho - edge, ys + cabecera);
+  ctx.stroke();
+  ctx.font = "12px " + fuente;
+  ys += cabecera;
+  modelos.forEach(function (m) {
+    ctx.textAlign = "left";
+    ctx.fillStyle = tok("--ink");
+    ctx.fillText(m, edge + pad, ys + fila / 2);
+    var xd = edge + anchoModelo;
+    columnas.forEach(function (col, i) {
+      var t = planTokens(m, plane.credits, col.ratio);
+      sub.forEach(function (s, j) {
+        ctx.textAlign = "right";
+        ctx.fillText(isNull(t) ? "no data" : s.valor(t), xd + anchos[i * 3 + j] - pad, ys + fila / 2);
+        xd += anchos[i * 3 + j];
+      });
+    });
+    ys += fila;
+    ctx.strokeStyle = tok("--grid");
+    ctx.beginPath();
+    ctx.moveTo(edge, ys);
+    ctx.lineTo(ancho - edge, ys);
+    ctx.stroke();
+  });
+  ctx.strokeStyle = tok("--grid");
+  ctx.beginPath();
+  limites.forEach(function (xl) {
+    ctx.moveTo(xl, yIni);
+    ctx.lineTo(xl, ys);
+  });
+  ctx.stroke();
+  ctx.fillStyle = tok("--muted");
+  ctx.font = "11px " + fuente;
+  ctx.textAlign = "left";
+  ctx.fillText(pie, edge, ys + pieH / 2);
+  canvas.toBlob(function (blob) {
+    if (!blob) return;
+    if (mode === "copy" && navigator.clipboard && window.ClipboardItem) {
+      navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]).then(function () {
+        aviso(btn, "copied");
+      }, function () {
+        descargarImagen(plane, blob);
+        aviso(btn, "copy failed — downloaded instead");
+      });
+    } else {
+      descargarImagen(plane, blob);
+      aviso(btn, "downloaded");
+    }
+  }, "image/png");
+}
+function descargarImagen(plane, blob) {
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "plan-" + plane.name.toLowerCase() + "-tokens.png";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+function aviso(btn, texto) {
+  // transient button feedback, reverted so the label reads normal again
+  if (!btn) return;
+  var previo = btn.textContent;
+  btn.textContent = texto;
+  setTimeout(function () { btn.textContent = previo; }, 1200);
 }
 
 function usdLabel(x) { return "$" + Number(x).toPrecision(3); }
@@ -773,6 +1063,7 @@ function renderAll() {
   renderCreditRatioNote();
   renderReco();
   renderTable();
+  renderPlanTokens();
   renderThreshold();
   renderMargins();
   renderStatus();
@@ -800,6 +1091,14 @@ slider.addEventListener("input", function () {
   renderAll();
 });
 $("slider-val").textContent = SLIDER_DEFAULT + "%";
+Array.prototype.forEach.call(document.querySelectorAll("button.cache-preset"), function (b) {
+  b.addEventListener("click", function () {
+    estado.slider = Number(b.getAttribute("data-s"));
+    slider.value = String(estado.slider);
+    $("slider-val").textContent = estado.slider + "%";
+    renderAll();
+  });
+});
 function bindTokens(id, clave, porDefecto) {
   var input = $(id);
   input.value = String(porDefecto);
@@ -812,7 +1111,25 @@ function bindTokens(id, clave, porDefecto) {
 }
 bindTokens("input-tokens-in", "tin", TOKENS_IN_DEFAULT);
 bindTokens("input-tokens-out", "tout", TOKENS_OUT_DEFAULT);
-Array.prototype.forEach.call(document.querySelectorAll("button.preset"), function (b) {
+function bindPlanCustom(id, clave) {
+  var input = $(id);
+  input.addEventListener("input", function () {
+    // empty or garbage input reads as 0: planTokens' guard then prices the
+    // custom column as no data and the header drops to a bare "Custom"
+    var n = Number(input.value);
+    estado[clave] = isFinite(n) ? n : 0;
+    renderAll();
+  });
+}
+bindPlanCustom("plan-custom-in", "planCustomIn");
+bindPlanCustom("plan-custom-out", "planCustomOut");
+// the plan-export buttons re-render on every renderAll: bind once by delegation
+$("plan-tokens").addEventListener("click", function (e) {
+  var b = e.target.closest("button.plan-export");
+  if (!b) return;
+  exportPlanImage(Number(b.getAttribute("data-plane")), b.getAttribute("data-mode"), b);
+});
+Array.prototype.forEach.call(document.querySelectorAll("button.preset:not(.cache-preset)"), function (b) {
   b.addEventListener("click", function () {
     estado.tin = Number(b.getAttribute("data-in"));
     estado.tout = Number(b.getAttribute("data-out"));

@@ -669,8 +669,8 @@ function renderPlanTokens() {
       '" data-mode="copy">Copy</button></span></p>' +
       '<table><thead><tr><th rowspan="2">model / in : out ratio</th>' + ths +
       '</tr><tr>' + subths + "</tr></thead><tbody>" + filas +
-      '</tbody><tfoot><tr><td colspan="' + (1 + columnas.length * 3) + '">cache: ' + estado.slider +
-      "% &mdash; the S(x) slider above; a measured S keeps precedence per model &middot; each cell: ↓ input, ↑ output, then the total</td></tr></tfoot></table></div>";
+      '</tbody><tfoot><tr><td colspan="' + (1 + columnas.length * 3) + '">cache hit: ' + estado.slider +
+      "% &middot; each cell: ↓ input, ↑ output, then the total</td></tr></tfoot></table></div>";
   }).join("");
   $("plan-tokens").innerHTML = tablas;
 }

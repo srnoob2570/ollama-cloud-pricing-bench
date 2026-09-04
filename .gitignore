@@ -4,10 +4,14 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
+uv.lock
 
 # Estado en-runtime del harness (las marcas de compuerta no son datasets;
 # los datasets crudos se publican como releases, ticket Harness 10)
 runs/
+releases/
+analysis/
+batches/
 
 # Credenciales — jamás en el repo
 .env*

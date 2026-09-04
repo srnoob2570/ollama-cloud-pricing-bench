@@ -5,8 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Plan token calculator — Ollama Cloud</title>
 <meta name="description" content="How many tokens the Pro and Max plans' monthly credits buy, per model, at any in : out token split — priced live on the official Ollama Cloud table.">
-<meta name="theme-color" content="#f8f7f2" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#12110e" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://srnoob2570.github.io/ollama-cloud-pricing-bench/calculator.html">
+<meta property="og:url" content="https://srnoob2570.github.io/ollama-cloud-pricing-bench/calculator.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="ocharness">
+<meta property="og:title" content="Plan token calculator — Ollama Cloud">
+<meta property="og:description" content="How many tokens the Pro and Max plans' monthly credits buy, per model, at any in : out token split — priced live on the official Ollama Cloud table.">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Plan token calculator — Ollama Cloud">
+<meta name="twitter:description" content="How many tokens the Pro and Max plans' monthly credits buy, per model, at any in : out token split — priced live on the official Ollama Cloud table.">
+<meta name="theme-color" content="#f2f4f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d1217" media="(prefers-color-scheme: dark)">
 <!-- resolve theme before first paint to prevent FOUC; transitions are
      suppressed until the page finishes initialising the radios -->
 <script>
@@ -27,53 +36,58 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/lucide@1.40.0/dist/umd/lucide.min.js"></script>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230f766e'/><path d='M6 22l6-8 5 5 4-6 5 9z' fill='%23fff'/></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23161d25'/><rect x='7' y='14' width='6' height='12' rx='2' fill='%233987e5'/><rect x='19' y='6' width='6' height='20' rx='2' fill='%23d95926'/></svg>">
 <style>
 /* three-state theme tokens: system is the default (no attribute), light and
    dark are selectable. Chart colors NEVER appear here outside these tokens. */
 :root {
   color-scheme: light;
-  --plane: #f8f7f2; --surface: #fdfdfb; --ink: #1a1916; --ink-2: #4b4943; --muted: #7c7a71;
-  --grid: #e7e5db; --axis: #c8c6b8; --ring: rgba(69,59,44,.12);
-  --hover: rgba(69,59,44,.045);
-  /* shadows tinted with the palette's warm hue, not neutral black */
-  --panel-shadow: 0 1px 2px rgba(69,59,44,.06), 0 10px 28px -12px rgba(69,59,44,.14);
+  --plane: #f2f4f7; --surface: #fbfcfd; --ink: #11161c; --ink-2: #333d47; --muted: #5f6b76;
+  --grid: #dde3e8; --axis: #b9c3cc; --ring: rgba(17,22,28,.16);
+  --hover: rgba(17,22,28,.05);
+  /* shadows tinted with the palette's cool graphite, not warm brown */
+  --panel-shadow: 0 1px 2px rgba(15,23,32,.05), 0 14px 34px -18px rgba(15,23,32,.22);
   --legacy: #2a78d6; --new: #eb6834;            /* series: legacy / new (validated) */
-  --legacy-soft: rgba(42,120,214,.14); --new-soft: rgba(235,104,52,.14);
-  --tie: #7c7a71;
-  --radius: 0.625rem;
+  --legacy-soft: rgba(42,120,214,.13); --new-soft: rgba(235,104,52,.14);
+  --tie: #5f6b76;
+  --radius: 0.75rem;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --plane: #12110e; --surface: #1c1b17; --ink: #f2f0e9; --ink-2: #c0beb2; --muted: #8d8b80;
-    --grid: #2b2a24; --axis: #3a382f; --ring: rgba(242,240,233,.13);
-    --hover: rgba(242,240,233,.05);
-    --panel-shadow: 0 1px 2px rgba(0,0,0,.5), 0 10px 28px -12px rgba(0,0,0,.55);
+    --plane: #0d1217; --surface: #151b22; --ink: #e8edf2; --ink-2: #b6c1cc; --muted: #7d8994;
+    --grid: #232c35; --axis: #39434e; --ring: rgba(232,237,242,.14);
+    --hover: rgba(232,237,242,.055);
+    --panel-shadow: 0 1px 2px rgba(0,0,0,.45), 0 16px 40px -18px rgba(0,0,0,.55);
     --legacy: #3987e5; --new: #d95926;
-    --legacy-soft: rgba(57,135,229,.18); --new-soft: rgba(217,89,38,.18);
+    --legacy-soft: rgba(57,135,229,.17); --new-soft: rgba(217,89,38,.17);
+    --tie: #7d8994;
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --plane: #12110e; --surface: #1c1b17; --ink: #f2f0e9; --ink-2: #c0beb2; --muted: #8d8b80;
-  --grid: #2b2a24; --axis: #3a382f; --ring: rgba(242,240,233,.13);
-  --hover: rgba(242,240,233,.05);
-  --panel-shadow: 0 1px 2px rgba(0,0,0,.5), 0 10px 28px -12px rgba(0,0,0,.55);
+  --plane: #0d1217; --surface: #151b22; --ink: #e8edf2; --ink-2: #b6c1cc; --muted: #7d8994;
+  --grid: #232c35; --axis: #39434e; --ring: rgba(232,237,242,.14);
+  --hover: rgba(232,237,242,.055);
+  --panel-shadow: 0 1px 2px rgba(0,0,0,.45), 0 16px 40px -18px rgba(0,0,0,.55);
   --legacy: #3987e5; --new: #d95926;
-  --legacy-soft: rgba(57,135,229,.18); --new-soft: rgba(217,89,38,.18);
+  --legacy-soft: rgba(57,135,229,.17); --new-soft: rgba(217,89,38,.17);
+  --tie: #7d8994;
 }
 * { box-sizing: border-box; }
-/* shadcn zinc shell tokens (restored inline; was the vendored sheet's tail) */
+/* shadcn zinc shell tokens (values refined to the ocharness graphite shell;
+   --muted resolves to the theme slice's chart gray, --ring is the focus hue.
+   Values ride rgb() so no raw hex lands on a background property) */
 :root{--radius-sm:calc(var(--radius) * .6);--radius-md:calc(var(--radius) * .8);--radius-lg:var(--radius)}
-:root{--radius:.625rem;--background:oklch(100% 0 0);--foreground:oklch(14.5% 0 0);--card:oklch(100% 0 0);--card-foreground:oklch(14.5% 0 0);--popover:oklch(100% 0 0);--popover-foreground:oklch(14.5% 0 0);--primary:oklch(20.5% 0 0);--primary-foreground:oklch(98.5% 0 0);--secondary:oklch(97% 0 0);--secondary-foreground:oklch(20.5% 0 0);--muted:oklch(97% 0 0);--muted-foreground:oklch(55.6% 0 0);--accent:oklch(97% 0 0);--accent-foreground:oklch(20.5% 0 0);--destructive:oklch(57.7% .245 27.325);--border:oklch(92.2% 0 0);--input:oklch(92.2% 0 0);--ring:oklch(70.8% 0 0)}[data-theme=dark]{--background:oklch(14.5% 0 0);--foreground:oklch(98.5% 0 0);--card:oklch(20.5% 0 0);--card-foreground:oklch(98.5% 0 0);--popover:oklch(20.5% 0 0);--popover-foreground:oklch(98.5% 0 0);--primary:oklch(92.2% 0 0);--primary-foreground:oklch(20.5% 0 0);--secondary:oklch(26.9% 0 0);--secondary-foreground:oklch(98.5% 0 0);--muted:oklch(26.9% 0 0);--muted-foreground:oklch(70.8% 0 0);--accent:oklch(26.9% 0 0);--accent-foreground:oklch(98.5% 0 0);--destructive:oklch(70.4% .191 22.216);--border:oklch(100% 0 0/.1);--input:oklch(100% 0 0/.15);--ring:oklch(55.6% 0 0)}@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--background:oklch(14.5% 0 0);--foreground:oklch(98.5% 0 0);--card:oklch(20.5% 0 0);--card-foreground:oklch(98.5% 0 0);--popover:oklch(20.5% 0 0);--popover-foreground:oklch(98.5% 0 0);--primary:oklch(92.2% 0 0);--primary-foreground:oklch(20.5% 0 0);--secondary:oklch(26.9% 0 0);--secondary-foreground:oklch(98.5% 0 0);--muted:oklch(26.9% 0 0);--muted-foreground:oklch(70.8% 0 0);--accent:oklch(26.9% 0 0);--accent-foreground:oklch(98.5% 0 0);--destructive:oklch(70.4% .191 22.216);--border:oklch(100% 0 0/.1);--input:oklch(100% 0 0/.15);--ring:oklch(55.6% 0 0)}}
+:root{--radius:.75rem;--background:rgb(242 244 247);--foreground:rgb(17 22 28);--card:rgb(251 252 253);--card-foreground:rgb(17 22 28);--popover:rgb(251 252 253);--popover-foreground:rgb(17 22 28);--primary:rgb(22 32 43);--primary-foreground:rgb(242 245 248);--secondary:rgb(231 235 239);--secondary-foreground:rgb(17 22 28);--muted:rgb(95 107 118);--muted-foreground:rgb(95 107 118);--accent:rgb(227 232 237);--accent-foreground:rgb(17 22 28);--destructive:rgb(179 54 43);--border:rgb(216 222 229);--input:rgb(204 212 219);--ring:rgb(74 131 201)}[data-theme=dark]{--background:rgb(13 18 23);--foreground:rgb(232 237 242);--card:rgb(21 27 34);--card-foreground:rgb(232 237 242);--popover:rgb(22 29 37);--popover-foreground:rgb(232 237 242);--primary:rgb(215 222 229);--primary-foreground:rgb(16 22 28);--secondary:rgb(29 37 46);--secondary-foreground:rgb(232 237 242);--muted:rgb(125 137 148);--muted-foreground:rgb(141 153 165);--accent:rgb(33 42 52);--accent-foreground:rgb(232 237 242);--destructive:rgb(229 100 76);--border:rgb(38 48 58);--input:rgb(46 57 68);--ring:rgb(127 169 221)}@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--background:rgb(13 18 23);--foreground:rgb(232 237 242);--card:rgb(21 27 34);--card-foreground:rgb(232 237 242);--popover:rgb(22 29 37);--popover-foreground:rgb(232 237 242);--primary:rgb(215 222 229);--primary-foreground:rgb(16 22 28);--secondary:rgb(29 37 46);--secondary-foreground:rgb(232 237 242);--muted:rgb(125 137 148);--muted-foreground:rgb(141 153 165);--accent:rgb(33 42 52);--accent-foreground:rgb(232 237 242);--destructive:rgb(229 100 76);--border:rgb(38 48 58);--input:rgb(46 57 68);--ring:rgb(127 169 221)}}
 
 
 /* page chrome: shadcn-style token names for the shell; Pages-first, the data
-   rides inline as JSON and the styling loads from the CDN head block above. */
+   rides inline as JSON and the styling loads from the CDN head block above.
+   Voice: Inter carries prose and chrome, IBM Plex Mono carries every number. */
 html { scroll-behavior: smooth; }
-body { margin: 0; padding: 0 24px 64px; background: var(--background); color: var(--foreground);
-  font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+body { margin: 0; padding: 0 24px 72px; background: var(--background); color: var(--foreground);
+  font: 14.5px/1.6 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; }
 ::selection { background: var(--new-soft); }
 @media (prefers-reduced-motion: reduce) {
@@ -84,76 +98,107 @@ html.no-theme-transition, html.no-theme-transition *,
 html.no-theme-transition *::before, html.no-theme-transition *::after {
   transition: none !important; }
 
-.wrap { max-width: 1200px; margin: 0 auto; padding-top: clamp(28px, 6vh, 56px); }
+/* the one orchestrated motion moment: the plan matrices reveal once on load */
+@media (prefers-reduced-motion: no-preference) {
+  .hero-in { animation: hero-in .55s cubic-bezier(.16, .7, .3, 1) .04s both; }
+  @keyframes hero-in {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+}
+
+.wrap { max-width: 1240px; margin: 0 auto; padding-top: clamp(28px, 5vh, 52px); }
 .skip { position: absolute; left: -9999px; }
 .skip:focus { left: 16px; top: 12px; background: var(--card); color: var(--card-foreground);
   border: 1px solid var(--border); border-radius: var(--radius-md); padding: 6px 10px; z-index: 50; }
 
 /* the two-page navbar: relative links only (the bundle ships both pages), the
-   current page marked with aria-current and styled as a subtle shadcn nav item */
-.topnav { position: sticky; top: 0; z-index: 40; max-width: 1200px; margin: 0 auto 20px;
-  padding: 10px 0; display: flex; gap: 6px; align-items: center;
+   current page marked with aria-current; brand mark left, theme toggle right */
+.topnav { position: sticky; top: 0; z-index: 40; display: flex; align-items: center;
+  flex-wrap: wrap; gap: 8px 20px; max-width: 1240px; margin: 0 auto; padding: 12px 0;
   border-bottom: 1px solid var(--border);
-  background: var(--background);
-  background: color-mix(in oklab, var(--background) 80%, transparent);
-  backdrop-filter: blur(8px); }
-.topnav a { font-size: 12.5px; color: var(--muted-foreground); text-decoration: none;
-  background: transparent; border-radius: var(--radius-md); padding: 6px 10px;
-  transition: background .15s ease, color .15s ease; font-weight: 500; }
-.topnav a:hover { background: var(--accent); color: var(--accent-foreground); }
-.topnav a[aria-current="page"] { color: var(--accent-foreground); background: var(--accent); font-weight: 600; }
+  background: color-mix(in oklab, var(--background) 82%, transparent);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.brand { display: flex; align-items: center; gap: 9px; }
+.brand-mark { width: 18px; height: 18px; flex: none; }
+.brand-name { font-weight: 700; font-size: 14.5px; letter-spacing: -.01em; }
+.brand-tag { font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11.5px; color: var(--muted-foreground); }
+.page-links { display: flex; gap: 4px; }
+.page-links a { font-size: 13px; color: var(--muted-foreground); text-decoration: none;
+  border-radius: var(--radius-md); padding: 5px 11px; font-weight: 500;
+  transition: background .15s ease, color .15s ease; }
+.page-links a:hover { background: var(--accent); color: var(--accent-foreground); }
+.page-links a[aria-current="page"] { background: var(--accent); color: var(--accent-foreground); font-weight: 600; }
+.topnav fieldset { margin-left: auto; }
+.topnav legend { position: absolute; left: -9999px; }
+@media (max-width: 480px) {
+  .topnav { position: static; gap: 6px 12px; }
+  .brand-tag { display: none; }
+}
 
-:root { --shadcn-ring: oklch(0.708 0 0); }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --shadcn-ring: oklch(0.556 0 0); } }
-:root[data-theme="dark"] { --shadcn-ring: oklch(0.556 0 0); }
-:focus-visible { outline: 2px solid var(--shadcn-ring); outline-offset: 2px; }
-
-h1 { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  font-size: clamp(27px, 4.2vw, 36px); margin: 0 0 6px; letter-spacing: -.02em;
-  font-weight: 700; line-height: 1.12; text-wrap: balance; }
-.sub { color: var(--muted-foreground); font-size: 13.5px; }
-
-.mono { font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
-  font-variant-numeric: tabular-nums; }
-
-.panel { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 18px 20px; margin: 0 0 16px;
-  box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 6px 16px -4px rgba(0,0,0,.06); }
-
-.controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; align-items: start; margin: 14px 0 4px; }
-.ctl { display: flex; flex-direction: column; gap: 6px; }
-.ctl-row { display: flex; gap: 6px; align-items: center; }
-.ctl-row.custom-ratio { display: grid; grid-template-columns: 1fr auto 1fr; gap: 6px; align-items: center; }
-.ctl-label, legend { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
-  color: var(--muted-foreground); font-weight: 600; }
-legend { padding: 0; margin-bottom: 5px; }
-
-select, input[type="number"] { font: inherit; color: var(--foreground); background: var(--background);
-  border: 1px solid var(--input); border-radius: var(--radius-md); padding: 5px 9px;
-  transition: border-color .15s ease, box-shadow .15s ease; height: 36px; }
-select:hover, input[type="number"]:hover { border-color: var(--border); }
-select:focus, input[type="number"]:focus { border-color: var(--shadcn-ring); outline: none;
-  box-shadow: 0 0 0 2px var(--shadcn-ring); }
-
-button.preset { font: inherit; font-size: 12px; color: var(--foreground); background: var(--secondary);
-  border: 1px solid var(--border); border-radius: var(--radius-md); padding: 5px 9px; cursor: pointer;
-  transition: background .15s ease, color .15s ease, border-color .15s ease, transform .05s ease;
-  display: inline-flex; align-items: center; gap: 5px; height: 32px; }
-button.preset:hover { background: var(--accent); color: var(--accent-foreground); border-color: var(--border); }
-button.preset:active { transform: translateY(1px); }
-button.preset.active { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); font-weight: 600; }
-
+/* the three-state theme toggle: the selected state reads as a primary pill */
 fieldset { font: inherit; border: 0; padding: 0; margin: 0; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-md);
-  overflow: hidden; background: var(--background); padding: 2px; gap: 2px; }
-.seg label { position: relative; padding: 5px 10px; font-size: 12.5px; color: var(--muted-foreground);
-  cursor: pointer; transition: background .15s ease, color .15s ease;
-  border-radius: var(--radius-sm); display: inline-flex; align-items: center; gap: 4px; }
+  overflow: hidden; background: var(--card); padding: 2px; gap: 2px; }
+.seg label { position: relative; display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px; font-size: 12.5px; color: var(--muted-foreground); cursor: pointer;
+  border-radius: var(--radius-sm); transition: background .15s ease, color .15s ease; }
 .seg label + label { border: 0; }
 .seg label:hover { background: var(--accent); color: var(--accent-foreground); }
 .seg input { position: absolute; opacity: 0; pointer-events: none; }
-.seg label:has(input:checked) { background: var(--accent); color: var(--accent-foreground); font-weight: 600; }
-.seg label:has(input:focus-visible) { outline: 2px solid var(--shadcn-ring); outline-offset: -2px; }
+.seg label:has(input:checked) { background: var(--primary); color: var(--primary-foreground); font-weight: 600; }
+.seg label:has(input:focus-visible) { outline: 2px solid var(--ring); outline-offset: -2px; }
+svg.lucide { width: 1em; height: 1em; flex: none; }
+
+:root { --shadcn-ring: var(--ring); }
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+.wrap h1 { font-size: clamp(28px, 4vw, 40px); margin: 0; letter-spacing: -.022em;
+  font-weight: 700; line-height: 1.14; text-wrap: balance; }
+
+/* the run's provenance as an instrument readout, not a meta decoration */
+.readout { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px; line-height: 1.75; color: var(--muted-foreground);
+  border-left: 2px solid var(--axis); padding: 3px 0 3px 14px; margin: 14px 0 0; }
+
+.mono { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums; }
+
+.panel { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 20px 22px; margin: 0 0 18px;
+  box-shadow: var(--panel-shadow); }
+
+/* controls: one wrapping grid; the model picker takes the wide cell */
+.controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 20px 24px; align-items: start; }
+.ctl { display: flex; flex-direction: column; gap: 6px; }
+.ctl-row { display: flex; gap: 6px; align-items: center; }
+.ctl-row.custom-ratio { display: grid; grid-template-columns: 1fr auto 1fr; gap: 6px; align-items: center; }
+.ctl-model { min-width: 260px; }
+.ctl-head { justify-content: space-between; }
+.ctl-count { font-size: 11px; color: var(--muted-foreground); }
+.ctl-label { font-size: 11px; font-weight: 600; letter-spacing: .02em;
+  color: var(--muted-foreground); }
+
+select, input[type="number"] { font: inherit; font-size: 13px; color: var(--foreground);
+  background: var(--background); border: 1px solid var(--input); border-radius: var(--radius-md);
+  padding: 6px 10px; height: 36px;
+  transition: border-color .15s ease, box-shadow .15s ease; }
+select:hover, input[type="number"]:hover { border-color: var(--axis); }
+select:focus, input[type="number"]:focus { border-color: var(--ring); outline: none;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 30%, transparent); }
+
+button.preset { font: inherit; font-size: 12px; color: var(--secondary-foreground);
+  background: var(--secondary); border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: 5px 10px; cursor: pointer; height: 32px;
+  transition: background .15s ease, color .15s ease, border-color .15s ease, transform .05s ease;
+  display: inline-flex; align-items: center; gap: 6px; }
+button.preset:hover { background: var(--accent); color: var(--accent-foreground); border-color: var(--border); }
+button.preset:active { transform: translateY(1px); }
+button.preset.active { background: var(--primary); color: var(--primary-foreground);
+  border-color: var(--primary); font-weight: 600; }
+button.cache-preset { font-variant-numeric: tabular-nums; }
 
 .icon { font-size: 14px; display: inline-block; vertical-align: -2px; }
 .icon-btn { font-size: 12px; }
@@ -164,12 +209,12 @@ fieldset { font: inherit; border: 0; padding: 0; margin: 0; }
   gap: 8px; font: inherit; font-size: 13px; color: var(--foreground); background: var(--background);
   border: 1px solid var(--input); border-radius: var(--radius-md); padding: 6px 10px; cursor: pointer;
   transition: border-color .15s ease; text-align: left; height: 36px; }
-.model-picker-btn:hover { border-color: var(--border); }
-.model-picker-btn:focus-visible { outline: 2px solid var(--shadcn-ring); outline-offset: 2px; }
-.model-picker-dropdown { position: absolute; z-index: 4; top: calc(100% + 4px); left: 0; right: 0;
+.model-picker-btn:hover { border-color: var(--axis); }
+.model-picker-btn:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.model-picker-dropdown { position: absolute; z-index: 4; top: calc(100% + 6px); left: 0; right: 0;
   background: var(--popover); color: var(--popover-foreground); border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: 0 4px 12px rgba(0,0,0,.08), 0 16px 32px -8px rgba(0,0,0,.12);
+  box-shadow: 0 6px 16px rgba(2,8,16,.10), 0 20px 44px -12px rgba(2,8,16,.22);
   padding: 8px; max-height: 320px; overflow: auto; }
 .model-picker-search { display: flex; align-items: center; gap: 6px; padding: 4px 6px;
   border: 1px solid var(--input); border-radius: var(--radius-md); margin-bottom: 6px; }
@@ -181,17 +226,20 @@ fieldset { font: inherit; border: 0; padding: 0; margin: 0; }
 .model-picker-item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: var(--radius-sm);
   cursor: pointer; font-size: 12.5px; color: var(--foreground); transition: background .12s ease; }
 .model-picker-item:hover { background: var(--accent); color: var(--accent-foreground); }
-.model-picker-item:focus { outline: 2px solid var(--shadcn-ring); outline-offset: -2px; background: var(--accent); color: var(--accent-foreground); }
+.model-picker-item:focus { outline: 2px solid var(--ring); outline-offset: -2px; background: var(--accent); color: var(--accent-foreground); }
 .model-picker-item[aria-selected="true"] { background: var(--primary); color: var(--primary-foreground); font-weight: 600; }
 .model-picker-check { width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; flex: none;
   border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .model-picker-item[aria-selected="true"] .model-picker-check { border-color: transparent; }
 .model-picker-check .icon { font-size: 14px; }
-.model-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; min-height: 24px; }
-.chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; padding: 2px 8px;
-  border-radius: 999px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums;
-  background: var(--secondary); color: var(--foreground); border: 1px solid var(--border); }
-.chip.nodata { color: var(--muted-foreground); font-weight: 500; background: transparent; border: 1px dashed var(--border); }
+.model-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; min-height: 24px; }
+
+/* model chips: neutral — the verdict hues belong to the dashboard's data */
+.chip { display: inline-flex; align-items: center; gap: 5px; font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; white-space: nowrap;
+  font-variant-numeric: tabular-nums; background: var(--secondary); color: var(--foreground);
+  border: 1px solid var(--border); }
+.chip.nodata { color: var(--muted-foreground); font-weight: 500; background: transparent; border: 1px dashed var(--axis); }
 .chip-remove { appearance: none; border: 0; background: transparent; padding: 0; margin: 0 0 0 2px;
   cursor: pointer; color: var(--muted-foreground); display: inline-flex; align-items: center; transition: color .15s ease; line-height: 1; font-size: 12px; }
 .chip-remove:hover { color: var(--foreground); }
@@ -212,45 +260,68 @@ fieldset { font: inherit; border: 0; padding: 0; margin: 0; }
 .cache-custom input { width: 56px; text-align: center; padding: 5px 6px; }
 .cache-custom-suffix { font-size: 12px; color: var(--muted-foreground); font-weight: 600; }
 
-/* plan matrices */
-.plan-head { margin: 0 0 10px; font-size: 14px; font-weight: 600;
-  letter-spacing: -.01em; color: var(--foreground); text-wrap: balance; }
-.plan-export-group { float: right; display: flex; gap: 6px; margin-left: 8px; }
+/* the plan matrices lead the page: each panel is headed by its credit budget
+   in large mono, the paid price and export actions beside it */
+.plan-card { padding: 20px 22px; }
+.plan-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px;
+  margin: 0 0 14px; }
+.plan-name { font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
+.plan-paid { font-size: 13px; color: var(--muted-foreground); }
+.plan-arrow { color: var(--muted-foreground); }
+.plan-credits { font-size: 22px; font-weight: 600; letter-spacing: -.01em; }
+.plan-export-group { margin-left: auto; display: flex; gap: 6px; }
 .sep-l { border-left: 1px solid var(--border); }
 .ctr { text-align: center; }
-tfoot td { padding-top: 8px; font-size: 11px; color: var(--muted-foreground); text-align: left; }
+tfoot td { padding-top: 10px; font-size: 11.5px; color: var(--muted-foreground); text-align: left; }
 
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 .scroll-x { overflow: auto; max-height: 72vh; }
-th { position: sticky; top: 0; z-index: 1;
-  background: color-mix(in oklab, var(--muted) 45%, var(--card));
-  color: var(--foreground);
-  font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
-  text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); font-weight: 600; }
-td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-tbody tr { transition: background .15s ease; }
-tbody tr:hover { background: var(--accent); }
+th { position: sticky; top: 0; z-index: 1; background: var(--card);
+  color: var(--muted-foreground); font-size: 11px; font-weight: 600; letter-spacing: .02em;
+  text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--axis); white-space: nowrap;
+  line-height: 1.3; }
+/* the two-row thead sticks as a unit: the sub-header row parks right below
+   the split-name row instead of stacking on top of it */
+.sub-head th { top: calc(1.3em + 16px); }
+td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tbody tr { transition: background .12s ease; }
+tbody tr:hover { background: var(--hover); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-.note { font-size: 12px; color: var(--muted-foreground); }
-.panel > p.note, main > p.note { line-height: 1.65; text-wrap: pretty; }
+.note { font-size: 12.5px; color: var(--muted-foreground); }
+.panel > p.note, main > p.note { line-height: 1.7; text-wrap: pretty; }
 </style>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <nav class="topnav" aria-label="pages">
-  <a href="dashboard.html">Dashboard</a>
-  <a href="calculator.html" aria-current="page">Calculator</a>
+  <div class="brand">
+    <svg class="brand-mark" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><rect x="3" y="9" width="4.5" height="8" rx="1.5" fill="var(--legacy)"/><rect x="10.5" y="3" width="4.5" height="14" rx="1.5" fill="var(--new)"/></svg>
+    <span class="brand-name">ocharness</span>
+    <span class="brand-tag">pricing bench</span>
+  </div>
+  <div class="page-links">
+    <a href="dashboard.html">Dashboard</a>
+    <a href="calculator.html" aria-current="page">Calculator</a>
+  </div>
+  <fieldset>
+    <legend>theme</legend>
+    <div class="seg" role="radiogroup" aria-label="theme">
+      <label><input type="radio" name="theme" value="system" checked><i data-lucide="monitor" aria-hidden="true"></i> system</label>
+      <label><input type="radio" name="theme" value="light"><i data-lucide="sun" aria-hidden="true"></i> light</label>
+      <label><input type="radio" name="theme" value="dark"><i data-lucide="moon" aria-hidden="true"></i> dark</label>
+    </div>
+  </fieldset>
 </nav>
 <main id="main" class="wrap">
 <h1>How many tokens does your plan buy?</h1>
-<div class="sub">__RESUMEN__</div>
+<p class="readout">__RESUMEN__</p>
 
 <div class="panel">
   <div class="controls">
-    <div class="ctl" style="min-width:260px;">
-      <div class="ctl-row" style="justify-content:space-between;">
+    <div class="ctl ctl-model">
+      <div class="ctl-row ctl-head">
         <label class="ctl-label" for="filter-model">model</label>
-        <span id="model-count" class="mono" style="font-size:11px; color:var(--muted-foreground);">all models</span>
+        <span id="model-count" class="mono ctl-count">all models</span>
       </div>
       <select id="filter-model" multiple style="display:none">__OPCIONES__</select>
       <div class="model-picker" id="model-picker">
@@ -282,7 +353,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
       </div>
     </div>
 
-    <div class="ctl" style="min-width:240px;">
+    <div class="ctl">
       <label class="ctl-label">cache hit-rate S(x)</label>
       <div class="ctl-row cache-presets">
         <button type="button" class="preset cache-preset" data-s="0">0%</button>
@@ -295,15 +366,6 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
         </div>
       </div>
     </div>
-
-    <fieldset>
-      <legend>theme</legend>
-      <div class="seg" role="radiogroup" aria-label="theme">
-        <label><input type="radio" name="theme" value="system" checked><i data-lucide="monitor" aria-hidden="true"></i> system</label>
-        <label><input type="radio" name="theme" value="light"><i data-lucide="sun" aria-hidden="true"></i> light</label>
-        <label><input type="radio" name="theme" value="dark"><i data-lucide="moon" aria-hidden="true"></i> dark</label>
-      </div>
-    </fieldset>
   </div>
 
   <p class="note" style="margin-top:12px">Credits are priced at face value: the plans&rsquo;
@@ -319,7 +381,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
     S(x) &equiv; S0. Each cell is the input, output and total tokens the plan&rsquo;s credits buy at
     that split. This is a presentation-layer estimate: nothing persisted changes.</p>
 </div>
-<div id="plan-tokens"></div>
+<div id="plan-tokens" class="hero-in"></div>
 </main>
 
 <script id="analysis-data" type="application/json">__DATOS__</script>
@@ -341,10 +403,11 @@ var SLIDER_DEFAULT = 85;
 // the purchasable plans: money paid and the credits it buys at face value (the
 // x3 credit ratio is inherent in the credits, so no extra division applies);
 // each plan renders as its own matrix table, the preset in : out splits below
-// as its columns, and head spells the credit figures at face value
+// as its columns; paidLabel/creditsLabel carry the credit figures at face
+// value so the static file spells them too
 var PLANES = [
-  {name:'Pro', paid:20, credits:60, head:'Pro &mdash; $20 paid &rarr; $60 credits'},
-  {name:'Max', paid:100, credits:300, head:'Max &mdash; $100 paid &rarr; $300 credits'}
+  {name:'Pro', paid:20, credits:60, paidLabel:'$20 paid', creditsLabel:'$60 credits'},
+  {name:'Max', paid:100, credits:300, paidLabel:'$100 paid', creditsLabel:'$300 credits'}
 ];
 // the matrix columns: the preset in : out token splits, ordered input-heavy to
 // output-heavy, bare (the note carries the measured-runs provenance); the
@@ -431,9 +494,9 @@ function renderPlanTokens() {
   // the plan budget matrix: one panel per plan, so the two matrices read as
   // separate blocks; the preset in : out splits as columns plus a trailing
   // custom split, the same model filter as the dashboard's cells table; the
-  // panel's title spells the credit figures at face value so the static file
-  // carries them too, and each table's tfoot footnotes the live cache % the
-  // S(x) control drives; the head also carries the PNG/clipboard export buttons
+  // panel's head carries the plan's paid/credit figures and the PNG/clipboard
+  // export buttons, and each table's tfoot footnotes the live cache % the
+  // S(x) control drives
   var modelos = Object.keys(RATES.rates).filter(function (m) {
     return estado.models.indexOf(m) !== -1;
   });
@@ -456,14 +519,18 @@ function renderPlanTokens() {
     var subths = columnas.map(function () {
       return '<th class="sep-l ctr">↓ in</th><th class="ctr">↑ out</th><th class="ctr">total</th>';
     }).join("");
-    return '<div class="panel scroll-x"><p class="plan-head">' + plane.head +
+    return '<div class="panel scroll-x plan-card"><div class="plan-head">' +
+      '<span class="plan-name">' + plane.name + '</span>' +
+      '<span class="plan-paid mono">' + plane.paidLabel + '</span>' +
+      '<span class="plan-arrow" aria-hidden="true">&rarr;</span>' +
+      '<span class="plan-credits mono">' + plane.creditsLabel + '</span>' +
       '<span class="plan-export-group">' +
       '<button type="button" class="preset plan-export" data-plane="' + indice +
       '" data-mode="download"><i data-lucide="download" class="icon-btn" aria-hidden="true"></i> PNG</button>' +
       '<button type="button" class="preset plan-export" data-plane="' + indice +
-      '" data-mode="copy"><i data-lucide="copy" class="icon-btn" aria-hidden="true"></i> Copy</button></span></p>' +
+      '" data-mode="copy"><i data-lucide="copy" class="icon-btn" aria-hidden="true"></i> Copy</button></span></div>' +
       '<table><thead><tr><th class="num">in : out ratio</th>' + ths +
-      '</tr><tr><th>model</th>' + subths + "</tr></thead><tbody>" + filas +
+      '</tr><tr class="sub-head"><th>model</th>' + subths + "</tr></thead><tbody>" + filas +
       '</tbody><tfoot><tr><td colspan="' + (1 + columnas.length * 3) + '">cache hit: ' + estado.slider +
       "% &middot; each cell: ↓ input, ↑ output, then the total</td></tr></tfoot></table></div>";
   }).join("");

@@ -32,7 +32,6 @@ for other models; the cells themselves resume like any bracketed batch.
 from __future__ import annotations
 
 import asyncio
-import json
 import pathlib
 import time
 
@@ -40,16 +39,14 @@ from . import fixtures, schema
 from .client import PROTOCOL_VERSION, OllamaCloud
 from .meter import usd_per_pp  # the anchor bridge: a Δpp's paid dollars
 from .runner import (
-    BatchContext,
     BatchSpec,
     RunnerError,
-    _append_jsonl,
-    _burst,
-    _ensure_canary,
-    _execute_batch,
-    _registration_settle,
+    Workstream,
     batch_id,
-    open_workstream_manifest,
+    burst,
+    open_workstream,
+    registration_settle,
+    write_jsonl,
 )
 from .schema import read_jsonl
 
@@ -157,7 +154,7 @@ async def _sweep(
 ) -> tuple[int | None, str, list[dict]]:
     """The limit probe: k=4..k_max volleys of the anchor's single short request.
 
-    Each volley is the runner's own burst (`_burst`): n == k copies at
+    Each volley is the runner's own burst (`burst`): n == k copies at
     concurrency k, so the probe and the cells cannot drift apart in how they
     fire simultaneous requests. The volley's seeds derive from the `probe`
     workload name (discovery evidence, distinguishable from the cells' seeds).
@@ -188,7 +185,7 @@ async def _sweep(
             fixture_hash=hash_fixture,
         )
         t_start = time.time()
-        registros = await _burst(client, volley, specs, modelo_api)
+        registros = await burst(client, volley, specs, modelo_api)
         t_total = time.time()
         semillas = [fixtures.seed(PROBE_WORKLOAD, model, volley.rep, i) for i in range(volley.n)]
         outcomes = [
@@ -207,7 +204,7 @@ async def _sweep(
             table_version=table_version,
         )
         schema.validate_probe_line(linea)
-        _append_jsonl(ruta_probe, linea)
+        write_jsonl(ruta_probe, linea)
         resumen = {
             "probe_id": probe_id,
             "k": k,
@@ -372,44 +369,83 @@ def _build_summary(
     }
 
 
-async def _run_async(cfg: dict) -> dict:
-    base: pathlib.Path = cfg["base"]
-    model: str = cfg["model"]
-    runs_dir = base / "runs"
-    batches_dir = base / "batches"
-    runs_dir.mkdir(parents=True, exist_ok=True)
-    batches_dir.mkdir(parents=True, exist_ok=True)
-    ruta_manifest = runs_dir / f"manifest-{ANCHOR_LEVEL}-concurrency.json"
+def _celda_arranque(spec: BatchSpec) -> str | None:
+    """The cell's pre-bracket line: which k is about to bill."""
+    return f"cells: k={spec.k}" + (f" ({spec.plan_note})" if spec.plan_note else "")
 
-    manifiesto = open_workstream_manifest(
-        runs_dir,
-        # the workstream's own identity: `status` renders it from the manifest doc,
-        # while the batch/request lines carry the anchor's density class (T1)
-        level=f"{ANCHOR_LEVEL}-concurrency",
-        run_id_prefix=f"{ANCHOR_LEVEL}-cc",
-        cfg=cfg,  # k=None: the cells carry their own k; the probe is a per-key property
+
+def _celda_skip(spec: BatchSpec, estado: str) -> str | None:
+    """The cells' resume note: loud for in_flight, spend-attributed otherwise."""
+    return (
+        f"resume: cell k={spec.k} ({spec.batch_id}) {estado} from an "
+        "earlier attempt - skipped"
+        + (
+            ", never silently retried"
+            if estado == "in_flight"
+            else "; its spend is already in the dataset"
+        )
     )
-    run_id = manifiesto.run_id
-    ruta_probe = runs_dir / f"probe-{run_id}.jsonl"
-    modelo_api = cfg.get("model_map", {}).get(model, model)
-    emit = cfg["emit"]
 
-    client = OllamaCloud(transport=cfg["transport"])
-    try:
+
+def _celda_progreso(model: str):
+    """The cells' progress line, bound to the invocation's slate model."""
+
+    def _linea(spec: BatchSpec, resultado, idx: str) -> str:
+        return (
+            f"[{idx}] {ANCHOR_WORKLOAD}/{model} "
+            f"k{spec.k}: {resultado.ok}/{resultado.intentados} ok, "
+            f"dpp_session={resultado.dpp_session}, "
+            f"wall_clock={resultado.wall_clock_s}s"
+        )
+
+    return _linea
+
+
+async def _run_async(
+    base,
+    *,
+    model: str,
+    k_max: int,
+    settle_s: float,
+    settle_poll_s: float,
+    ancla: float,
+    table_version: str,
+    catalog: dict | None,
+    model_map: dict[str, str],
+    transport,
+    emit,
+) -> dict:
+    sesion = open_workstream(
+        base,
+        # The workstream's own identity: `status` renders it from the manifest doc,
+        # while the batch/request lines carry the anchor's density class (T1)
+        Workstream(
+            level=f"{ANCHOR_LEVEL}-concurrency",
+            run_id_prefix=f"{ANCHOR_LEVEL}-cc",
+            k=None,  # the cells carry their own k; the probe is a per-key property
+            lane=True,  # the cells are measured; the probe's volleys stay exempt
+        ),
+        table_version=table_version,
+        settle_s=settle_s,
+        settle_poll_s=settle_poll_s,
+        catalog=catalog,
+        model_map=model_map,
+        transport=transport,
+        emit=emit,
+    )
+    async with sesion:
+        manifiesto = sesion.manifiesto
+        run_id = sesion.run_id
+        ruta_manifest = manifiesto.ruta
+        ruta_probe = sesion.runs_dir / f"probe-{run_id}.jsonl"
+        modelo_api = sesion.modelo_api(model)
+
         # ---- phase 0: the billing canary (once per run) ----
         # The k-cells are measured brackets under the cache-free lane: the lane
         # is proven before anything bills under it, exactly like `bench run`.
         # The canary's own spend is unbracketed; the flush below baselines it
         # together with the probe's before the first cell's pre-read.
-        contexto_canary = BatchContext(
-            base=base,
-            manifiesto=manifiesto,
-            cfg=cfg,
-            rutas_requests=runs_dir / f"requests-{run_id}.jsonl",
-            ruta_batches=batches_dir / f"batches-{run_id}.jsonl",
-            ruta_canary=runs_dir / f"canary-{run_id}.jsonl",
-        )
-        await _ensure_canary(client, ctx=contexto_canary, cfg=cfg, level=ANCHOR_LEVEL)
+        await sesion.canary(ANCHOR_LEVEL)
 
         # ---- phase 1: the probe (once per run: the cut-off is a per-key property) ----
         probe_doc = manifiesto.doc.get("probe") or {}
@@ -425,18 +461,18 @@ async def _run_async(cfg: dict) -> dict:
                 )
         else:
             probe_ran_ahora = True
-            probe_doc = {"status": "in_flight", "k_max": cfg["k_max"], "at": time.time()}
+            probe_doc = {"status": "in_flight", "k_max": k_max, "at": time.time()}
             manifiesto.doc["probe"] = probe_doc
             manifiesto.save()
             try:
                 cut_off, cut_off_note, volleys = await _sweep(
-                    client,
+                    sesion.client,
                     model,
                     modelo_api,
-                    k_max=cfg["k_max"],
+                    k_max=k_max,
                     run_id=run_id,
                     ruta_probe=ruta_probe,
-                    table_version=cfg["table_version"],
+                    table_version=table_version,
                     emit=emit,
                 )
             except Exception as e:  # noqa: BLE001 - a probe failure aborts the invocation
@@ -459,17 +495,7 @@ async def _run_async(cfg: dict) -> dict:
         # The cell plan (ks + n) is pinned once per run_id: a harness change to
         # CELL_KS/CELL_REQUESTS between invocations must not append a mixed plan
         # under one run_id — the same drift the runner's k guard prevents for k.
-        plan = cell_plan(cut_off)
-        plan_previo = manifiesto.doc.get("cell_plan")
-        if plan_previo is None:
-            manifiesto.doc["cell_plan"] = plan
-            manifiesto.save()
-        elif plan_previo != plan:
-            raise RunnerError(
-                f"manifest {ruta_manifest.name} records cell plan {plan_previo!r} but this "
-                f"invocation would run {plan!r} - the cell plan may not drift inside one "
-                "run_id - keep the datasets apart"
-            )
+        sesion.pin("cell_plan", cell_plan(cut_off))
         pendientes = [s for s in specs if manifiesto.status(s.batch_id) is None]
 
         cerradas = [
@@ -489,8 +515,8 @@ async def _run_async(cfg: dict) -> dict:
             # it would baseline the cells before the probe's spend lands and
             # silently absorb it into the first cell's Δpp. Only a stable flush
             # proves the spend predates the cells.
-            flush = await _registration_settle(
-                client, primera=None, cap_s=cfg["settle_s"], poll_s=cfg["settle_poll_s"]
+            flush = await registration_settle(
+                sesion.client, primera=None, cap_s=settle_s, poll_s=settle_poll_s
             )
             if flush["exit"] != "stable" or flush["post"] is None:
                 raise RunnerError(
@@ -504,64 +530,26 @@ async def _run_async(cfg: dict) -> dict:
                     f"({flush['reads']} reads, {flush['exit']})"
                 )
 
-        previa = manifiesto.doc.get("planned")
-        manifiesto.doc["planned"] = max(
-            previa if isinstance(previa, int) else 0,
-            len(manifiesto.doc["batches"]) + len(pendientes),
-            len(specs),
+        sesion.grow_planned(max(len(manifiesto.doc["batches"]) + len(pendientes), len(specs)))
+        await sesion.brackets(
+            specs,
+            on_start=_celda_arranque,
+            on_skip=_celda_skip,
+            on_progress=_celda_progreso(model),
         )
-        manifiesto.save()
-
-        contexto = BatchContext(
-            base=base,
-            manifiesto=manifiesto,
-            cfg=cfg,
-            rutas_requests=runs_dir / f"requests-{run_id}.jsonl",
-            ruta_batches=batches_dir / f"batches-{run_id}.jsonl",
-        )
-        hechos = omitidos = 0
-        for spec in specs:
-            estado_celda = manifiesto.status(spec.batch_id)
-            if estado_celda in ("done", "in_flight", "aborted"):
-                omitidos += 1
-                if emit:
-                    emit(
-                        f"resume: cell k={spec.k} ({spec.batch_id}) {estado_celda} from an "
-                        "earlier attempt - skipped"
-                        + (
-                            ", never silently retried"
-                            if estado_celda == "in_flight"
-                            else "; its spend is already in the dataset"
-                        )
-                    )
-                continue
-            if emit:
-                emit(f"cells: k={spec.k}" + (f" ({spec.plan_note})" if spec.plan_note else ""))
-            resultado = await _execute_batch(client, spec, ctx=contexto)
-            hechos += 1
-            if emit:
-                emit(
-                    f"[{hechos + omitidos}/{len(specs)}] {ANCHOR_WORKLOAD}/{model} "
-                    f"k{spec.k}: {resultado.ok}/{resultado.intentados} ok, "
-                    f"dpp_session={resultado.dpp_session}, "
-                    f"wall_clock={resultado.wall_clock_s}s"
-                )
-    finally:
-        await client.aclose()
 
     resumen = _build_summary(
         run_id=run_id,
-        ancla=cfg["ancla"],
+        ancla=ancla,
         cut_off=cut_off,
         cut_off_note=cut_off_note,
         volleys=volleys,
-        k_max=probe_doc.get("k_max", cfg["k_max"]),
-        table_version=cfg["table_version"],
-        runs_dir=runs_dir,
-        batches_dir=batches_dir,
+        k_max=probe_doc.get("k_max", k_max),
+        table_version=table_version,
+        runs_dir=sesion.runs_dir,
+        batches_dir=sesion.batches_dir,
     )
-    ruta_resumen = runs_dir / f"concurrency-{run_id}.json"
-    ruta_resumen.write_text(json.dumps(resumen, ensure_ascii=False, indent=2), encoding="utf-8")
+    sesion.write_summary("concurrency", resumen)
     return resumen
 
 
@@ -584,20 +572,19 @@ def run_probe(
     The k-cells are measured brackets: they run under the cache-free lane
     (`lane=True` records the nonce spec on the workstream's manifest). The probe
     itself is exempt — a locator, not a measured cell — and its volleys fire
-    unsalted through `_burst`'s explicit no-salt path."""
-    cfg = {
-        "base": pathlib.Path(base),
-        "model": model,
-        "k_max": k_max,
-        "settle_s": settle_s,
-        "settle_poll_s": settle_poll_s,
-        "ancla": ancla,
-        "table_version": table_version,
-        "catalog": catalog,
-        "model_map": model_map or {},
-        "transport": transport,
-        "emit": emit,
-        "k": None,  # _check_drift: the cells carry their own k
-        "lane": True,  # the cells are measured; the probe's volleys stay exempt
-    }
-    return asyncio.run(_run_async(cfg))
+    unsalted through `burst`'s explicit no-salt path."""
+    return asyncio.run(
+        _run_async(
+            base,
+            model=model,
+            k_max=k_max,
+            settle_s=settle_s,
+            settle_poll_s=settle_poll_s,
+            ancla=ancla,
+            table_version=table_version,
+            catalog=catalog,
+            model_map=model_map or {},
+            transport=transport,
+            emit=emit,
+        )
+    )

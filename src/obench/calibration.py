@@ -43,22 +43,14 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import json
 import pathlib
 import statistics
 
 from . import fixtures
-from .client import PROTOCOL_VERSION, OllamaCloud
+from .client import PROTOCOL_VERSION
 from .meter import TICK_BAND, TICK_PP  # the meter's resolution, in percentage points
 from .pricing import TableError
-from .runner import (
-    BatchContext,
-    BatchSpec,
-    RunnerError,
-    _execute_batch,
-    batch_id,
-    open_workstream_manifest,
-)
+from .runner import BatchSpec, RunnerError, Workstream, batch_id, open_workstream
 from .schema import read_jsonl
 
 CACHE_LEVEL = "T2-cache"  # the workstream's manifest identity (status renders it)
@@ -484,50 +476,40 @@ def _build_summary(
     }
 
 
-async def _run_async(cfg: dict) -> dict:
-    base: pathlib.Path = cfg["base"]
-    runs_dir = base / "runs"
-    batches_dir = base / "batches"
-    runs_dir.mkdir(parents=True, exist_ok=True)
-    batches_dir.mkdir(parents=True, exist_ok=True)
-
-    manifiesto = open_workstream_manifest(
-        runs_dir,
-        level=CACHE_LEVEL,
-        run_id_prefix="T2-cache",
-        cfg=cfg,  # k=1: every calibration bracket fires at k=1, the replays' design
+async def _run_async(
+    base,
+    *,
+    models: list[str],
+    spaced_ages: tuple[float, ...],
+    settle_s: float,
+    settle_poll_s: float,
+    table_version: str,
+    tabla,
+    catalog: dict | None,
+    model_map: dict[str, str],
+    transport,
+    emit,
+) -> dict:
+    sesion = open_workstream(
+        base,
+        # k=1: every calibration bracket fires at k=1, the replays' design
+        Workstream(level=CACHE_LEVEL, run_id_prefix="T2-cache", k=1, lane=False),
+        table_version=table_version,
+        settle_s=settle_s,
+        settle_poll_s=settle_poll_s,
+        catalog=catalog,
+        model_map=model_map,
+        transport=transport,
+        emit=emit,
     )
-    run_id = manifiesto.run_id
-    ruta_manifest = manifiesto.ruta
-
-    # The gap plan (spaced targets + repeats) is pinned once per run_id: mixing
-    # ladders under one dataset would make the persistence readings incomparable.
-    plan_gaps = {"targets": list(cfg["spaced_ages"]), "repeats": CACHE_REPEATS}
-    plan_previo = manifiesto.doc.get("gap_plan")
-    if plan_previo is None:
-        manifiesto.doc["gap_plan"] = plan_gaps
-        manifiesto.save()
-    elif plan_previo != plan_gaps:
-        raise RunnerError(
-            f"manifest {ruta_manifest.name} records gap plan {plan_previo!r} but this "
-            f"invocation would run {plan_gaps!r} - the spacing may not drift inside one "
-            "run_id - keep the datasets apart"
-        )
-
-    emit = cfg["emit"]
-    rutas_requests = runs_dir / f"requests-{run_id}.jsonl"
-    contexto = BatchContext(
-        base=base,
-        manifiesto=manifiesto,
-        cfg=cfg,
-        rutas_requests=rutas_requests,
-        ruta_batches=cfg["base"] / "batches" / f"batches-{run_id}.jsonl",
-    )
-    client = OllamaCloud(transport=cfg["transport"])
-    try:
-        for modelo in cfg["models"]:
+    async with sesion:
+        run_id = sesion.run_id
+        # The gap plan (spaced targets + repeats) is pinned once per run_id: mixing
+        # ladders under one dataset would make the persistence readings incomparable.
+        sesion.pin("gap_plan", {"targets": list(spaced_ages), "repeats": CACHE_REPEATS})
+        for modelo in models:
             specs = _bracket_specs(run_id=run_id, model=modelo)
-            estados = {w: manifiesto.status(s.batch_id) for w, s in specs.items()}
+            estados = {w: sesion.manifiesto.status(s.batch_id) for w, s in specs.items()}
             if all(e in ("done", "aborted") for e in estados.values()):
                 cerrados = sum(1 for e in estados.values() if e == "done")
                 emit(
@@ -547,12 +529,12 @@ async def _run_async(cfg: dict) -> dict:
                 if estados[w] is not None:  # closed earlier: its spend is in the dataset
                     emit(f"calibrate: {modelo}/{w} closed in an earlier attempt - skipped")
                     continue
-                resultado = await _execute_batch(client, specs[w], ctx=contexto)
+                resultado = await sesion.execute_one(specs[w])
                 emit(
                     f"calibrate: {modelo}/{w}: {resultado.ok}/{resultado.intentados} ok, "
                     f"dpp={resultado.dpp_session}"
                 )
-            estados = {w: manifiesto.status(s.batch_id) for w, s in specs.items()}
+            estados = {w: sesion.manifiesto.status(s.batch_id) for w, s in specs.items()}
             if estados[INTRA_WORKLOAD] != "done":
                 raise RunnerError(
                     f"calibrate: {modelo}: the intra bracket never closed (an aborted "
@@ -567,7 +549,7 @@ async def _run_async(cfg: dict) -> dict:
                     f"calibrate: {modelo}/{SPACED_WORKLOAD} closed in an earlier attempt - skipped"
                 )
                 continue
-            objetivo = cfg["spaced_ages"]
+            objetivo = spaced_ages
             gaps = (objetivo[0],) + tuple(
                 objetivo[i] - objetivo[i - 1] for i in range(1, len(objetivo))
             )
@@ -580,30 +562,23 @@ async def _run_async(cfg: dict) -> dict:
                     + " s"
                 ),
             )
-            resultado = await _execute_batch(client, espec_spaced, ctx=contexto)
+            resultado = await sesion.execute_one(espec_spaced)
             emit(
                 f"calibrate: {modelo}/{SPACED_WORKLOAD}: {resultado.ok}/{resultado.intentados} "
                 f"ok, dpp={resultado.dpp_session}"
             )
-    finally:
-        await client.aclose()
-
-    manifiesto.doc["planned"] = max(
-        manifiesto.doc.get("planned") or 0,
-        len(manifiesto.doc["batches"]),
-        len(_WORKLOADS) * len(cfg["models"]),
-    )
-    manifiesto.save()
+        sesion.grow_planned(
+            max(len(sesion.manifiesto.doc["batches"]), len(_WORKLOADS) * len(models))
+        )
 
     resumen = _build_summary(
         run_id=run_id,
-        runs_dir=runs_dir,
-        batches_dir=base / "batches",
-        table_version=cfg["table_version"],
-        tabla=cfg["tabla"],
+        runs_dir=sesion.runs_dir,
+        batches_dir=sesion.batches_dir,
+        table_version=table_version,
+        tabla=tabla,
     )
-    ruta_resumen = runs_dir / f"calibration-{run_id}.json"
-    ruta_resumen.write_text(json.dumps(resumen, ensure_ascii=False, indent=2), encoding="utf-8")
+    sesion.write_summary("calibration", resumen)
     return resumen
 
 
@@ -626,19 +601,18 @@ def run_calibration(
     The calibration is EXEMPT from the cache-free lane (no `lane` in its cfg):
     its replays re-send one identical prefix on purpose — prefix replay is the
     only legitimate cached traffic a measured run never sees."""
-    cfg = {
-        "base": pathlib.Path(base),
-        "models": models,
-        "spaced_ages": tuple(float(a) for a in spaced_ages),
-        "settle_s": settle_s,
-        "settle_poll_s": settle_poll_s,
-        "table_version": table_version,
-        "tabla": tabla,
-        "catalog": catalog,
-        "model_map": model_map or {},
-        "transport": transport,
-        "emit": emit,
-        "k": 1,  # _check_drift pins the brackets' k
-        "lane": None,  # exempt: the replays re-send one prefix deliberately
-    }
-    return asyncio.run(_run_async(cfg))
+    return asyncio.run(
+        _run_async(
+            base,
+            models=models,
+            spaced_ages=tuple(float(a) for a in spaced_ages),
+            settle_s=settle_s,
+            settle_poll_s=settle_poll_s,
+            table_version=table_version,
+            tabla=tabla,
+            catalog=catalog,
+            model_map=model_map or {},
+            transport=transport,
+            emit=emit,
+        )
+    )

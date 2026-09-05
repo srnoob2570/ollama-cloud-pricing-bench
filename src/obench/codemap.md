@@ -20,7 +20,7 @@ Architectural layers (dependency direction roughly top-down):
 
 1. **Schema/validation** (`schema.py`): on-write validation of request/batch/probe/canary/estimate lines — exact field sets (undeclared fields fail loudly), typed with explicit null-tolerance.
 2. **Fixtures/datasets** (`fixtures.py`, `fixtures_t2.py`, `fixtures_t3.py`, `workloads.py`): deterministic, seeded, hash-stamped request specs behind one `build()` seam; the workload table (requests/tokens per level) and the model slates (T1 = all table models; 6 stratified T2; 3 T3); the `STRONG_T2`/`WEAK_T2` hybrid split.
-3. **Runner** (`runner.py`, `lane.py`, `agent.py`): the bracketed-batch protocol (meter pre-read → k-concurrent burst → per-model count check → registration settle → Δpp per window), the cache-free lane's nonce salting, the billing canary, the T3 agent loop, and the workstream manifests (concurrency, calibration).
+3. **Runner** (`runner.py`, `lane.py`, `agent.py`): the bracketed-batch protocol (meter pre-read → k-concurrent burst → per-model count check → registration settle → Δpp per window), the cache-free lane's nonce salting, the billing canary, the T3 agent loop, and the spending workstreams' shared session (`open_workstream` → `WorkstreamSession`) over the per-level manifests (concurrency, calibration).
 4. **Client** (`client.py`): streaming chat, `/api/usage` meter, `/v1/models` catalog; Bearer auth from `OLLAMA_API_KEY` (environment only, never written to any dataset); failed requests are recorded as data, never raised mid-batch; `PROTOCOL_VERSION = "3"`.
 5. **Checkers/gate** (`checkers.py`, `sandbox.py`, `sandbox_runner.py`, `gate.py`): deterministic binary pass/fail per workload (no LLM-judge); T3 verdicts come from a sandboxed pytest subprocess (network guard, allowlist environment, hard timeout, fixture-owned test files); the spending gate.
 6. **Analysis/calibration** (`analyze.py`, `calibration.py`, `predict.py`): offline derivatives — cells, verdicts `{winner, margin_pct}`, thresholds, pooled token-share allocation (marked allocated, never verdicted), sensitivity sweeps, the S0/S1 pair with the measured hit-rate winning where conclusive, and the comparative MAPE with paired bootstrap CI.
@@ -56,11 +56,11 @@ Invariants threaded through the flow: the API key exists only in the environment
 | `__init__.py` | Package marker (src-layout target); the sandbox resolves `obench`'s parent for `PYTHONPATH`. |
 | `agent.py` | Deterministic T3 agent loop: one billed chat request per step, JSON-action execution over an isolated working copy, per-turn salting, per-step evidence. |
 | `analyze.py` | Offline analysis and bundle: cells, verdicts/margins, pp/1M thresholds, pooled allocation, sweeps, dashboard/calculator; the re-run without re-measuring. |
-| `calibration.py` | Cache-calibration workstream: cold/intra/spaced prefix replays per T2-slate model; `resolve_s` measured-hit-rate precedence over S1. |
+| `calibration.py` | Cache-calibration workstream: cold/intra/spaced prefix replays per T2-slate model over `open_workstream`'s session; `resolve_s` measured-hit-rate precedence over S1. |
 | `checkers.py` | Deterministic binary checkers per workload (no LLM-judge); T3 graded by the sandbox's pytest; unknown workloads abort. |
 | `cli.py` | `bench` entry point: argparse dispatch, per-command validation, gate ordering, human/JSON reports. |
 | `client.py` | Ollama Cloud HTTP client: streaming chat with TTFT stamps, usage meter, models catalog; injectable transport; env-only key. |
-| `concurrency.py` | Concurrency workstream: k cut-off probe, re-anchored k∈{1,4,8} bracketed cells, cost-per-task summary. |
+| `concurrency.py` | Concurrency workstream over `open_workstream`'s session: k cut-off probe, re-anchored k∈{1,4,8} bracketed cells, cost-per-task summary. |
 | `cost.py` | Dry-run budget (tokens × rates under S0/S1 with nonce overhead) and the shared `new_task_cost` pricing formula. |
 | `dataset_export.py` | Lossless flattening of a release's raw evidence into JSON/CSV/XLSX tables (derived, sha256-stamped). |
 | `fixtures.py` | T1 fixtures (qa_short answer key, calibration, throughput), the `build()` seam, `fixture_hash`, coordinate-derived seeds. |
@@ -74,7 +74,7 @@ Invariants threaded through the flow: the API key exists only in the environment
 | `pricing.py` | Versioned price table loading/validation (input / cached input / output rates, `per` unit). |
 | `pricing_pull.py` | `bench pricing-pull`: snapshots the upstream rate card (ollama-cloud-catalog artifact) into a new versioned table — fail-loud validation, alias mapping, rate-by-rate diff, immutable-landing refusal, peak block as metadata. |
 | `releases.py` | Dataset releases via `gh`: package/publish/fetch/verify (sha256 both directions, credential scrub, frozen v2 handling). |
-| `runner.py` | Bracketed-batch protocol: plan, manifest/resume/drift guards, burst, registration settle, Δpp, billing canary, raw line writing; `status_doc` (the single manifest-shape→report reader) next to `Manifest`. |
+| `runner.py` | Bracketed-batch protocol: plan, manifest/resume/drift guards, burst, registration settle, Δpp, billing canary, raw line writing; the spending workstreams' one door (`Workstream` + `open_workstream` → `WorkstreamSession`: pin/grow_planned/canary/brackets/execute_one/write_summary, client always closed); `status_doc` (the single manifest-shape→report reader) next to `Manifest`. |
 | `sandbox.py` | T3 checker sandbox: rebuild the graded copy (fixture-owned tests/config), run pytest in a bounded subprocess. |
 | `sandbox_runner.py` | Sandbox subprocess entry: network guard install, readiness handshake, exit-code grading, exit 90 on misconfiguration. |
 | `schema.py` | On-write schema validation of every raw dataset line (request/batch/probe/canary/estimate); the tolerant raw readers `read_jsonl`/`read_dataset`. |

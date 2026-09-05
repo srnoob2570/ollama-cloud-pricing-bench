@@ -483,7 +483,7 @@ def _usage_ventana(payload: dict | None, window: str) -> float | None:
     return valor if isinstance(valor, (int, float)) else None
 
 
-async def _registration_settle(
+async def registration_settle(
     client: OllamaCloud, *, primera: dict | None, cap_s: float, poll_s: float
 ) -> dict:
     """The protocol v3 settle: the registration loop.
@@ -716,7 +716,7 @@ def _request_line(
     }
 
 
-def _append_jsonl(ruta: pathlib.Path, line: dict) -> None:
+def write_jsonl(ruta: pathlib.Path, line: dict) -> None:
     with ruta.open("a", encoding="utf-8") as f:
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
@@ -808,7 +808,7 @@ async def _canary_volley(
         rec = await client.chat(model=modelo_api, prompt=prompt, seed=semilla)
         outcomes.append({"http": rec["http"], "err": rec["err"], "done": rec["done"] is not None})
     _, primera = await _read_meter(client, f"after the {fase}")
-    registro = await _registration_settle(
+    registro = await registration_settle(
         client, primera=primera, cap_s=cfg["settle_s"], poll_s=cfg["settle_poll_s"]
     )
     if registro["exit"] is None:
@@ -1027,7 +1027,7 @@ async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str) -> 
         "at": time.time(),
     }
     schema.validate_canary_line(linea)
-    _append_jsonl(ctx.ruta_canary, linea)
+    write_jsonl(ctx.ruta_canary, linea)
     manifiesto.doc["canary"] = {
         "status": estado_canary,
         "ratio": ratio,
@@ -1070,7 +1070,7 @@ def _fmt_ratio(ratio) -> str:
     return "n/a" if ratio is None else f"{ratio:.3f}"
 
 
-async def _burst(
+async def burst(
     client: OllamaCloud,
     spec: BatchSpec,
     specs: tuple,
@@ -1297,7 +1297,7 @@ async def _execute_batch(
             ok = sum(1 for r in registros for p in r["steps"] if p["http"] == 200)
             intentados = sum(len(r["steps"]) for r in registros)
         else:
-            registros = await _burst(
+            registros = await burst(
                 client, spec, specs_requeridos, modelo_api, salt=sal, coords=coords
             )
             ok = sum(1 for r in registros if r["http"] == 200)
@@ -1327,7 +1327,7 @@ async def _execute_batch(
                 checker=veredictos[idx],
             )
             schema.validate_request_line(linea)
-            _append_jsonl(ctx.rutas_requests, linea)
+            write_jsonl(ctx.rutas_requests, linea)
     except Exception as e:  # noqa: BLE001 - any failure aborts the batch, loudly
         nota = f"aborted: {type(e).__name__}: {e}"
         _mark(manifiesto, spec, "aborted", note=nota)
@@ -1374,7 +1374,7 @@ async def _execute_batch(
     # The registration settle: the count-check read is the loop's first
     # sample; the loop polls until two consecutive reads agree in both
     # windows, or the cap burns (the bracket still closes, marked capped).
-    registro = await _registration_settle(
+    registro = await registration_settle(
         client,
         primera=leido if status_c == 200 else None,
         cap_s=cfg["settle_s"],
@@ -1469,101 +1469,248 @@ async def _execute_batch(
     )
 
 
-async def _run_async(cfg: dict) -> dict:
-    base: pathlib.Path = cfg["base"]
-    level: str = cfg["level"]
+@dataclasses.dataclass(frozen=True)
+class Workstream:
+    """What one spending workstream binds its manifest to: identity, density, lane.
+
+    The drift guard reads exactly these fields: a manifest refuses an attempt
+    whose density (k, reps) or lane differs from the one it was minted under.
+    `k=None` lets each bracket carry its own k (the concurrency cells); `reps`
+    binds only the T2 hybrid (its pooled brackets' ids do not separate densities)."""
+
+    level: str  # the manifest's identity: "T1", "T2", "T2-cache", "T1-concurrency"
+    run_id_prefix: str
+    k: int | None
+    lane: bool  # the cache-free lane: nonce spec recorded + the billing canary
+    reps: int | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class ExecReport:
+    """The bracket loop's counters, for the caller's summary doc."""
+
+    hechos: int
+    omitidos: int
+    en_vuelo: int
+    abortados_previos: int
+    escritas: int
+
+
+def _nota_resume(spec: BatchSpec, estado: str) -> str | None:
+    """The runner's default resume note: loud skips, silent done cells."""
+    if estado == "in_flight":
+        return (
+            f"resume: batch {spec.batch_id} ({_label(spec)}) is in_flight from "
+            "an interrupted run - skipped, never silently retried"
+        )
+    if estado == "aborted":
+        return (
+            f"resume: batch {spec.batch_id} ({_label(spec)}) aborted in an earlier "
+            "attempt - skipped; its spend is already in the dataset"
+        )
+    return None
+
+
+def _progreso(spec: BatchSpec, resultado: BatchOutcome, idx: str) -> str:
+    """The runner's default progress line: one per closed bracket."""
+    return (
+        f"[{idx}] {_label(spec)} rep{spec.rep} k{spec.k}: "
+        f"{resultado.ok}/{resultado.intentados} ok, dpp_session={resultado.dpp_session}"
+    )
+
+
+def _sin_nota(spec: BatchSpec) -> str | None:
+    """No pre-bracket line (the runner's default)."""
+    return None
+
+
+class WorkstreamSession:
+    """One spending workstream's live session: the manifest, the client and the
+    bracket loop behind one door.
+
+    The session owns the protocol invariants the three workstreams used to
+    re-enforce by hand: the client closes even when a bracket aborts; the
+    manifest loads strictly and never degrades; `pin` stamps a plan once per
+    run_id and refuses drift; `planned` never decreases; the raw paths derive
+    from the run_id; the canary reuses, refuses or alarms per what the manifest
+    already records. The choreography is one ordering: open -> derive specs ->
+    pin -> canary (when the lane is on) -> brackets -> grow_planned ->
+    write_summary. `manifiesto` and `client` are exposed because the probe
+    fires volleys through them — a workstream reads them, it never rebuilds
+    the loop."""
+
+    def __init__(
+        self,
+        *,
+        base: pathlib.Path,
+        manifiesto: Manifest,
+        cfg: dict,
+        runs_dir: pathlib.Path,
+        batches_dir: pathlib.Path,
+        client: OllamaCloud,
+    ) -> None:
+        self.manifiesto = manifiesto
+        self.client = client
+        self.runs_dir = runs_dir
+        self.batches_dir = batches_dir
+        self._cfg = cfg
+        self._ctx = BatchContext(
+            base=base,
+            manifiesto=manifiesto,
+            cfg=cfg,
+            rutas_requests=runs_dir / f"requests-{manifiesto.run_id}.jsonl",
+            ruta_batches=batches_dir / f"batches-{manifiesto.run_id}.jsonl",
+            ruta_canary=runs_dir / f"canary-{manifiesto.run_id}.jsonl" if cfg.get("lane") else None,
+        )
+
+    @property
+    def run_id(self) -> str:
+        return self.manifiesto.run_id
+
+    def modelo_api(self, model: str) -> str:
+        """The id actually sent (the preflight's catalog match)."""
+        return self._cfg.get("model_map", {}).get(model, model)
+
+    def _emitir(self, linea: str | None) -> None:
+        emit = self._cfg["emit"]
+        if linea and emit:
+            emit(linea)
+
+    def pin(self, key: str, plan: object) -> None:
+        """Stamp a once-per-run plan onto the manifest, refusing drift.
+
+        The workstream-level plans that must not change inside one run_id (the
+        calibration's gap ladder, the concurrency cell plan) stamp on first
+        sight; a later invocation deriving a different plan is refused like
+        any other drift — the readings under one run_id stay comparable."""
+        previo = self.manifiesto.doc.get(key)
+        if previo is None:
+            self.manifiesto.doc[key] = plan
+            self.manifiesto.save()
+        elif previo != plan:
+            nombre = key.replace("_", " ")
+            raise RunnerError(
+                f"manifest {self.manifiesto.ruta.name} records {nombre} {previo!r} but "
+                f"this invocation would run {plan!r} - the {nombre} may not drift inside "
+                "one run_id - keep the datasets apart"
+            )
+
+    def grow_planned(self, count: int) -> None:
+        """The plan is the max union of everything this run_id has ever covered:
+        a wider resume grows it, and status's pending count stays truthful."""
+        previa = self.manifiesto.doc.get("planned")
+        nueva = max(previa if isinstance(previa, int) else 0, count)
+        if nueva != previa:
+            self.manifiesto.doc["planned"] = nueva
+            self.manifiesto.save()
+
+    async def canary(self, level: str) -> dict:
+        """The billing canary, once per run, before the first bracket."""
+        return await _ensure_canary(self.client, ctx=self._ctx, cfg=self._cfg, level=level)
+
+    async def execute_one(self, spec: BatchSpec) -> BatchOutcome:
+        """One bracketed batch, from in_flight to its closed bracket."""
+        return await _execute_batch(self.client, spec, ctx=self._ctx)
+
+    async def brackets(
+        self,
+        specs: "list[BatchSpec] | tuple[BatchSpec, ...]",
+        *,
+        on_start=None,
+        on_skip=None,
+        on_progress=None,
+    ) -> ExecReport:
+        """The resume/skip loop over the batch specs; raises RunnerError on abort.
+
+        The hooks shape the caller's lines (each returns the text or None, and
+        the session emits it only when an emit was given); the defaults carry
+        the runner's notes verbatim. Counters: brackets closed here, skipped
+        for done, in_flight and aborted, and the requests written."""
+        saltar = on_skip or _nota_resume
+        arrancar = on_start or _sin_nota
+        progresar = on_progress or _progreso
+        hechos = omitidos = en_vuelo = abortados_previos = escritas = 0
+        total = len(specs)
+        for spec in specs:
+            estado = self.manifiesto.status(spec.batch_id)
+            if estado in ("done", "in_flight", "aborted"):
+                omitidos += 1
+                if estado == "in_flight":
+                    en_vuelo += 1
+                elif estado == "aborted":
+                    abortados_previos += 1
+                self._emitir(saltar(spec, estado))
+                continue
+            self._emitir(arrancar(spec))
+            resultado = await self.execute_one(spec)
+            hechos += 1
+            escritas += spec.n
+            self._emitir(progresar(spec, resultado, f"{hechos + omitidos}/{total}"))
+        return ExecReport(
+            hechos=hechos,
+            omitidos=omitidos,
+            en_vuelo=en_vuelo,
+            abortados_previos=abortados_previos,
+            escritas=escritas,
+        )
+
+    def write_summary(self, kind: str, doc: dict) -> pathlib.Path:
+        """The workstream's derived dataset doc: one JSON per run_id."""
+        ruta = self.runs_dir / f"{kind}-{self.run_id}.json"
+        ruta.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+        return ruta
+
+    async def __aenter__(self) -> "WorkstreamSession":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.client.aclose()
+
+
+def open_workstream(
+    base: pathlib.Path,
+    ws: Workstream,
+    *,
+    table_version: str,
+    settle_s: float,
+    settle_poll_s: float,
+    catalog: dict | None = None,
+    model_map: dict[str, str] | None = None,
+    transport=None,
+    emit=print,
+) -> WorkstreamSession:
+    """The spending workstreams' one bootstrap: load the level's manifest
+    strictly, mint its run_id and create it when absent, refuse drift, join the
+    catalog history, and open the session that owns the rest of the protocol.
+    Use as `async with sesion:` — the client closes even when a bracket aborts."""
+    base = pathlib.Path(base)
     runs_dir = base / "runs"
     batches_dir = base / "batches"
     runs_dir.mkdir(parents=True, exist_ok=True)
     batches_dir.mkdir(parents=True, exist_ok=True)
-
-    manifiesto = open_workstream_manifest(runs_dir, level=level, run_id_prefix=level, cfg=cfg)
-    run_id = manifiesto.run_id
-    try:
-        specs = plan(
-            run_id=run_id,
-            level=level,
-            workloads=cfg["workloads"],
-            models=cfg["models"],
-            reps=cfg["reps"],
-            rep_filter=cfg["rep_filter"],
-            k=cfg["k"],
-        )
-    except ValueError as e:  # fixture drift is a clean abort, not a traceback
-        raise RunnerError(f"run aborted before any request: {e}") from None
-    # The plan is the max union of everything this run_id has ever covered:
-    # a wider resume grows it, and status's pending count stays truthful.
-    planned_previo = manifiesto.doc.get("planned")
-    union = max(
-        planned_previo if isinstance(planned_previo, int) else 0,
-        len(specs),
-        len(manifiesto.doc["batches"]),
+    cfg = {
+        "settle_s": settle_s,
+        "settle_poll_s": settle_poll_s,
+        "k": ws.k,
+        "reps": ws.reps,
+        "lane": ws.lane,
+        "table_version": table_version,
+        "catalog": catalog,
+        "model_map": model_map or {},
+        "transport": transport,
+        "emit": emit,
+    }
+    manifiesto = open_workstream_manifest(
+        runs_dir, level=ws.level, run_id_prefix=ws.run_id_prefix, cfg=cfg
     )
-    if union != manifiesto.doc.get("planned"):
-        manifiesto.doc["planned"] = union
-        manifiesto.save()
-    rutas_requests = runs_dir / f"requests-{run_id}.jsonl"
-    ruta_batches = batches_dir / f"batches-{manifiesto.run_id}.jsonl"
-    ruta_canary = runs_dir / f"canary-{run_id}.jsonl"
-
-    client = OllamaCloud(transport=cfg["transport"])
-    contexto = BatchContext(
+    return WorkstreamSession(
         base=base,
         manifiesto=manifiesto,
         cfg=cfg,
-        rutas_requests=rutas_requests,
-        ruta_batches=ruta_batches,
-        ruta_canary=ruta_canary,
+        runs_dir=runs_dir,
+        batches_dir=batches_dir,
+        client=OllamaCloud(transport=transport),
     )
-    hechos = omitidos = en_vuelo = abortados_previos = escritas = 0
-    try:
-        if cfg.get("lane") and specs:
-            # The billing canary opens the run: the lane must be proven before
-            # the first bracket bills anything under it.
-            await _ensure_canary(client, ctx=contexto, cfg=cfg, level=level)
-        for spec in specs:
-            estado = manifiesto.status(spec.batch_id)
-            if estado in ("done", "in_flight", "aborted"):
-                omitidos += 1
-                nota_resume = ""
-                if estado == "in_flight":
-                    en_vuelo += 1
-                    nota_resume = (
-                        f"resume: batch {spec.batch_id} ({_label(spec)}) is in_flight from "
-                        "an interrupted run - skipped, never silently retried"
-                    )
-                elif estado == "aborted":
-                    abortados_previos += 1
-                    nota_resume = (
-                        f"resume: batch {spec.batch_id} ({_label(spec)}) aborted in an earlier "
-                        "attempt - skipped; its spend is already in the dataset"
-                    )
-                if nota_resume and cfg["emit"]:
-                    cfg["emit"](nota_resume)
-                continue
-            resultado = await _execute_batch(client, spec, ctx=contexto)
-            hechos += 1
-            escritas += spec.n
-            if cfg["emit"]:
-                cfg["emit"](
-                    f"[{hechos + omitidos}/{len(specs)}] {_label(spec)} "
-                    f"rep{spec.rep} k{spec.k}: {resultado.ok}/{resultado.intentados} ok, "
-                    f"dpp_session={resultado.dpp_session}"
-                )
-    finally:
-        await client.aclose()
-
-    return {
-        "run_id": manifiesto.run_id,
-        "level": level,
-        "table_version": cfg["table_version"],
-        "batches_planned": len(specs),
-        "batches_done": hechos,
-        "batches_skipped_done": omitidos - en_vuelo - abortados_previos,
-        "batches_in_flight_skipped": en_vuelo,
-        "batches_aborted_skipped": abortados_previos,
-        "requests_written": escritas,
-    }
 
 
 def _check_drift(existente: Manifest, cfg: dict) -> None:
@@ -1665,7 +1812,7 @@ def _close_batch(
         notes=notes,
     )
     schema.validate_batch_line(linea)
-    _append_jsonl(ruta_batches, linea)
+    write_jsonl(ruta_batches, linea)
 
 
 def _batch_line(
@@ -1743,21 +1890,81 @@ def run_level(
     The measured workstream always runs under the cache-free lane (protocol v3):
     `lane=True` makes the manifest record the nonce spec and the billing canary
     open the run."""
-    cfg = {
-        "base": pathlib.Path(base),
+    return asyncio.run(
+        _run_level_async(
+            base,
+            level,
+            workloads,
+            models,
+            reps,
+            rep_filter,
+            k,
+            settle_s,
+            settle_poll_s,
+            table_version,
+            catalog,
+            model_map,
+            transport,
+            emit,
+        )
+    )
+
+
+async def _run_level_async(
+    base,
+    level: str,
+    workloads,
+    models: list[str],
+    reps: int,
+    rep_filter: int | None,
+    k: int,
+    settle_s: float,
+    settle_poll_s: float,
+    table_version: str,
+    catalog: dict | None,
+    model_map: dict[str, str] | None,
+    transport,
+    emit,
+) -> dict:
+    sesion = open_workstream(
+        base,
+        Workstream(level=level, run_id_prefix=level, k=k, lane=True, reps=reps),
+        table_version=table_version,
+        settle_s=settle_s,
+        settle_poll_s=settle_poll_s,
+        catalog=catalog,
+        model_map=model_map,
+        transport=transport,
+        emit=emit,
+    )
+    async with sesion:
+        try:
+            specs = plan(
+                run_id=sesion.run_id,
+                level=level,
+                workloads=workloads,
+                models=models,
+                reps=reps,
+                rep_filter=rep_filter,
+                k=k,
+            )
+        except ValueError as e:  # fixture drift is a clean abort, not a traceback
+            raise RunnerError(f"run aborted before any request: {e}") from None
+        sesion.grow_planned(max(len(specs), len(sesion.manifiesto.doc["batches"])))
+        if specs:
+            # The billing canary opens the run: the lane must be proven before
+            # the first bracket bills anything under it.
+            await sesion.canary(level)
+        reporte = await sesion.brackets(specs)
+
+    return {
+        "run_id": sesion.run_id,
         "level": level,
-        "workloads": workloads,
-        "models": models,
-        "reps": reps,
-        "rep_filter": rep_filter,
-        "k": k,
-        "settle_s": settle_s,
-        "settle_poll_s": settle_poll_s,
-        "lane": True,
         "table_version": table_version,
-        "catalog": catalog,
-        "model_map": model_map or {},
-        "transport": transport,
-        "emit": emit,
+        "batches_planned": len(specs),
+        "batches_done": reporte.hechos,
+        "batches_skipped_done": reporte.omitidos - reporte.en_vuelo - reporte.abortados_previos,
+        "batches_in_flight_skipped": reporte.en_vuelo,
+        "batches_aborted_skipped": reporte.abortados_previos,
+        "requests_written": reporte.escritas,
     }
-    return asyncio.run(_run_async(cfg))

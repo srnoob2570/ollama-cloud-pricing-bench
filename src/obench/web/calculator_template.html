@@ -912,6 +912,13 @@
                 display: flex;
                 gap: 6px;
             }
+            .model-price {
+                font-size: 11px;
+                font-weight: 400;
+                color: var(--muted-foreground);
+                margin-top: 2px;
+                white-space: nowrap;
+            }
             .sep-l {
                 border-left: 1px solid var(--border);
             }
@@ -1364,6 +1371,23 @@
                 if (n >= 1000) return Math.round(n / 1000) + "k";
                 return String(n);
             }
+            function money(v) {
+                return "$" + parseFloat(v.toFixed(3));
+            }
+            function priceLine(model) {
+                // the official per-million rates as "in · cached · out", shown under
+                // each model name in the plan matrices and their PNG exports
+                var r = rateOf(model);
+                if (!r) return "";
+                var cached = isNum(r.cached_input) ? r.cached_input : r.input;
+                return (
+                    money(r.input) +
+                    " · " +
+                    money(cached) +
+                    " · " +
+                    money(r.output)
+                );
+            }
             function planTokens(model, credits, ratio) {
                 // how many tokens a plan's credits buy at a given in : out split: the budget
                 // prices as one weighted read at the official table, the same rules as the
@@ -1445,7 +1469,9 @@
                             return (
                                 '<tr><td class="mono">' +
                                 esc(m) +
-                                "</td>" +
+                                '<div class="model-price">' +
+                                esc(priceLine(m)) +
+                                "</div></td>" +
                                 tds +
                                 "</tr>"
                             );
@@ -1548,7 +1574,7 @@
                 ];
                 var escala = 2,
                     edge = 16,
-                    fila = 26,
+                    fila = 38,
                     pad = 10,
                     cabecera = 46,
                     tituloH = 24,
@@ -1577,6 +1603,13 @@
                         anchoModelo,
                         Math.ceil(medidas.measureText(m).width) + pad * 2,
                     );
+                    medidas.font = "11px " + fuente;
+                    anchoModelo = Math.max(
+                        anchoModelo,
+                        Math.ceil(medidas.measureText(priceLine(m)).width) +
+                            pad * 2,
+                    );
+                    medidas.font = "12px " + fuente;
                 });
                 var ancho =
                     Math.ceil(
@@ -1654,7 +1687,12 @@
                 modelos.forEach(function (m) {
                     ctx.textAlign = "left";
                     ctx.fillStyle = tok("--ink");
-                    ctx.fillText(m, edge + pad, ys + fila / 2);
+                    ctx.fillText(m, edge + pad, ys + fila / 2 - 7);
+                    ctx.font = "11px " + fuente;
+                    ctx.fillStyle = tok("--muted");
+                    ctx.fillText(priceLine(m), edge + pad, ys + fila / 2 + 9);
+                    ctx.font = "12px " + fuente;
+                    ctx.fillStyle = tok("--ink");
                     var xd = edge + anchoModelo;
                     columnas.forEach(function (col, i) {
                         var t = planTokens(m, plane.credits, col.ratio);

@@ -19,6 +19,8 @@ Plain static HTML with `__TOKEN__` placeholders, filled by pure `str.replace()` 
 
 JSON payloads are serialized with `ensure_ascii=False` and `"</"` is escaped to `"<\\/"` so the payload cannot close its own script tag. Every dynamic value elsewhere escapes through `html.escape` (Python side) or the JS `esc()` helper (client side); rendering uses `textContent`.
 
+Both templates carry a byte-equal `<script id="shared-formulas">` block: the protocol's pure math (`isNum`, `isNull`, `newCostCore`, `verdictOf`, `medianOf`) — DOM-free, page-global-free. Python and the browser speak different languages, so the copy is hand-kept and enforced by `tests/test_template_js.py` (byte equality across pages, parity with `verdict_of`/`new_task_cost` on the hand-math goldens, and the shipped block re-verdicting the rendered dashboard's embedded cells over node — skipped when node is absent). The per-page wrappers (`newCostAt`, `newCostAt2`, `planTokens`, `effectiveS`) stay in each template's main script and feed the shared core; the two `money()` variants differ on purpose (presentation, not drift).
+
 Loaders in the consumer: `_plantilla(name)` (analyze.py) reads each template from this package directory via `pathlib.Path(__file__).parent.joinpath("web", ...)`.
 
 ## Flow

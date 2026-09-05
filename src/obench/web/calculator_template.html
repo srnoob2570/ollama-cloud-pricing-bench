@@ -1263,6 +1263,65 @@
         <script id="rates-data" type="application/json">
             __RATES__
         </script>
+        <script id="shared-formulas">
+            // The protocol's pure math, kept byte-equal across both templates and
+            // verified against Python's verdict_of / new_task_cost by
+            // tests/test_template_js.py. DOM-free on purpose: the page runs it,
+            // and the test driver evals the same block over the goldens.
+            function isNum(x) {
+                return typeof x === "number" && isFinite(x);
+            }
+            function isNull(x) {
+                return x === null || x === undefined;
+            }
+            function newCostCore(tin, tout, rate, s, per) {
+                // one read of the official table at the scenario's in : out split;
+                // no published discount pins S(x) at S0, the slider cannot move it
+                if (!rate.has_cache_discount) s = 0;
+                return (
+                    (tin * (1 - s) * rate.input +
+                        tin * s * rate.cached_input +
+                        tout * rate.output) /
+                    per
+                );
+            }
+            function verdictOf(legacy, nuevo, tickUsd, legacySession, creditRatio) {
+                // the same rule as the persisted verdicts: the new side re-denominates to
+                // paid dollars (credits divide by the plan's credit multiplier) BEFORE the
+                // comparison, so the tie band is the MINIMUM of 2 ticks and 5 % of the
+                // cheaper PAID cost; margin_pct = (loser - winner) / winner.
+                // A sub-tick winner (weekly reads 0.0) prices with its session-derived
+                // weekly-equivalent; with no session reading either, the loser's own cost
+                // (a free winner saves the whole bill: exactly 100 %)
+                if (isNull(legacy) || isNull(nuevo))
+                    return { winner: "no data", margin_pct: null };
+                nuevo = nuevo / (creditRatio || 1);
+                var band = Math.min(2 * tickUsd, 0.05 * Math.min(legacy, nuevo));
+                if (Math.abs(legacy - nuevo) <= band)
+                    return { winner: "tie", margin_pct: null };
+                if (legacy < nuevo) {
+                    var winnerCost = legacy || legacySession || nuevo;
+                    return {
+                        winner: "legacy",
+                        margin_pct: ((nuevo - legacy) / winnerCost) * 100,
+                    };
+                }
+                return {
+                    winner: "new",
+                    margin_pct: ((legacy - nuevo) / (nuevo || legacy)) * 100,
+                };
+            }
+            function medianOf(vals) {
+                // statistics.median's convention: the middle value, or the mean of the two
+                // middles for an even count, the same median the persisted doc uses
+                if (!vals.length) return null;
+                var a = vals.slice().sort(function (x, y) {
+                    return x - y;
+                });
+                var m = Math.floor(a.length / 2);
+                return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+            }
+        </script>
         <script>
             "use strict";
             // The plan token-budget section's standalone page (the split from the
@@ -1342,12 +1401,6 @@
                     }[c];
                 });
             }
-            function isNum(x) {
-                return typeof x === "number" && isFinite(x);
-            }
-            function isNull(x) {
-                return x === null || x === undefined;
-            }
             function rateOf(model) {
                 return RATES && RATES.rates ? RATES.rates[model] || null : null;
             }
@@ -1395,15 +1448,11 @@
                 // pins S(x) at S0), with no measured token mix of its own to lean on
                 var r = rateOf(model);
                 if (!r || !(ratio > 0)) return null;
-                var s = effectiveS(model);
-                if (!r.has_cache_discount) s = 0; // no published discount: S(x) is S0, the control cannot move it
                 var wIn = ratio / (1 + ratio),
                     wOut = 1 / (1 + ratio);
-                var perToken =
-                    (wIn * (1 - s) * r.input +
-                        wIn * s * r.cached_input +
-                        wOut * r.output) /
-                    PER;
+                // the weighted split rides through newCostCore's token slots (linear in
+                // tokens): the same formula the dashboard prices with
+                var perToken = newCostCore(wIn, wOut, r, effectiveS(model), PER);
                 if (!(perToken > 0)) return null;
                 var total = credits / perToken;
                 return { tin: total * wIn, tout: total * wOut, total: total };

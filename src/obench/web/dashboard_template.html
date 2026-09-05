@@ -539,6 +539,68 @@
             .hero[data-winner="split"] {
                 border-left-color: var(--axis);
             }
+            .hero {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 22px 28px;
+            }
+
+            /* the hero's right column: what 100% of each plan buys, in tokens */
+            .hero-main {
+                flex: 1 1 420px;
+                min-width: 0;
+            }
+            .usage {
+                flex: 0 1 330px;
+                border-left: 1px solid var(--border);
+                padding-left: 24px;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                gap: 3px;
+            }
+            .usage-kicker {
+                font-size: 11px;
+                letter-spacing: 0.09em;
+                text-transform: uppercase;
+                color: var(--muted-foreground);
+            }
+            .usage-num {
+                font-size: clamp(26px, 2.6vw, 36px);
+                font-weight: 700;
+                letter-spacing: -0.018em;
+                line-height: 1.15;
+                white-space: nowrap;
+            }
+            .usage-num.u-legacy {
+                color: color-mix(in oklab, var(--legacy) 78%, var(--ink));
+            }
+            .usage-num.u-new {
+                color: color-mix(in oklab, var(--new) 72%, var(--ink));
+            }
+            .usage-unit {
+                font-size: 0.5em;
+                font-weight: 600;
+                color: var(--muted-foreground);
+            }
+            .usage-range,
+            .usage-foot {
+                font-size: 12px;
+                color: var(--muted-foreground);
+            }
+            .usage-foot {
+                margin-top: 8px;
+                max-width: 36ch;
+            }
+            @media (max-width: 820px) {
+                .usage {
+                    flex-basis: 100%;
+                    border-left: none;
+                    border-top: 1px solid var(--border);
+                    padding-left: 0;
+                    padding-top: 16px;
+                }
+            }
 
             .big {
                 font-size: clamp(23px, 3vw, 32px);
@@ -1208,9 +1270,16 @@
             <h1>Ollama Cloud cost analysis: legacy or new?</h1>
 
             <section id="reco" class="panel hero hero-in">
-                <div class="big" id="reco-headline"></div>
-                <div class="sub" id="reco-sub"></div>
-                <div class="pills" id="reco-pills"></div>
+                <div class="hero-main">
+                    <div class="big" id="reco-headline"></div>
+                    <div class="sub" id="reco-sub"></div>
+                    <div class="pills" id="reco-pills"></div>
+                </div>
+                <aside
+                    class="usage"
+                    id="reco-usage"
+                    aria-label="How much more usage one plan buys over the other at 100%"
+                ></aside>
             </section>
 
             <div class="panel">
@@ -1767,6 +1836,70 @@
                 );
             }
 
+            function fmtX(n) {
+                // the hero multiplier: one decimal below 10, integer above
+                return n >= 10 ? String(Math.round(n)) : n.toFixed(1);
+            }
+            function usageBlock() {
+                // how much more usage one plan buys over the other at 100%,
+                // per month, from the filtered cells. Legacy: the anchor
+                // amortizes the plan price over the weekly window, so $ancla /
+                // measured $-per-task = the tasks a fully drained meter affords
+                // (the session-derived weekly-equivalent backs a sub-tick read,
+                // the same fallback the verdict uses). New: ancla x credit_ratio
+                // of face-value credits at the live per-task price. The token
+                // figures cancel inside the ratio; the multiplier is the
+                // per-task paid-cost ratio inverted. Nothing persisted.
+                var rs = [];
+                cellsFiltered().forEach(function (c) {
+                    var t = taskTokens(c);
+                    if (!t) return;
+                    var leg = legacyPerTask(c);
+                    if (!leg || !(leg.usd > 0)) return;
+                    var nc = newCostAt(c);
+                    if (!isNum(nc) || nc <= 0) return;
+                    var l = (BP.ancla * t) / leg.usd;
+                    var n = (BP.ancla * CREDITRATIO * t) / nc;
+                    if (l > 0 && n > 0 && isFinite(l / n)) rs.push(l / n);
+                });
+                if (!rs.length) return "";
+                // central estimate = median of the per-cell ratios; the min-max
+                // range is the margin of error (the meter drains per workload
+                // shape and model)
+                var mid = medianOf(rs);
+                var lo = Math.min.apply(null, rs);
+                var hi = Math.max.apply(null, rs);
+                var nuevo = mid < 1;
+                var x = nuevo ? 1 / mid : mid;
+                var xl = nuevo ? 1 / hi : lo;
+                var xh = nuevo ? 1 / lo : hi;
+                var who = nuevo
+                    ? "the $" +
+                      Math.round(BP.ancla * CREDITRATIO) +
+                      " in credits buy this much more usage than the old meter"
+                    : "the old meter buys this much more usage than the $" +
+                      Math.round(BP.ancla * CREDITRATIO) +
+                      " in credits";
+                return (
+                    '<div class="usage-kicker">usage if you burn 100% of each plan</div>' +
+                    '<div class="usage-num ' +
+                    (nuevo ? "u-new" : "u-legacy") +
+                    '">&times;' +
+                    fmtX(x) +
+                    '<span class="usage-unit"> more usage</span></div>' +
+                    '<div class="usage-range">range &times;' +
+                    fmtX(xl) +
+                    "&ndash;&times;" +
+                    fmtX(xh) +
+                    " &middot; by workload mix</div>" +
+                    '<div class="usage-foot">' +
+                    who +
+                    "; median across " +
+                    rs.length +
+                    " workloads (&plusmn; half a meter tick per read, credits priced at the current hit-rate setting)</div>"
+                );
+            }
+
             function renderReco() {
                 var grupos = {};
                 cellsFiltered().forEach(function (c) {
@@ -1862,6 +1995,7 @@
                     " USD per weekly pp (tick $" +
                     Number(TICKUSD).toFixed(6) +
                     ").";
+                $("reco-usage").innerHTML = usageBlock();
             }
 
             function renderTable() {

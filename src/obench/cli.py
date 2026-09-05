@@ -24,7 +24,7 @@ from . import (
     workloads,
 )
 from .pricing import PriceTable, TableError
-from .runner import Manifest, RunnerError, run_level
+from .runner import Manifest, RunnerError, run_level, status_doc
 
 SUBCOMMANDS = (
     "dry-run",
@@ -283,109 +283,6 @@ def _stub(nombre: str):
     return _cmd
 
 
-def _numero(valor) -> float | None:
-    """A real number from a manifest (bools are not numbers here), or None."""
-    if isinstance(valor, bool) or not isinstance(valor, (int, float)):
-        return None
-    return valor
-
-
-def _status_doc(nivel: str, manifiesto: Manifest) -> dict:
-    """The status of one level's run, computed from its manifest (no API).
-
-    The manifest is run state that a recovering operator may have hand-edited:
-    malformed entries render as unknown/corrupt instead of crashing the report.
-    """
-    doc = manifiesto.doc
-    counts: dict[str, int] = {"done": 0, "aborted": 0, "in_flight": 0}
-    dpp_session = dpp_weekly = 0.0
-    con_bracket = cerrados = 0
-    requests_ok = 0
-    batches = []
-    # The billing canary's volleys are bracketed spend no batch line carries:
-    # kept separate so the quota totals stay equal to the per-batch rows, and
-    # the report can state the canary's own consumption explicitly.
-    canario = doc.get("canary")
-    canario_dpp = canario.get("dpp") if isinstance(canario, dict) else None
-
-    def _pareada(salted, replay):
-        """A canary window's paired spend: salted + replay, or None when either
-        reading is unreadable (a half-pair would understate the quota)."""
-        salada, repeticion = _numero(salted), _numero(replay)
-        return salada + repeticion if salada is not None and repeticion is not None else None
-
-    canario_sesion = canario_semanal = None
-    if isinstance(canario_dpp, dict):
-        canario_sesion = _pareada(
-            canario_dpp.get("salted_session"), canario_dpp.get("replay_session")
-        )
-        canario_semanal = _pareada(
-            canario_dpp.get("salted_weekly"), canario_dpp.get("replay_weekly")
-        )
-    for batch_id, entrada in doc.get("batches", {}).items():
-        if not isinstance(entrada, dict):
-            entrada = {"status": "corrupt"}
-        estado = str(entrada.get("status", "?"))
-        counts[estado] = counts.get(estado, 0) + 1
-        dpp_s = _numero(entrada.get("dpp_session"))
-        dpp_w = _numero(entrada.get("dpp_weekly"))
-        if estado in ("done", "aborted"):
-            cerrados += 1
-        # Each window accumulates on its own readable delta, so the quota totals
-        # always agree with the report's own per-batch rows; `batches_with_bracket`
-        # keeps counting only the brackets both windows resolved.
-        if dpp_s is not None:
-            dpp_session += dpp_s
-        if dpp_w is not None:
-            dpp_weekly += dpp_w
-        if dpp_s is not None and dpp_w is not None:
-            con_bracket += 1
-        ok = _numero(entrada.get("requests_ok"))
-        if ok is not None:
-            requests_ok += int(ok)
-        batches.append(
-            {
-                "batch_id": batch_id,
-                "status": estado,
-                "workload": entrada.get("workload"),
-                "pool": entrada.get("pool"),
-                "model": entrada.get("model"),
-                "rep": entrada.get("rep"),
-                "dpp_session": dpp_s,
-                "dpp_weekly": dpp_w,
-                "requests_ok": None if ok is None else int(ok),
-                "note": entrada.get("note"),
-            }
-        )
-    try:
-        planned = int(doc.get("planned", len(batches)))
-    except (TypeError, ValueError):
-        planned = len(batches)
-    counts["pending"] = max(0, planned - len(batches))
-    return {
-        "level": doc.get("level", nivel),
-        "run_id": doc.get("run_id"),
-        "table_version": doc.get("table_version"),
-        "protocol_version": doc.get("protocol_version"),
-        "k": doc.get("k"),
-        "started_at": doc.get("started_at"),
-        "planned": planned,
-        "counts": counts,
-        "requests_ok": requests_ok,
-        "quota": {
-            # the deltas keep their exact float (methodology v1.1 §4); the
-            # human table formats them, the JSON never re-rounds them
-            "dpp_session": dpp_session,
-            "dpp_weekly": dpp_weekly,
-            "batches_with_bracket": con_bracket,
-            "closed_batches": cerrados,
-            "canary_dpp_session": canario_sesion,
-            "canary_dpp_weekly": canario_semanal,
-        },
-        "batches": batches,
-    }
-
-
 def _print_status(doc: dict) -> None:
     counts = doc["counts"]
     print(f"{doc['level']} run {doc['run_id']}  table={doc['table_version']}  k={doc['k']}")
@@ -501,7 +398,7 @@ def cmd_status(args: argparse.Namespace) -> int:
             # stderr: stdout carries only the report, so --json stays parseable
             print(f"{nivel}: no run manifest - nothing has run for this level", file=sys.stderr)
             continue
-        resumen.append(_status_doc(nivel, manifiesto))
+        resumen.append(status_doc(nivel, manifiesto))
     if args.json:
         print(json.dumps({"levels": resumen}, ensure_ascii=False, indent=2))
     else:
@@ -1000,13 +897,7 @@ def _analyze_release(args: argparse.Namespace) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
     try:
-        carpeta = analyze.write_bundle(
-            stage,
-            doc,
-            emit=_emit,
-            rates=analyze.rates_map(tabla, doc),
-            calculator_rates=analyze.rates_map_full(tabla),
-        )
+        carpeta = analyze.write_bundle(stage, doc, tabla=tabla)
     except analyze.AnalyzeError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -1059,13 +950,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
     try:
-        carpeta = analyze.write_bundle(
-            _base(args),
-            doc,
-            emit=_emit,
-            rates=analyze.rates_map(tabla, doc),
-            calculator_rates=analyze.rates_map_full(tabla),
-        )
+        carpeta = analyze.write_bundle(_base(args), doc, tabla=tabla)
     except analyze.AnalyzeError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2

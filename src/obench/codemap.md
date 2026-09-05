@@ -68,13 +68,14 @@ Invariants threaded through the flow: the API key exists only in the environment
 | `fixtures_t3.py` | The 3 T3 mini-repos (bug/features/refactor), the single-JSON-action contract, `MAX_STEPS = 12`, canonical fixes. |
 | `gate.py` | Spending gate: mark/require/consume of the per-level dry-run mark. |
 | `lane.py` | Cache-free lane: run-scoped seeded nonces as first tokens, size rule and exemptions, canary model pinning, hash helpers. |
+| `meter.py` | The meter's units and the anchor bridge (leaf, zero internal imports): TICK_PP/TICK_BAND, WEEKS_PER_MONTH/SESSION_R/DEFAULT_CREDIT_RATIO, `usd_per_pp`/`session_usd_per_pp`. |
 | `preflight.py` | Catalog preflight: slate coverage against `/v1/models`, tag matching, drift abort before billing. |
 | `predict.py` | Predictability HITL flow: hash-locked blind/informed estimate registries + comparative MAPE report (paired bootstrap CI). |
 | `pricing.py` | Versioned price table loading/validation (input / cached input / output rates, `per` unit). |
 | `pricing_pull.py` | `bench pricing-pull`: snapshots the upstream rate card (ollama-cloud-catalog artifact) into a new versioned table — fail-loud validation, alias mapping, rate-by-rate diff, immutable-landing refusal, peak block as metadata. |
 | `releases.py` | Dataset releases via `gh`: package/publish/fetch/verify (sha256 both directions, credential scrub, frozen v2 handling). |
-| `runner.py` | Bracketed-batch protocol: plan, manifest/resume/drift guards, burst, registration settle, Δpp, billing canary, raw line writing. |
+| `runner.py` | Bracketed-batch protocol: plan, manifest/resume/drift guards, burst, registration settle, Δpp, billing canary, raw line writing; `status_doc` (the single manifest-shape→report reader) next to `Manifest`. |
 | `sandbox.py` | T3 checker sandbox: rebuild the graded copy (fixture-owned tests/config), run pytest in a bounded subprocess. |
 | `sandbox_runner.py` | Sandbox subprocess entry: network guard install, readiness handshake, exit-code grading, exit 90 on misconfiguration. |
-| `schema.py` | On-write schema validation of every raw dataset line (request/batch/probe/canary/estimate). |
+| `schema.py` | On-write schema validation of every raw dataset line (request/batch/probe/canary/estimate); the tolerant raw readers `read_jsonl`/`read_dataset`. |
 | `workloads.py` | Workload table (requests, token shapes) and model slates per level; the STRONG/WEAK T2 hybrid split. |

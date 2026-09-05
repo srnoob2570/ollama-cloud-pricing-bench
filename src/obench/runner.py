@@ -50,6 +50,7 @@ import uuid
 from . import agent, checkers, fixtures, lane, schema, workloads as workloads_mod
 from .client import PROTOCOL_VERSION, OllamaCloud
 from .fixtures import FIXTURE_VERSION
+from .meter import TICK_BAND, TICK_PP  # the meter's resolution, in percentage points
 
 # The passive detector's expected Δpp rates (weekly pp per 1M tokens), from the
 # measurability-budget derivation (issue #28, docs/research/presupuesto-
@@ -62,11 +63,6 @@ from .fixtures import FIXTURE_VERSION
 DETECTOR_RATES = {"prefill": 2.6, "generation": 5.4}
 DETECTOR_PREFILL_SHARE = 0.9
 DETECTOR_TICKS_FLOOR = 3.5
-TICK_PP = 0.1
-# Relative float-residue band around a tick boundary, for COMPARISON logic only
-# (the deltas stay exact — precision policy): a reading of exactly one tick must
-# not read as a collapse on 0.09999999999999998.
-TICK_BAND = 1e-9
 
 # The bracket composition the plan derives (methodology v1.1 §5). A manifest
 # binds its composition: a pre-hybrid manifest's batch ids cover per-rep
@@ -314,6 +310,112 @@ class Manifest:
         tmp = self.ruta.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(self.doc, indent=2), encoding="utf-8")
         tmp.replace(self.ruta)
+
+
+def _numero(valor) -> float | None:
+    """A real number from a manifest (bools are not numbers here), or None."""
+    if isinstance(valor, bool) or not isinstance(valor, (int, float)):
+        return None
+    return valor
+
+
+def status_doc(nivel: str, manifiesto: Manifest) -> dict:
+    """The status of one level's run, computed from its manifest (no API).
+
+    The single owner of the manifest-shape-to-report contract (the writer is
+    `Manifest.set` and the canary's `_ensure_canary`, so the reader lives
+    next to them): a key rename cannot silently break `bench status`. The
+    manifest is run state that a recovering operator may have hand-edited:
+    malformed entries render as unknown/corrupt instead of crashing the report.
+    """
+    doc = manifiesto.doc
+    counts: dict[str, int] = {"done": 0, "aborted": 0, "in_flight": 0}
+    dpp_session = dpp_weekly = 0.0
+    con_bracket = cerrados = 0
+    requests_ok = 0
+    batches = []
+    # The billing canary's volleys are bracketed spend no batch line carries:
+    # kept separate so the quota totals stay equal to the per-batch rows, and
+    # the report can state the canary's own consumption explicitly.
+    canario = doc.get("canary")
+    canario_dpp = canario.get("dpp") if isinstance(canario, dict) else None
+
+    def _pareada(salted, replay):
+        """A canary window's paired spend: salted + replay, or None when either
+        reading is unreadable (a half-pair would understate the quota)."""
+        salada, repeticion = _numero(salted), _numero(replay)
+        return salada + repeticion if salada is not None and repeticion is not None else None
+
+    canario_sesion = canario_semanal = None
+    if isinstance(canario_dpp, dict):
+        canario_sesion = _pareada(
+            canario_dpp.get("salted_session"), canario_dpp.get("replay_session")
+        )
+        canario_semanal = _pareada(
+            canario_dpp.get("salted_weekly"), canario_dpp.get("replay_weekly")
+        )
+    for batch_id, entrada in doc.get("batches", {}).items():
+        if not isinstance(entrada, dict):
+            entrada = {"status": "corrupt"}
+        estado = str(entrada.get("status", "?"))
+        counts[estado] = counts.get(estado, 0) + 1
+        dpp_s = _numero(entrada.get("dpp_session"))
+        dpp_w = _numero(entrada.get("dpp_weekly"))
+        if estado in ("done", "aborted"):
+            cerrados += 1
+        # Each window accumulates on its own readable delta, so the quota totals
+        # always agree with the report's own per-batch rows; `batches_with_bracket`
+        # keeps counting only the brackets both windows resolved.
+        if dpp_s is not None:
+            dpp_session += dpp_s
+        if dpp_w is not None:
+            dpp_weekly += dpp_w
+        if dpp_s is not None and dpp_w is not None:
+            con_bracket += 1
+        ok = _numero(entrada.get("requests_ok"))
+        if ok is not None:
+            requests_ok += int(ok)
+        batches.append(
+            {
+                "batch_id": batch_id,
+                "status": estado,
+                "workload": entrada.get("workload"),
+                "pool": entrada.get("pool"),
+                "model": entrada.get("model"),
+                "rep": entrada.get("rep"),
+                "dpp_session": dpp_s,
+                "dpp_weekly": dpp_w,
+                "requests_ok": None if ok is None else int(ok),
+                "note": entrada.get("note"),
+            }
+        )
+    try:
+        planned = int(doc.get("planned", len(batches)))
+    except (TypeError, ValueError):
+        planned = len(batches)
+    counts["pending"] = max(0, planned - len(batches))
+    return {
+        "level": doc.get("level", nivel),
+        "run_id": doc.get("run_id"),
+        "table_version": doc.get("table_version"),
+        "protocol_version": doc.get("protocol_version"),
+        "k": doc.get("k"),
+        "started_at": doc.get("started_at"),
+        "planned": planned,
+        "counts": counts,
+        "requests_ok": requests_ok,
+        "quota": {
+            # the deltas keep their exact float (methodology v1.1 §4); the
+            # human table formats them, the JSON never re-rounds them
+            "dpp_session": dpp_session,
+            "dpp_weekly": dpp_weekly,
+            "batches_with_bracket": con_bracket,
+            "closed_batches": cerrados,
+            "canary_dpp_session": canario_sesion,
+            "canary_dpp_weekly": canario_semanal,
+        },
+        "batches": batches,
+    }
 
 
 def open_workstream_manifest(

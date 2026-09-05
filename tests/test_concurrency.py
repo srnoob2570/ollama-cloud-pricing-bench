@@ -14,7 +14,8 @@ import pathlib
 
 from test_run import read_jsonl  # the one-JSONL-file assertion helper
 
-from obench.concurrency import PROBE_K_FROM, WEEKS_PER_MONTH
+from obench.concurrency import PROBE_K_FROM
+from obench.meter import usd_per_pp  # the anchor bridge, the one true copy
 
 MODEL = "glm-5.3-flash"
 
@@ -72,10 +73,6 @@ def summary(tmp_path) -> dict:
     files = sorted((pathlib.Path(tmp_path) / "runs").glob("concurrency-*.json"))
     assert len(files) == 1, f"expected exactly one concurrency summary, got {files}"
     return json.loads(files[0].read_text(encoding="utf-8"))
-
-
-def usd_per_pp(ancla: float) -> float:
-    return (ancla / WEEKS_PER_MONTH) / 100.0
 
 
 def test_probe_refuses_without_a_dry_run_mark(tmp_path, fake_cli):

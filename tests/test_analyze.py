@@ -21,8 +21,7 @@ from conftest import write_table
 from test_dry_run import run_cli  # noqa: F401  (the shared CLI-seam runner, kept for parity)
 
 from obench.client import PROTOCOL_VERSION
-from obench.concurrency import usd_per_pp
-from obench.analyze import SESSION_R
+from obench.meter import SESSION_R, usd_per_pp
 from obench import analyze as analyze_module
 from obench.schema import validate_batch_line, validate_request_line
 

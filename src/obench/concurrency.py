@@ -38,6 +38,7 @@ import time
 
 from . import fixtures, schema
 from .client import PROTOCOL_VERSION, OllamaCloud
+from .meter import usd_per_pp  # the anchor bridge: a Δpp's paid dollars
 from .runner import (
     BatchContext,
     BatchSpec,
@@ -50,6 +51,7 @@ from .runner import (
     batch_id,
     open_workstream_manifest,
 )
+from .schema import read_jsonl
 
 ANCHOR_LEVEL = "T1"  # the workstream runs on the T1 anchor: its cheapest fixture
 ANCHOR_WORKLOAD = "concurrency"
@@ -61,12 +63,6 @@ PROBE_K_FROM = 4
 # dry-run mark: a hard ceiling bounds the worst case (every volley accepted up
 # to k_max) to ~2k one-word requests, far above the published per-plan limits.
 PROBE_K_CEILING = 64
-WEEKS_PER_MONTH = 4.345  # the anchor's amortization (methodology v1's cost model)
-
-
-def usd_per_pp(ancla: float) -> float:
-    """The anchor bridge: P_LEGADO amortized per week, divided by the 100 pp window."""
-    return (ancla / WEEKS_PER_MONTH) / 100.0
 
 
 def re_anchor(cut_off: int | None) -> list[tuple[int, str]]:
@@ -97,27 +93,11 @@ def re_anchor(cut_off: int | None) -> list[tuple[int, str]]:
     return celdas
 
 
-def _read_jsonl(ruta: pathlib.Path) -> list[dict]:
-    if not ruta.exists():
-        return []
-    lineas = []
-    for cruda in ruta.read_text(encoding="utf-8").splitlines():
-        if not cruda.strip():
-            continue
-        try:
-            doc = json.loads(cruda)
-        except json.JSONDecodeError:
-            continue  # a torn tail line from a crash mid-write is skipped, not fatal
-        if isinstance(doc, dict):
-            lineas.append(doc)
-    return lineas
-
-
 def _probe_attempt(ruta_probe: pathlib.Path, run_id: str) -> int:
     """The next probe attempt number for this run_id (a re-probed sweep is a new attempt)."""
     prefijo = f"{run_id}-a"
     mayor = 0
-    for linea in _read_jsonl(ruta_probe):
+    for linea in read_jsonl(ruta_probe):
         pid = linea.get("probe_id")
         if isinstance(pid, str) and pid.startswith(prefijo):
             cola = pid[len(prefijo) :].split("-", 1)[0]
@@ -322,8 +302,8 @@ def _build_summary(
     cell carries its own model.
     """
     usd = usd_per_pp(ancla)
-    batches = _read_jsonl(batches_dir / f"batches-{run_id}.jsonl")
-    requests = _read_jsonl(runs_dir / f"requests-{run_id}.jsonl")
+    batches = read_jsonl(batches_dir / f"batches-{run_id}.jsonl")
+    requests = read_jsonl(runs_dir / f"requests-{run_id}.jsonl")
     celdas = []
     por_batch: dict[str | None, list[dict]] = {}
     for r in requests:

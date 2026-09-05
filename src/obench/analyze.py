@@ -70,12 +70,19 @@ import time
 
 from . import calibration as calibration_mod
 from . import workloads as workloads_mod
-from .calibration import TICK_BAND, TICK_PP  # the meter's resolution, in percentage points
 from .client import PROTOCOL_VERSION
 from .concurrency import ANCHOR_WORKLOAD as K_WORKLOAD  # the k-cells' workload
-from .concurrency import _read_jsonl, usd_per_pp
 from .cost import new_task_cost  # the cost model's single pricing formula
+from .meter import (  # the meter's resolution and the anchor bridge
+    DEFAULT_CREDIT_RATIO,
+    SESSION_R,
+    TICK_BAND,
+    TICK_PP,
+    session_usd_per_pp,
+    usd_per_pp,
+)
 from .pricing import TableError
+from .schema import read_dataset
 
 CACHE_SWEEP_S = (0.0, 0.25, 0.5, 0.9)  # the fixed cache sweep (S0 included)
 # The methodology version this harness implements: the versioned S1 default is
@@ -95,26 +102,15 @@ ANCLA_FACTORS = (0.7, 1.0, 1.3)  # the fixed P_LEGADO sweep (+/-30 %)
 # scenario; the cache sweep covers the S axis itself.
 SWEEP_SCENARIO = "s0"
 # The session window's secondary $/pp is DERIVED, never an independent anchor
-# (methodology v1 §3): session $/pp = weekly $/pp / R, R the session:weekly
-# tick ratio, live-verified at 6.22 (expected range 5-7) -> ~$0.037/session pp.
-SESSION_R = 6.22
+# (methodology v1 §3): session $/pp = weekly $/pp / R, R the session:weekly tick
+# ratio in meter.SESSION_R (live-verified 6.22, expected range 5-7) — the weekly
+# window remains the study's unit of account and its only anchor.
 SESSION_CAVEAT = (
     "session figures are the derived secondary signal, unanchored and never an "
     "independent anchor: session $/pp = weekly $/pp / R (R = session:weekly "
     f"ticks, live verification {SESSION_R:g}, expected range 5-7); the weekly "
     "window remains the study's unit of account and its only anchor"
 )
-# The paid-dollar re-denomination every comparison point applies by default
-# (methodology v1.3 §3): the new plan sells credits at a per-tier multiplier
-# (Max $100 → $300 credits), so the anchor tier's ratio is 3.0. Declared once
-# here and mirrored by build's own default, so no caller can silently compare
-# in face-value credits.
-DEFAULT_CREDIT_RATIO = 3.0
-
-
-def session_usd_per_pp(usd_weekly: float) -> float:
-    """The session window's derived $/pp: the weekly bridge divided by R."""
-    return usd_weekly / SESSION_R
 
 
 TASK_WORKLOADS = frozenset(w.name for ws in workloads_mod.WORKLOADS_BY_LEVEL.values() for w in ws)
@@ -719,17 +715,6 @@ def _sweep_k(batches: list[dict], requests: list[dict], usd: float, session_usd:
     }
 
 
-def _read_dataset(directorio: pathlib.Path, patron: str) -> list[dict]:
-    """Every raw line of the directory's dataset files, torn tails skipped."""
-    lineas: list[dict] = []
-    directorio = pathlib.Path(directorio)
-    if not directorio.exists():
-        return lineas
-    for ruta in sorted(directorio.glob(patron)):
-        lineas.extend(_read_jsonl(ruta))
-    return lineas
-
-
 # ---------------------------------------------------------------------------
 # the pooled brackets' post-hoc allocation (methodology v1.1 §5)
 # ---------------------------------------------------------------------------
@@ -886,8 +871,8 @@ def build(
     base = pathlib.Path(base)
     vintage = protocol_version or PROTOCOL_VERSION
     runs_dir = base / "runs"
-    requests = _read_dataset(runs_dir, "requests-*.jsonl")
-    batches = _read_dataset(base / "batches", "batches-*.jsonl")
+    requests = read_dataset(runs_dir, "requests-*.jsonl")
+    batches = read_dataset(base / "batches", "batches-*.jsonl")
     if not requests and not batches:
         raise AnalyzeError(
             f"no raw dataset under {base} (runs/requests-*.jsonl and batches/batches-*.jsonl): "
@@ -1049,17 +1034,17 @@ def _rates_payload(modelos, tabla, *, skip_unpriced: bool) -> dict:
     return {"per": tabla.per, "rates": tarifas}
 
 
-def rates_map(tabla, doc: dict) -> dict:
+def _rates_map(tabla, doc: dict) -> dict:
     """The per-model rates the dashboard's slider recomputes from, embedded in
     the DASHBOARD ONLY (presentation layer, #41's amendment v1.2): nothing
     persisted changes — analysis.json carries no rates, the raw is immutable,
     and derivatives regenerate only with versioned parameters. A cell's model
     the chosen table no longer prices takes no rate. The calculator page
-    embeds the FULL table's rates instead (rates_map_full)."""
+    embeds the FULL table's rates instead (_rates_map_full)."""
     return _rates_payload({c["model"] for c in doc["cells"]}, tabla, skip_unpriced=True)
 
 
-def rates_map_full(tabla) -> dict:
+def _rates_map_full(tabla) -> dict:
     """The FULL Ollama-reported pricing table as per-model rates: every model
     the chosen table prices — measured cells or not — because the calculator's
     matrix prices any model the table carries, never only the analysis set's.
@@ -1116,29 +1101,18 @@ def _refutar_referencia(base: pathlib.Path, doc: dict) -> None:
         )
 
 
-def write_bundle(
-    base: pathlib.Path,
-    doc: dict,
-    emit=print,
-    *,
-    rates: dict | None = None,
-    calculator_rates: dict | None = None,
-) -> pathlib.Path:
+def write_bundle(base: pathlib.Path, doc: dict, *, tabla) -> pathlib.Path:
     """Writes the analysis bundle under `base/analysis/` — or, when the doc's S
     differs from the versioned default, under the stamped re-run's own folder
     (`analysis-s0.35`): the persisted s0/s1 set is never edited by a custom S
     (methodology v1.2, #46), nor shrunk by a default-S re-run that filters the
-    slate (--model/--level). Returns the folder. `rates` (from `rates_map`)
-    rides only inside the dashboard: the slider's live recomputation needs
-    them, analysis.json does not. `calculator_rates` (from `rates_map_full`)
-    rides only inside the calculator page: its matrix prices every model the
-    chosen table lists, so it embeds the table's full per-model rates — a call
-    without them ships an empty calculator, so the write is refused."""
-    if calculator_rates is None:
-        raise AnalyzeError(
-            "write_bundle needs the calculator's FULL rates: an empty calculator "
-            "prices zero models - pass calculator_rates from rates_map_full(tabla)"
-        )
+    slate (--model/--level). Returns the folder. Both embedded rates payloads
+    derive from `tabla` here, so the caller cannot mis-assemble the bundle:
+    the dashboard gets the cells-derived rates (_rates_map) its slider's live
+    recomputation needs, the calculator gets the FULL table's rates
+    (_rates_map_full) its matrix prices every listed model with. Analysis.json
+    carries no rates — presentation layer only (#41's amendment v1.2), nothing
+    persisted changes."""
     destino = bundle_dirname(doc)
     if destino == "analysis":
         _refutar_referencia(base, doc)
@@ -1147,9 +1121,11 @@ def write_bundle(
     (carpeta / "analysis.json").write_text(
         json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    (carpeta / "dashboard.html").write_text(render_dashboard(doc, rates), encoding="utf-8")
+    (carpeta / "dashboard.html").write_text(
+        render_dashboard(doc, _rates_map(tabla, doc)), encoding="utf-8"
+    )
     (carpeta / "calculator.html").write_text(
-        render_calculator(doc, calculator_rates), encoding="utf-8"
+        render_calculator(doc, _rates_map_full(tabla)), encoding="utf-8"
     )
     return carpeta
 
@@ -1188,35 +1164,33 @@ def _render_page(plantilla: str, opciones: str, tarifas: dict, doc: dict) -> str
     )
 
 
-def render_dashboard(doc: dict, rates: dict | None = None) -> str:
+def render_dashboard(doc: dict, rates: dict) -> str:
     """The dashboard page of the Pages bundle: the analysis doc rides inside
     it as JSON (a single file, no sibling fetches), the model filter, the
     three-state theme and the cache control are plain DOM, and every value
     escapes through textContent, html.escape or the JS esc() helper. Styling
     loads from the CDN — GitHub Pages serves online, so the Pages-first
-    contract ships no vendored sheet. `rates` (from `rates_map`) rides in its
+    contract ships no vendored sheet. `rates` (from `_rates_map`) rides in its
     own JSON block: the cache control's live recomputation needs them;
     analysis.json never does."""
-    tarifas = rates if rates is not None else {"per": 1_000_000, "rates": {}}
     opciones = "".join(
         f'<option value="{html.escape(m)}">{html.escape(m)}</option>'
         for m in sorted({c["model"] for c in doc["cells"]})
     )
-    return _render_page(_plantilla("dashboard"), opciones, tarifas, doc)
+    return _render_page(_plantilla("dashboard"), opciones, rates, doc)
 
 
-def render_calculator(doc: dict, rates: dict | None = None) -> str:
+def render_calculator(doc: dict, rates: dict) -> str:
     """The calculator page of the Pages bundle, carrying the plan token-budget
     matrices that left the dashboard in the split. `rates` is the FULL
-    per-model map (from `rates_map_full`): every model the chosen table prices
+    per-model map (from `_rates_map_full`): every model the chosen table prices
     gets a row and a filter option, measured cell or not — the dashboard keeps
     its own cells-derived rates payload unchanged. The doc rides inside it as
     JSON (its base_params and per-model S drive the pricing); same rules as
     render_dashboard: a single file with no sibling fetches, CDN styling,
     every value escaped through html.escape or the JS esc() helper."""
-    tarifas = rates if rates is not None else {"per": 1_000_000, "rates": {}}
     opciones = "".join(
         f'<option value="{html.escape(m)}">{html.escape(m)}</option>'
-        for m in sorted(tarifas["rates"])
+        for m in sorted(rates["rates"])
     )
-    return _render_page(_plantilla("calculator"), opciones, tarifas, doc)
+    return _render_page(_plantilla("calculator"), opciones, rates, doc)

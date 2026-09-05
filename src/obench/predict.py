@@ -73,11 +73,11 @@ from . import lane as lane_mod
 from . import workloads as workloads_mod
 from .analyze import S1_DEFAULT
 from .analyze import _es_numero  # the cost model's number test, shared with analyze
-from .calibration import TICK_BAND, TICK_PP
 from .client import PROTOCOL_VERSION
 from .cost import new_task_cost
+from .meter import TICK_BAND, TICK_PP  # the meter's resolution, in percentage points
 from .pricing import TableError
-from .schema import validate_estimate_line
+from .schema import read_dataset, validate_estimate_line
 
 BLIND = "blind"
 INFORMED = "informed"
@@ -245,7 +245,7 @@ def cell_evidence(base, workload: str, model: str) -> tuple[int, int]:
     conteos = [
         sum(
             1
-            for linea in analyze_mod._read_dataset(base / carpeta, patron)
+            for linea in read_dataset(base / carpeta, patron)
             if linea.get("workload") == workload and linea.get("model") == model
         )
         for carpeta, patron in (("runs", "requests-*.jsonl"), ("batches", "batches-*.jsonl"))

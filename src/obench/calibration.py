@@ -49,7 +49,7 @@ import statistics
 
 from . import fixtures
 from .client import PROTOCOL_VERSION, OllamaCloud
-from .concurrency import _read_jsonl
+from .meter import TICK_BAND, TICK_PP  # the meter's resolution, in percentage points
 from .pricing import TableError
 from .runner import (
     BatchContext,
@@ -59,6 +59,7 @@ from .runner import (
     batch_id,
     open_workstream_manifest,
 )
+from .schema import read_jsonl
 
 CACHE_LEVEL = "T2-cache"  # the workstream's manifest identity (status renders it)
 COLD_WORKLOAD = "cache_cold"
@@ -66,14 +67,7 @@ INTRA_WORKLOAD = "cache_intra"
 SPACED_WORKLOAD = "cache_spaced"
 CACHE_REPEATS = 4  # the intra-batch replay count (methodology v1 §7's r=4)
 SPACED_TARGETS = (5.0, 30.0, 90.0)  # the spaced replays' cumulative offsets (s)
-TICK_PP = 0.1  # one 0.001 meter tick, in percentage points
 CONCLUSIVE_TICKS = 2.0  # the override rule's resolution floor (>2 ticks)
-# Relative float-residue band around a tick boundary, for COMPARISON logic
-# only (the deltas themselves stay exact — methodology v1.1 §4): a meter delta
-# is a difference of tick-quantized readings, so a true exact-boundary value
-# lands within ~1e-13 relative of the threshold; anything genuinely past it is
-# orders of magnitude beyond this band.
-TICK_BAND = 1e-9
 _WORKLOADS = (COLD_WORKLOAD, INTRA_WORKLOAD, SPACED_WORKLOAD)
 
 
@@ -438,8 +432,8 @@ def _build_summary(
     It covers every model the run_id ever calibrated — later invocations extend
     it, so `analyze` reads one doc per run and finds each model's reading there.
     """
-    batches = _read_jsonl(batches_dir / f"batches-{run_id}.jsonl")
-    requests = _read_jsonl(runs_dir / f"requests-{run_id}.jsonl")
+    batches = read_jsonl(batches_dir / f"batches-{run_id}.jsonl")
+    requests = read_jsonl(runs_dir / f"requests-{run_id}.jsonl")
     por_modelo: dict[str, dict[str, dict]] = {}
     for b in batches:
         if b.get("workload") in _WORKLOADS:

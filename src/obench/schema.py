@@ -7,6 +7,9 @@ malformed producer fails loudly instead of poisoning the dataset.
 
 from __future__ import annotations
 
+import json
+import pathlib
+
 # field -> allowed types (None means the key must still be present, with value null)
 _REQUEST_SCHEMA: dict[str, tuple] = {
     "req_id": (str,),
@@ -226,3 +229,34 @@ def validate_estimate_line(line: dict) -> None:
     celda = line["cell"]
     if not isinstance(celda.get("workload"), str) or not isinstance(celda.get("model"), str):
         raise SchemaError("estimate line: 'cell' must carry 'workload' and 'model' strings")
+
+
+def read_jsonl(ruta: pathlib.Path) -> list[dict]:
+    """The raw lines of one JSONL artifact, tolerant of a torn tail: the run
+    reads line-by-line, so a crash mid-write can leave the last line half
+    written — it is skipped, not fatal (the raw is immutable, the reader is
+    the only tolerance the protocol grants)."""
+    if not ruta.exists():
+        return []
+    lineas = []
+    for cruda in ruta.read_text(encoding="utf-8").splitlines():
+        if not cruda.strip():
+            continue
+        try:
+            doc = json.loads(cruda)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(doc, dict):
+            lineas.append(doc)
+    return lineas
+
+
+def read_dataset(directorio: pathlib.Path, patron: str) -> list[dict]:
+    """Every raw line of the directory's dataset files, torn tails skipped."""
+    lineas: list[dict] = []
+    directorio = pathlib.Path(directorio)
+    if not directorio.exists():
+        return lineas
+    for ruta in sorted(directorio.glob(patron)):
+        lineas.extend(read_jsonl(ruta))
+    return lineas

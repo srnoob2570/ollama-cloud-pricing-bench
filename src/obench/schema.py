@@ -188,7 +188,7 @@ def validate_request_line(line: dict) -> None:
 
 def validate_batch_line(line: dict) -> None:
     _validate(line, _BATCH_SCHEMA, "batch")
-    if not isinstance(line["reps"], bool) and line["reps"] < 1:
+    if line["reps"] < 1:
         raise SchemaError(f"batch line: field 'reps' must be >= 1 (got {line['reps']!r})")
     pool = line["pool"]
     if pool is None:

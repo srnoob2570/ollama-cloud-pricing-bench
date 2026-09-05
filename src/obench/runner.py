@@ -672,6 +672,20 @@ def _canary_nonces(run_id: str, palabras: int) -> tuple[list[str], str]:
     return salados, salados[0]
 
 
+async def _read_meter(client: OllamaCloud, cuando: str) -> tuple[int, dict | None]:
+    """One meter read bracketing a canary volley: a failed read aborts cleanly,
+    loudly, naming the phase (`cuando`) so the operator knows where it died."""
+    try:
+        estado, payload = await client.usage()
+    except Exception as e:  # noqa: BLE001 - a meter failure aborts cleanly, loudly
+        raise RunnerError(
+            f"canary: meter read failed ({type(e).__name__}: {e}) {cuando} volley"
+        ) from None
+    if estado != 200 or payload is None:
+        raise RunnerError(f"canary: meter read failed (HTTP {estado}) {cuando} volley")
+    return estado, payload
+
+
 async def _canary_volley(
     client: OllamaCloud,
     *,
@@ -686,26 +700,12 @@ async def _canary_volley(
     volley's requests (serial, k=1, no warmup, no retry) -> a fresh read as the
     registration loop's first sample. Returns the volley's raw evidence."""
     semillas = [fixtures.seed(CANARY_WORKLOAD, model, 1, k) for k in range(len(prompts))]
-    try:
-        estado, pre = await client.usage()
-    except Exception as e:  # noqa: BLE001 - a meter failure aborts cleanly, loudly
-        raise RunnerError(
-            f"canary: meter read failed ({type(e).__name__}: {e}) before the {fase} volley"
-        ) from None
-    if estado != 200 or pre is None:
-        raise RunnerError(f"canary: meter read failed (HTTP {estado}) before the {fase} volley")
+    _, pre = await _read_meter(client, f"before the {fase}")
     outcomes = []
     for prompt, semilla in zip(prompts, semillas, strict=True):
         rec = await client.chat(model=modelo_api, prompt=prompt, seed=semilla)
         outcomes.append({"http": rec["http"], "err": rec["err"], "done": rec["done"] is not None})
-    try:
-        estado_c, primera = await client.usage()
-    except Exception as e:  # noqa: BLE001 - a meter failure aborts cleanly, loudly
-        raise RunnerError(
-            f"canary: meter read failed ({type(e).__name__}: {e}) after the {fase} volley"
-        ) from None
-    if estado_c != 200 or primera is None:
-        raise RunnerError(f"canary: meter read failed (HTTP {estado_c}) after the {fase} volley")
+    _, primera = await _read_meter(client, f"after the {fase}")
     registro = await _registration_settle(
         client, primera=primera, cap_s=cfg["settle_s"], poll_s=cfg["settle_poll_s"]
     )
@@ -866,15 +866,14 @@ async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str) -> 
             break
     estable = salado["settle_exit"] == "stable" and repeticion["settle_exit"] == "stable"
     alarma = ratio is not None and estable and ratio > CANARY_ALARM_RATIO
-    estado_canary = (
-        "failed"
-        if fallo_canary
-        else "alarm"
-        if alarma
-        else "ok"
-        if ratio is not None and estable
-        else "inconclusive"
-    )
+    if fallo_canary:
+        estado_canary = "failed"
+    elif alarma:
+        estado_canary = "alarm"
+    elif ratio is not None and estable:
+        estado_canary = "ok"
+    else:
+        estado_canary = "inconclusive"
     causa_inconclusa = ""
     if estado_canary == "inconclusive":
         causa_inconclusa = (
@@ -943,16 +942,16 @@ async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str) -> 
             emit(f"canary: FAILED - {fallo_canary}")
         raise RunnerError(fallo_canary)
     if emit:
-        emit(
-            f"canary: ratio {_fmt_ratio(ratio)} ({base or 'unmeasurable'}) - "
-            + (
-                "ALARM: the replay billed near full price - the run aborts at the gate"
-                if alarma
-                else "the lane holds"
-                if estado_canary == "ok"
-                else f"inconclusive{causa_inconclusa} - proceeding, the passive detector watches the brackets"
+        if alarma:
+            veredicto = "ALARM: the replay billed near full price - the run aborts at the gate"
+        elif estado_canary == "ok":
+            veredicto = "the lane holds"
+        else:
+            veredicto = (
+                f"inconclusive{causa_inconclusa} - proceeding, the passive detector "
+                "watches the brackets"
             )
-        )
+        emit(f"canary: ratio {_fmt_ratio(ratio)} ({base or 'unmeasurable'}) - " + veredicto)
     if alarma:
         raise RunnerError(
             f"billing canary: replay ratio {_fmt_ratio(ratio)} > {CANARY_ALARM_RATIO} - "
@@ -1089,6 +1088,70 @@ def _passive_detector(registros: list[dict], dpp_weekly: float | None) -> dict:
     }
 
 
+def _mark(
+    manifiesto: Manifest, spec: BatchSpec, status: str, *, include_rep: bool = False, **extra
+) -> None:
+    """One manifest state write: the bracket's identity kwargs in one place.
+    `rep` is included only when the caller asks — some abort paths predate it,
+    and bench status renders entrada.get("rep"), so normalizing would change
+    the persisted manifest."""
+    kw: dict = {"workload": spec.workload, "model": spec.model}
+    if include_rep:
+        kw["rep"] = spec.rep
+    kw["pool"] = list(spec.pool) or None
+    kw.update(extra)
+    manifiesto.set(spec.batch_id, status, **kw)
+
+
+def _unit_plan(spec: BatchSpec, level: str, unidades, sal) -> tuple:
+    """The bracket's static plan, built once before any request: the units'
+    fixture specs, per-request coordinates, per-workload fixture hashes and
+    T3's per-turn salter (the agent loop salts every step)."""
+    specs_unidades = [
+        (workload, rep, fixtures.build(level, workload, peticiones))
+        for workload, rep, peticiones in unidades
+    ]
+    specs_requeridos = tuple(spec for _w, _r, u in specs_unidades for spec in u)
+    # Per-request coordinates for seeds and nonces: (workload, rep, index
+    # within the unit) in send order — the same derivation a per-rep
+    # bracket would use, so pooling never re-rolls a prompt.
+    coords = [(workload, rep, i) for workload, rep, u in specs_unidades for i in range(len(u))]
+    # Each request line pins its own workload's fixture hash (the
+    # workload's one-run fixture, composition-independent); the batch line
+    # pins spec.fixture_hash (the workload's, or the pool's one-rep
+    # sequence for a pooled bracket).
+    hashes = {workload: fixtures.fixture_hash(u) for workload, _rep, u in specs_unidades}
+    sal_t3 = None
+    if level == "T3":
+        sal_t3 = (
+            (lambda indice, turno=None, _u=(spec.workload, spec.rep): sal(*_u, indice, turno))
+            if sal
+            else None
+        )
+    return specs_requeridos, coords, hashes, sal_t3
+
+
+async def _pre_read_or_abort(client: OllamaCloud, spec: BatchSpec, manifiesto: Manifest) -> dict:
+    """The bracket's meter pre-read: a failed read aborts the batch before any
+    request — the manifest says so, and the error names the bracket."""
+    try:
+        status, pre = await client.usage()
+    except Exception as e:  # noqa: BLE001 - a meter failure aborts cleanly, loudly
+        _mark(
+            manifiesto,
+            spec,
+            "aborted",
+            note=f"aborted: meter read failed ({type(e).__name__}: {e}) before the batch",
+        )
+        raise RunnerError(
+            f"batch {spec.batch_id}: meter read failed ({type(e).__name__}: {e}) before the batch"
+        ) from None
+    if status != 200 or pre is None:
+        manifiesto.set(spec.batch_id, "aborted")
+        raise RunnerError(f"meter read failed (HTTP {status}) before batch {spec.batch_id}")
+    return pre
+
+
 async def _execute_batch(
     client: OllamaCloud, spec: BatchSpec, *, ctx: BatchContext
 ) -> BatchOutcome:
@@ -1105,31 +1168,8 @@ async def _execute_batch(
     cfg = ctx.cfg
     manifiesto = ctx.manifiesto
     level = spec.level
-    manifiesto.set(
-        spec.batch_id,
-        "in_flight",
-        workload=spec.workload,
-        model=spec.model,
-        pool=list(spec.pool) or None,
-    )
-
-    try:
-        status, pre = await client.usage()
-    except Exception as e:  # noqa: BLE001 - a meter failure aborts cleanly, loudly
-        manifiesto.set(
-            spec.batch_id,
-            "aborted",
-            workload=spec.workload,
-            model=spec.model,
-            pool=list(spec.pool) or None,
-            note=f"aborted: meter read failed ({type(e).__name__}: {e}) before the batch",
-        )
-        raise RunnerError(
-            f"batch {spec.batch_id}: meter read failed ({type(e).__name__}: {e}) before the batch"
-        ) from None
-    if status != 200 or pre is None:
-        manifiesto.set(spec.batch_id, "aborted")
-        raise RunnerError(f"meter read failed (HTTP {status}) before batch {spec.batch_id}")
+    _mark(manifiesto, spec, "in_flight")
+    pre = await _pre_read_or_abort(client, spec, manifiesto)
 
     modelo_api = cfg.get("model_map", {}).get(spec.model, spec.model)
     nota_checker = ""
@@ -1139,29 +1179,11 @@ async def _execute_batch(
     # batch is one single (workload, rep) unit of n requests.
     unidades = spec.units or ((spec.workload, spec.rep, spec.n),)
     try:
-        specs_unidades = [
-            (workload, rep, fixtures.build(level, workload, peticiones))
-            for workload, rep, peticiones in unidades
-        ]
-        specs_requeridos = tuple(spec for _w, _r, u in specs_unidades for spec in u)
-        # Per-request coordinates for seeds and nonces: (workload, rep, index
-        # within the unit) in send order — the same derivation a per-rep
-        # bracket would use, so pooling never re-rolls a prompt.
-        coords = [(workload, rep, i) for workload, rep, u in specs_unidades for i in range(len(u))]
-        # Each request line pins its own workload's fixture hash (the
-        # workload's one-run fixture, composition-independent); the batch line
-        # pins spec.fixture_hash (the workload's, or the pool's one-rep
-        # sequence for a pooled bracket).
-        hashes = {workload: fixtures.fixture_hash(u) for workload, _rep, u in specs_unidades}
+        specs_requeridos, coords, hashes, sal_t3 = _unit_plan(spec, level, unidades, sal)
         if level == "T3":
             # T3's burst IS the agent loop: each task consults the model
             # step by step over its own working copy, and every step is
             # one billed chat request — salted per turn under the lane.
-            sal_t3 = (
-                (lambda indice, turno=None, _u=(spec.workload, spec.rep): sal(*_u, indice, turno))
-                if sal
-                else None
-            )
             registros = await agent.run_tasks(
                 client,
                 spec,
@@ -1206,14 +1228,7 @@ async def _execute_batch(
             _append_jsonl(ctx.rutas_requests, linea)
     except Exception as e:  # noqa: BLE001 - any failure aborts the batch, loudly
         nota = f"aborted: {type(e).__name__}: {e}"
-        manifiesto.set(
-            spec.batch_id,
-            "aborted",
-            workload=spec.workload,
-            model=spec.model,
-            pool=list(spec.pool) or None,
-            note=nota,
-        )
+        _mark(manifiesto, spec, "aborted", note=nota)
         raise RunnerError(f"batch {spec.batch_id} ({_label(spec)}): {nota}") from None
     if ok == 0:
         # A fully rejected burst bills nothing but measures nothing either:
@@ -1223,15 +1238,7 @@ async def _execute_batch(
             f"aborted: 0 of {intentados} requests accepted - the endpoint rejected "
             "every request (model id or catalog drift?); nothing was billed"
         )
-        manifiesto.set(
-            spec.batch_id,
-            "aborted",
-            workload=spec.workload,
-            model=spec.model,
-            rep=spec.rep,
-            pool=list(spec.pool) or None,
-            note=nota,
-        )
+        _mark(manifiesto, spec, "aborted", include_rep=True, note=nota)
         raise RunnerError(f"batch {spec.batch_id} ({_label(spec)}): {nota}")
     t_burst_end = time.time()
 
@@ -1249,18 +1256,31 @@ async def _execute_batch(
 
     post: dict | None = None
     abort_headline = ""
-    if status_c == 200 and contados == ok:
-        # The registration settle: the count-check read is the loop's first
-        # sample; the loop polls until two consecutive reads agree in both
-        # windows, or the cap burns (the bracket still closes, marked capped).
-        registro = await _registration_settle(
-            client,
-            primera=leido,
-            cap_s=cfg["settle_s"],
-            poll_s=cfg["settle_poll_s"],
+    if not (status_c == 200 and contados == ok):
+        # Close the bracket even on abort: the burst's real consumption belongs
+        # to THIS batch, not to the next run's pre-read. The registration loop
+        # still runs (first sample null when the count-check read itself died),
+        # so the aborted bracket's post payload carries the spend it can see.
+        abort_headline = (
+            f"aborted: meter read failed ({error_lectura}) at the count check"
+            if error_lectura
+            else (
+                f"aborted: request_count check failed - expected {ok} accepted "
+                f"requests, meter counted {contados} (delta {contados - ok})"
+            )
         )
-        post = registro["post"]
-        if registro["exit"] is None:
+    # The registration settle: the count-check read is the loop's first
+    # sample; the loop polls until two consecutive reads agree in both
+    # windows, or the cap burns (the bracket still closes, marked capped).
+    registro = await _registration_settle(
+        client,
+        primera=leido if status_c == 200 else None,
+        cap_s=cfg["settle_s"],
+        poll_s=cfg["settle_poll_s"],
+    )
+    post = registro["post"]
+    if registro["exit"] is None:
+        if not abort_headline:
             causa = registro["error"] or "unknown meter failure"
             # A checker-invalidated batch stays invalidated: the note must
             # say BOTH causes, or the operator re-runs a suite whose
@@ -1279,42 +1299,20 @@ async def _execute_batch(
                 ok,
                 _notes(nota, spec.plan_note),
                 settle=registro,
+                count_check_s=None,
             )
-            manifiesto.set(
-                spec.batch_id,
+            _mark(
+                manifiesto,
+                spec,
                 "aborted",
-                workload=spec.workload,
-                model=spec.model,
-                rep=spec.rep,
-                pool=list(spec.pool) or None,
+                include_rep=True,
                 dpp_session=None,
                 dpp_weekly=None,
                 requests_ok=ok,
                 note=nota,
             )
             raise RunnerError(f"batch {spec.batch_id} ({_label(spec)}): {nota}")
-    else:
-        # Close the bracket even on abort: the burst's real consumption belongs
-        # to THIS batch, not to the next run's pre-read. The registration loop
-        # still runs (first sample null when the count-check read itself died),
-        # so the aborted bracket's post payload carries the spend it can see.
-        abort_headline = (
-            f"aborted: meter read failed ({error_lectura}) at the count check"
-            if error_lectura
-            else (
-                f"aborted: request_count check failed - expected {ok} accepted "
-                f"requests, meter counted {contados} (delta {contados - ok})"
-            )
-        )
-        registro = await _registration_settle(
-            client,
-            primera=leido if status_c == 200 else None,
-            cap_s=cfg["settle_s"],
-            poll_s=cfg["settle_poll_s"],
-        )
-        post = registro["post"]
-        if registro["exit"] is None:
-            post = None  # an aborted batch may carry a null post payload
+        post = None  # an aborted batch may carry a null post payload
 
     notas = _notes(abort_headline, nota_checker, spec.plan_note)
     dpp_sesion = _dpp(pre, post, "session")
@@ -1331,33 +1329,28 @@ async def _execute_batch(
             f"{detectoro['expected_pp']:.2f} pp (broken salting signature? threshold "
             "deferred, #28)",
         )
-    linea = _batch_line(
+    _close_batch(
+        ctx.ruta_batches,
         spec,
-        manifiesto=manifiesto,
-        pre=pre,
-        post=post,
-        counts_pre=counts_pre,
-        counts_check=counts_check,
-        counts_post=_counts(post) if post else None,
-        count_check_s=count_check_s,
-        wall_clock_s=wall_clock,
-        ok=ok,
-        settle_s=cfg["settle_s"],
+        manifiesto,
+        cfg,
+        pre,
+        post,
+        counts_pre,
+        counts_check,
+        wall_clock,
+        ok,
+        notas,
         settle=registro,
-        table_version=cfg["table_version"],
-        notes=notas,
+        count_check_s=count_check_s,
     )
-    schema.validate_batch_line(linea)
-    _append_jsonl(ctx.ruta_batches, linea)
     # Only a real failure aborts; spec.plan_note is provenance, never a verdict.
     estado_final = "aborted" if (abort_headline or nota_checker) else "done"
-    manifiesto.set(
-        spec.batch_id,
+    _mark(
+        manifiesto,
+        spec,
         estado_final,
-        workload=spec.workload,
-        model=spec.model,
-        rep=spec.rep,
-        pool=list(spec.pool) or None,
+        include_rep=True,
         dpp_session=dpp_sesion,
         dpp_weekly=_dpp(pre, post, "weekly"),
         requests_ok=ok,
@@ -1430,20 +1423,21 @@ async def _run_async(cfg: dict) -> dict:
             estado = manifiesto.status(spec.batch_id)
             if estado in ("done", "in_flight", "aborted"):
                 omitidos += 1
+                nota_resume = ""
                 if estado == "in_flight":
                     en_vuelo += 1
-                    if cfg["emit"]:
-                        cfg["emit"](
-                            f"resume: batch {spec.batch_id} ({_label(spec)}) is "
-                            "in_flight from an interrupted run - skipped, never silently retried"
-                        )
+                    nota_resume = (
+                        f"resume: batch {spec.batch_id} ({_label(spec)}) is in_flight from "
+                        "an interrupted run - skipped, never silently retried"
+                    )
                 elif estado == "aborted":
                     abortados_previos += 1
-                    if cfg["emit"]:
-                        cfg["emit"](
-                            f"resume: batch {spec.batch_id} ({_label(spec)}) aborted "
-                            "in an earlier attempt - skipped; its spend is already in the dataset"
-                        )
+                    nota_resume = (
+                        f"resume: batch {spec.batch_id} ({_label(spec)}) aborted in an earlier "
+                        "attempt - skipped; its spend is already in the dataset"
+                    )
+                if nota_resume and cfg["emit"]:
+                    cfg["emit"](nota_resume)
                 continue
             resultado = await _execute_batch(client, spec, ctx=contexto)
             hechos += 1
@@ -1548,7 +1542,10 @@ def _close_batch(
     ok: int,
     notes: str,
     settle: dict,
+    count_check_s: float | None,
 ) -> None:
+    """The bracket's one schema-validated raw line: built, validated, appended —
+    the abort path and the done path both close through here."""
     linea = _batch_line(
         spec,
         manifiesto=manifiesto,
@@ -1557,7 +1554,7 @@ def _close_batch(
         counts_pre=counts_pre,
         counts_check=counts_check,
         counts_post=_counts(post) if post else None,
-        count_check_s=None,
+        count_check_s=count_check_s,
         wall_clock_s=wall_clock_s,
         ok=ok,
         settle_s=cfg["settle_s"],

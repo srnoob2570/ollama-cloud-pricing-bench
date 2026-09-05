@@ -276,7 +276,7 @@ def _rep_row(batch: dict, lineas: list[dict], usd: float, session_usd: float) ->
         "tokens_total": tokens,
         "dpp_weekly": dpp if _es_numero(dpp) else None,
         "dpp_session": dpp_s if _es_numero(dpp_s) else None,
-        "pp_per_1m": pp if pp is not None else None,
+        "pp_per_1m": pp,
         "cost_task_attempted_usd": dpp * usd / intentadas if medible else None,
         "cost_task_completed_usd": (dpp * usd / completadas if medible and completadas else None),
         "cost_task_attempted_usd_session": (
@@ -288,34 +288,40 @@ def _rep_row(batch: dict, lineas: list[dict], usd: float, session_usd: float) ->
     }
 
 
+def _bracket_medible(batch: dict) -> bool:
+    """The shared bracket-eligibility guards: the model must be a plain string,
+    the bracket must not be aborted (its burst broke its own contract — a
+    dropped request inflates pp_per_1m, a dead meter read prices nothing), and
+    it must not be a zero-movement bracket. A settle that reports "stable" (or
+    burns to "capped") while BOTH windows read exactly the pre-burst value is
+    the meter's registration lag masquerading as stability — two stale reads
+    agree at the pre-burst plateau (the documented 60–90 s lag) and the bracket
+    closes with dpp 0 as if measured. Every planned bracket's token budget
+    predicts readable Δpp (>= 3.5 ticks, the #28 planning floor), so zero
+    movement in both windows is a failed registration, never a measurement."""
+    if not isinstance(batch.get("model"), str):
+        return False
+    if isinstance(batch.get("notes"), str) and batch["notes"].startswith("aborted"):
+        return False
+    if _es_numero(batch.get("dpp_session")) and _es_numero(batch.get("dpp_weekly")):
+        if batch["dpp_session"] == 0.0 and batch["dpp_weekly"] == 0.0:
+            return False
+    return True
+
+
 def _cells(batches: list[dict], requests: list[dict], usd: float, session_usd: float) -> dict:
     """The k=1 cells grouped by (model, workload): per-rep rows plus the raw
     lines that back them (tokens, checker verdicts). Pooled brackets carry no
     single workload, so they never enter a cell — their legacy attribution is
     the allocation section's, never a measured cell's. An aborted bracket
-    neither: its burst broke its own contract (a dropped request inflates
-    pp_per_1m, a dead meter read prices nothing), so its dpp never enters a
-    cell's median — the raw line stays in the dataset for the operator. A
-    zero-movement bracket does not either: a settle that reports "stable"
-    (or burns to "capped") while BOTH windows read exactly the pre-burst value
-    is the meter's registration lag masquerading as stability — two stale
-    reads agree at the pre-burst plateau (the documented 60–90 s lag) and the
-    bracket closes with dpp 0 as if measured. Every planned bracket's token
-    budget predicts readable Δpp (>= 3.5 ticks, the #28 planning floor), so
-    zero movement in both windows is a failed registration, never a
-    measurement."""
+    neither: a zero-movement one does not either — see _bracket_medible."""
     por_batch = _por_batch(requests)
     celdas: dict = {}
     for batch in batches:
         if batch.get("k") != 1 or batch.get("workload") not in TASK_WORKLOADS:
             continue
-        if not isinstance(batch.get("model"), str) or not isinstance(batch.get("batch_id"), str):
+        if not isinstance(batch.get("batch_id"), str) or not _bracket_medible(batch):
             continue
-        if isinstance(batch.get("notes"), str) and batch["notes"].startswith("aborted"):
-            continue
-        if _es_numero(batch.get("dpp_session")) and _es_numero(batch.get("dpp_weekly")):
-            if batch["dpp_session"] == 0.0 and batch["dpp_weekly"] == 0.0:
-                continue
         clave = (batch["model"], batch["workload"])
         celda = celdas.setdefault(clave, {"level": batch.get("level"), "reps": [], "lineas": []})
         celda["reps"].append(
@@ -341,6 +347,9 @@ def _cell_doc(
     lineas = celda["lineas"]
     intentadas = sum(r["attempted"] for r in reps)
     completadas = sum(r["completed"] for r in reps)
+
+    def cuant(campo: str) -> dict | None:
+        return _cuantiles([r[campo] for r in reps if r[campo] is not None])
 
     tins = [r["tok_in"] for r in lineas if _es_numero(r.get("tok_in"))]
     touts = [r["tok_out"] for r in lineas if _es_numero(r.get("tok_out"))]
@@ -370,17 +379,9 @@ def _cell_doc(
     # in paid dollars at the Max tier) undercuts it.
     tokens_medios = tin_med + tout_med if tin_med is not None and tout_med is not None else None
 
-    legacy_cuantiles = _cuantiles(
-        [r["cost_task_attempted_usd"] for r in reps if r["cost_task_attempted_usd"] is not None]
-    )
+    legacy_cuantiles = cuant("cost_task_attempted_usd")
     legacy_med = legacy_cuantiles["median"] if legacy_cuantiles else None
-    legacy_s_cuantiles = _cuantiles(
-        [
-            r["cost_task_attempted_usd_session"]
-            for r in reps
-            if r["cost_task_attempted_usd_session"] is not None
-        ]
-    )
+    legacy_s_cuantiles = cuant("cost_task_attempted_usd_session")
     legacy_s_med = legacy_s_cuantiles["median"] if legacy_s_cuantiles else None
     # The threshold exists only for a MEASURED cell: without a readable bracket
     # there is no comparison to draw, and no line is invented for the bars.
@@ -400,24 +401,16 @@ def _cell_doc(
         "pass_rate": completadas / intentadas if intentadas else None,
         "tok_in_median": tin_med,
         "tok_out_median": tout_med,
-        "pp_per_1m": _cuantiles([r["pp_per_1m"] for r in reps if r["pp_per_1m"] is not None]),
+        "pp_per_1m": cuant("pp_per_1m"),
         "legacy_cost_task_usd": legacy_cuantiles,
-        "legacy_cost_completed_usd": _cuantiles(
-            [r["cost_task_completed_usd"] for r in reps if r["cost_task_completed_usd"] is not None]
-        ),
+        "legacy_cost_completed_usd": cuant("cost_task_completed_usd"),
         # the session window rides as the secondary signal: the same per-task
         # math on the bracket's dpp_session, priced at the DERIVED session
         # $/pp — the doc-level unanchored caveat applies to every figure here.
         # Its median also backs the verdict margin when the weekly winner
         # reads 0.0 (sub-tick): see verdict_of.
         "legacy_cost_task_usd_session": legacy_s_cuantiles,
-        "legacy_cost_completed_usd_session": _cuantiles(
-            [
-                r["cost_task_completed_usd_session"]
-                for r in reps
-                if r["cost_task_completed_usd_session"] is not None
-            ]
-        ),
+        "legacy_cost_completed_usd_session": cuant("cost_task_completed_usd_session"),
         "new_cost_task_s0_usd": s0,
         "new_cost_task_s1_usd": s1,
         "s_effective": {"s": s_efectivo.s, "source": s_efectivo.source},
@@ -462,8 +455,8 @@ def _curva_dp_tokens(batches: list[dict], requests: list[dict]) -> list[dict]:
     and any unknown workload are workstream evidence, never curve points).
     The same rules as the cells apply to a bracket that cannot measure: an
     aborted bracket (its burst broke its own contract) and a zero-movement
-    one (stale reads at the pre-burst plateau) never enter the curve — the
-    meter's registration lag is not a data point."""
+    one (stale reads at the pre-burst plateau) never enter the curve — see
+    _bracket_medible."""
     por_batch = _por_batch(requests)
     puntos = []
     for batch in batches:
@@ -471,13 +464,8 @@ def _curva_dp_tokens(batches: list[dict], requests: list[dict]) -> list[dict]:
         dpp = batch.get("dpp_weekly")
         if workload not in CURVE_WORKLOADS or not _es_numero(dpp):
             continue
-        if not isinstance(batch.get("model"), str):
+        if not _bracket_medible(batch):
             continue
-        if isinstance(batch.get("notes"), str) and batch["notes"].startswith("aborted"):
-            continue
-        if _es_numero(batch.get("dpp_session")) and _es_numero(batch.get("dpp_weekly")):
-            if batch["dpp_session"] == 0.0 and batch["dpp_weekly"] == 0.0:
-                continue
         tin, tout = _tokens_de(por_batch.get(batch.get("batch_id"), []))
         if tin is None:
             continue
@@ -498,109 +486,132 @@ def _curva_dp_tokens(batches: list[dict], requests: list[dict]) -> list[dict]:
     return sorted(puntos, key=lambda p: (p["workload"] or "", p["model"] or "", p["tokens_total"]))
 
 
+def _veredicto_comparado(
+    c: dict, legado: float, nuevo: float, tick_usd: float, credit_ratio: float
+) -> dict:
+    """The sweep's verdict: the same verdict_of call every sweep makes, with
+    the legacy session median backing the margin when the weekly winner reads
+    0.0 (sub-tick). The caller decides which side moves (legado/nuevo) and
+    where the tick lands."""
+    return verdict_of(
+        legado,
+        nuevo,
+        tick_usd,
+        legacy_session=(
+            c["legacy_cost_task_usd_session"]["median"]
+            if c.get("legacy_cost_task_usd_session")
+            else None
+        ),
+        credit_ratio=credit_ratio,
+    )
+
+
+def _sweep(
+    celdas: list[dict],
+    valores: tuple,
+    eje: str,
+    por_celda,
+    note: str,
+) -> dict:
+    """The shared sweep driver: one row (and verdict) per cell per value,
+    flips read against the baseline verdict, cells/flips keyed by the value's
+    `:g` string. `por_celda(c, valor)` returns `(fila, veredicto)` or None to
+    skip the cell at this value (unmeasured cell, unpriced model)."""
+    barrido = {eje: list(valores), "cells": {}, "flips": {}}
+    for valor in valores:
+        clave = f"{valor:g}"
+        filas, vueltas = [], []
+        for c in celdas:
+            resultado = por_celda(c, valor)
+            if resultado is None:
+                continue
+            fila, veredicto = resultado
+            filas.append(fila)
+            if veredicto["winner"] != c["verdict"][SWEEP_SCENARIO]["winner"]:
+                vueltas.append(
+                    {"model": c["model"], "workload": c["workload"], "verdict": veredicto}
+                )
+        barrido["cells"][clave] = filas
+        barrido["flips"][clave] = vueltas
+    barrido["note"] = note
+    return barrido
+
+
 def _sweep_rates(
     celdas: list[dict], tick_usd: float, credit_ratio: float = DEFAULT_CREDIT_RATIO
 ) -> dict:
     """Rates +/-20 %: the new-plan side scales with the table, the legacy side
     is meter-native and cannot move. Flips read against the S0 verdict."""
-    barrido = {"factors": list(RATE_FACTORS), "cells": {}, "flips": {}}
-    for factor in RATE_FACTORS:
-        clave = f"{factor:g}"
-        celdas_f, vueltas = [], []
-        for c in celdas:
-            if c["legacy_cost_task_usd"] is None or c["new_cost_task_s0_usd"] is None:
-                continue
-            nuevo = c["new_cost_task_s0_usd"] * factor
-            veredicto = verdict_of(
-                c["legacy_cost_task_usd"]["median"],
-                nuevo,
-                tick_usd,
-                legacy_session=(
-                    c["legacy_cost_task_usd_session"]["median"]
-                    if c.get("legacy_cost_task_usd_session")
-                    else None
+
+    def por_celda(c: dict, factor: float):
+        if c["legacy_cost_task_usd"] is None or c["new_cost_task_s0_usd"] is None:
+            return None
+        nuevo = c["new_cost_task_s0_usd"] * factor
+        veredicto = _veredicto_comparado(
+            c, c["legacy_cost_task_usd"]["median"], nuevo, tick_usd, credit_ratio
+        )
+        return (
+            {
+                "model": c["model"],
+                "workload": c["workload"],
+                "new_cost_task_usd": nuevo,
+                "threshold_pp_per_1m": (
+                    c["threshold_pp_per_1m"]["s0"] * factor if c["threshold_pp_per_1m"] else None
                 ),
-                credit_ratio=credit_ratio,
-            )
-            celdas_f.append(
-                {
-                    "model": c["model"],
-                    "workload": c["workload"],
-                    "new_cost_task_usd": nuevo,
-                    "threshold_pp_per_1m": (
-                        c["threshold_pp_per_1m"]["s0"] * factor
-                        if c["threshold_pp_per_1m"]
-                        else None
-                    ),
-                    "verdict": veredicto,
-                }
-            )
-            if veredicto["winner"] != c["verdict"][SWEEP_SCENARIO]["winner"]:
-                vueltas.append(
-                    {"model": c["model"], "workload": c["workload"], "verdict": veredicto}
-                )
-        barrido["cells"][clave] = celdas_f
-        barrido["flips"][clave] = vueltas
-    barrido["note"] = (
+                "verdict": veredicto,
+            },
+            veredicto,
+        )
+
+    return _sweep(
+        celdas,
+        RATE_FACTORS,
+        "factors",
+        por_celda,
         "every table rate scaled by the factor; the legacy side is meter-native "
-        "and cannot move. Flips are read against the S0 baseline verdict."
+        "and cannot move. Flips are read against the S0 baseline verdict.",
     )
-    return barrido
 
 
 def _sweep_cache(
     celdas: list[dict], tabla, tick_usd: float, credit_ratio: float = DEFAULT_CREDIT_RATIO
 ) -> dict:
     """Cache hit-rate in {0, 25, 50, 90} %: only models the table discounts move."""
-    barrido = {"s_values": list(CACHE_SWEEP_S), "cells": {}, "flips": {}}
-    for s in CACHE_SWEEP_S:
-        clave = f"{s:g}"
-        celdas_s, vueltas = [], []
-        for c in celdas:
-            if (
-                c["legacy_cost_task_usd"] is None
-                or c["tok_in_median"] is None
-                or c["tok_out_median"] is None
-            ):
-                continue
-            try:
-                tarifa = tabla.rate(c["model"])
-            except TableError:
-                continue
-            nuevo = new_task_cost(
-                c["tok_in_median"], c["tok_out_median"], tarifa, s=s, per=tabla.per
-            )
-            veredicto = verdict_of(
-                c["legacy_cost_task_usd"]["median"],
-                nuevo,
-                tick_usd,
-                legacy_session=(
-                    c["legacy_cost_task_usd_session"]["median"]
-                    if c.get("legacy_cost_task_usd_session")
-                    else None
-                ),
-                credit_ratio=credit_ratio,
-            )
-            celdas_s.append(
-                {
-                    "model": c["model"],
-                    "workload": c["workload"],
-                    "new_cost_task_usd": nuevo,
-                    "verdict": veredicto,
-                }
-            )
-            if veredicto["winner"] != c["verdict"][SWEEP_SCENARIO]["winner"]:
-                vueltas.append(
-                    {"model": c["model"], "workload": c["workload"], "verdict": veredicto}
-                )
-        barrido["cells"][clave] = celdas_s
-        barrido["flips"][clave] = vueltas
-    barrido["note"] = (
+
+    def por_celda(c: dict, s: float):
+        if (
+            c["legacy_cost_task_usd"] is None
+            or c["tok_in_median"] is None
+            or c["tok_out_median"] is None
+        ):
+            return None
+        try:
+            tarifa = tabla.rate(c["model"])
+        except TableError:
+            return None
+        nuevo = new_task_cost(c["tok_in_median"], c["tok_out_median"], tarifa, s=s, per=tabla.per)
+        veredicto = _veredicto_comparado(
+            c, c["legacy_cost_task_usd"]["median"], nuevo, tick_usd, credit_ratio
+        )
+        return (
+            {
+                "model": c["model"],
+                "workload": c["workload"],
+                "new_cost_task_usd": nuevo,
+                "verdict": veredicto,
+            },
+            veredicto,
+        )
+
+    return _sweep(
+        celdas,
+        CACHE_SWEEP_S,
+        "s_values",
+        por_celda,
         "the hit rate applied uniformly to every model the table discounts "
         "(the baseline cells use each model's effective S: measured where the "
-        "calibration was conclusive, assumed otherwise). Flips read against S0."
+        "calibration was conclusive, assumed otherwise). Flips read against S0.",
     )
-    return barrido
 
 
 def _sweep_ancla(
@@ -608,53 +619,39 @@ def _sweep_ancla(
 ) -> dict:
     """P_LEGADO +/-30 %: every legacy dollar moves with the anchor, measured
     pp/1M cannot. Flips read against the baseline verdict."""
-    barrido = {"factors": list(ANCLA_FACTORS), "cells": {}, "flips": {}}
-    for factor in ANCLA_FACTORS:
-        clave = f"{factor:g}"
-        celdas_f, vueltas = [], []
-        for c in celdas:
-            if c["legacy_cost_task_usd"] is None or c["new_cost_task_s0_usd"] is None:
-                continue
-            legacy = c["legacy_cost_task_usd"]["median"] * factor
-            veredicto = verdict_of(
-                legacy,
-                c["new_cost_task_s0_usd"],
-                tick_usd * factor,
-                legacy_session=(
-                    c["legacy_cost_task_usd_session"]["median"]
-                    if c.get("legacy_cost_task_usd_session")
-                    else None
+
+    def por_celda(c: dict, factor: float):
+        if c["legacy_cost_task_usd"] is None or c["new_cost_task_s0_usd"] is None:
+            return None
+        legado = c["legacy_cost_task_usd"]["median"] * factor
+        veredicto = _veredicto_comparado(
+            c, legado, c["new_cost_task_s0_usd"], tick_usd * factor, credit_ratio
+        )
+        return (
+            {
+                "model": c["model"],
+                "workload": c["workload"],
+                "legacy_cost_task_usd": legado,
+                "pp_per_1m": c["pp_per_1m"]["median"] if c["pp_per_1m"] else None,
+                # the threshold rides with the anchor: it divides by
+                # USD/pp (× credit_ratio), so a stronger anchor lowers it
+                "threshold_pp_per_1m": (
+                    c["threshold_pp_per_1m"]["s0"] / factor if c["threshold_pp_per_1m"] else None
                 ),
-                credit_ratio=credit_ratio,
-            )
-            celdas_f.append(
-                {
-                    "model": c["model"],
-                    "workload": c["workload"],
-                    "legacy_cost_task_usd": legacy,
-                    "pp_per_1m": c["pp_per_1m"]["median"] if c["pp_per_1m"] else None,
-                    # the threshold rides with the anchor: it divides by
-                    # USD/pp (× credit_ratio), so a stronger anchor lowers it
-                    "threshold_pp_per_1m": (
-                        c["threshold_pp_per_1m"]["s0"] / factor
-                        if c["threshold_pp_per_1m"]
-                        else None
-                    ),
-                    "verdict": veredicto,
-                }
-            )
-            if veredicto["winner"] != c["verdict"][SWEEP_SCENARIO]["winner"]:
-                vueltas.append(
-                    {"model": c["model"], "workload": c["workload"], "verdict": veredicto}
-                )
-        barrido["cells"][clave] = celdas_f
-        barrido["flips"][clave] = vueltas
-    barrido["note"] = (
+                "verdict": veredicto,
+            },
+            veredicto,
+        )
+
+    return _sweep(
+        celdas,
+        ANCLA_FACTORS,
+        "factors",
+        por_celda,
         "the anchor (P_LEGADO, USD/month) scaled by the factor: every legacy "
         "dollar and the pp/1M threshold move with it; the measured pp/1M is "
-        "meter-native and cannot move. Flips read against the baseline verdict."
+        "meter-native and cannot move. Flips read against the baseline verdict.",
     )
-    return barrido
 
 
 def _sweep_k(batches: list[dict], requests: list[dict], usd: float, session_usd: float) -> dict:
@@ -1028,20 +1025,21 @@ def build(
 # ---------------------------------------------------------------------------
 
 
-def rates_map(tabla, doc: dict) -> dict:
-    """The per-model rates the dashboard's slider recomputes from, embedded in
-    the DASHBOARD ONLY (presentation layer, #41's amendment v1.2): nothing
-    persisted changes — analysis.json carries no rates, the raw is immutable,
-    and derivatives regenerate only with versioned parameters. A cell's model
-    the chosen table no longer prices takes no rate: the dashboard already
-    renders it as no data and the slider cannot recompute it either. The
-    calculator page embeds the FULL table's rates instead (rates_map_full)."""
+def _rates_payload(modelos, tabla, *, skip_unpriced: bool) -> dict:
+    """The {per, rates} payload both Pages pages embed: one entry per model
+    with the four rate fields the JS recomputes from. With skip_unpriced, a
+    model the chosen table no longer prices takes no rate (the dashboard
+    already renders it as no data and the slider cannot recompute it either);
+    without it, every model passed must be priced (the calculator's matrix
+    prices any model the table carries)."""
     tarifas = {}
-    for modelo in sorted({c["model"] for c in doc["cells"]}):
+    for modelo in sorted(modelos):
         try:
             r = tabla.rate(modelo)
         except TableError:
-            continue
+            if skip_unpriced:
+                continue
+            raise
         tarifas[modelo] = {
             "input": r.input,
             "cached_input": r.cached_input,
@@ -1049,6 +1047,16 @@ def rates_map(tabla, doc: dict) -> dict:
             "has_cache_discount": r.has_cache_discount,
         }
     return {"per": tabla.per, "rates": tarifas}
+
+
+def rates_map(tabla, doc: dict) -> dict:
+    """The per-model rates the dashboard's slider recomputes from, embedded in
+    the DASHBOARD ONLY (presentation layer, #41's amendment v1.2): nothing
+    persisted changes — analysis.json carries no rates, the raw is immutable,
+    and derivatives regenerate only with versioned parameters. A cell's model
+    the chosen table no longer prices takes no rate. The calculator page
+    embeds the FULL table's rates instead (rates_map_full)."""
+    return _rates_payload({c["model"] for c in doc["cells"]}, tabla, skip_unpriced=True)
 
 
 def rates_map_full(tabla) -> dict:
@@ -1057,16 +1065,7 @@ def rates_map_full(tabla) -> dict:
     matrix prices any model the table carries, never only the analysis set's.
     Rides in the CALCULATOR page's JSON only (presentation layer): the
     dashboard keeps its cells-derived payload, nothing persisted changes."""
-    tarifas = {}
-    for modelo in sorted(tabla.models):
-        r = tabla.rate(modelo)
-        tarifas[modelo] = {
-            "input": r.input,
-            "cached_input": r.cached_input,
-            "output": r.output,
-            "has_cache_discount": r.has_cache_discount,
-        }
-    return {"per": tabla.per, "rates": tarifas}
+    return _rates_payload(tabla.models, tabla, skip_unpriced=False)
 
 
 def bundle_dirname(doc: dict) -> str:
@@ -1161,25 +1160,31 @@ def write_bundle(
 # ---------------------------------------------------------------------------
 
 
-def _plantilla_dashboard() -> str:
-    """The dashboard template (dashboard_template.html, same package): the
-    editable surface for the markup, CSS and JS. render_dashboard only fills
-    the __TOKEN__ placeholders — the HTML never lives in a Python string."""
+def _plantilla(nombre: str) -> str:
+    """The named Pages template (web/<nombre>_template.html, same package): the
+    editable surface for the markup, CSS and JS. The renderers only fill the
+    __TOKEN__ placeholders — the HTML never lives in a Python string."""
     return (
         pathlib.Path(__file__)
-        .parent.joinpath("web", "dashboard_template.html")
+        .parent.joinpath("web", f"{nombre}_template.html")
         .read_text(encoding="utf-8")
     )
 
 
-def _plantilla_calculator() -> str:
-    """The calculator template (calculator_template.html, same package): the
-    plan token-budget page's editable surface, filled the same pure .replace()
-    way the dashboard's is."""
+def _render_page(plantilla: str, opciones: str, tarifas: dict, doc: dict) -> str:
+    """The shared .replace() fill of a page's three __TOKEN__ placeholders:
+    the model filter options, the rates JSON and the doc JSON — both data
+    blocks escape `</` so an inline value cannot close its own script tag."""
     return (
-        pathlib.Path(__file__)
-        .parent.joinpath("web", "calculator_template.html")
-        .read_text(encoding="utf-8")
+        plantilla.replace("__OPCIONES__", opciones)
+        .replace(
+            "__RATES__",
+            json.dumps(tarifas, ensure_ascii=False).replace("</", "<\\/"),
+        )
+        .replace(
+            "__DATOS__",
+            json.dumps(doc, ensure_ascii=False).replace("</", "<\\/"),
+        )
     )
 
 
@@ -1192,23 +1197,12 @@ def render_dashboard(doc: dict, rates: dict | None = None) -> str:
     contract ships no vendored sheet. `rates` (from `rates_map`) rides in its
     own JSON block: the cache control's live recomputation needs them;
     analysis.json never does."""
+    tarifas = rates if rates is not None else {"per": 1_000_000, "rates": {}}
     opciones = "".join(
         f'<option value="{html.escape(m)}">{html.escape(m)}</option>'
         for m in sorted({c["model"] for c in doc["cells"]})
     )
-    tarifas = rates if rates is not None else {"per": 1_000_000, "rates": {}}
-    return (
-        _plantilla_dashboard()
-        .replace("__OPCIONES__", opciones)
-        .replace(
-            "__RATES__",
-            json.dumps(tarifas, ensure_ascii=False).replace("</", "<\\/"),
-        )
-        .replace(
-            "__DATOS__",
-            json.dumps(doc, ensure_ascii=False).replace("</", "<\\/"),
-        )
-    )
+    return _render_page(_plantilla("dashboard"), opciones, tarifas, doc)
 
 
 def render_calculator(doc: dict, rates: dict | None = None) -> str:
@@ -1225,15 +1219,4 @@ def render_calculator(doc: dict, rates: dict | None = None) -> str:
         f'<option value="{html.escape(m)}">{html.escape(m)}</option>'
         for m in sorted(tarifas["rates"])
     )
-    return (
-        _plantilla_calculator()
-        .replace("__OPCIONES__", opciones)
-        .replace(
-            "__RATES__",
-            json.dumps(tarifas, ensure_ascii=False).replace("</", "<\\/"),
-        )
-        .replace(
-            "__DATOS__",
-            json.dumps(doc, ensure_ascii=False).replace("</", "<\\/"),
-        )
-    )
+    return _render_page(_plantilla("calculator"), opciones, tarifas, doc)

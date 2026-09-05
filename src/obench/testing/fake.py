@@ -155,12 +155,10 @@ class FakeOllama:
     def _bill(self, body: dict, cacheada: int = 0) -> None:
         modelo = body.get("model", "?")
         self._last_billed = modelo
-        if self.undercount_at is not None and self._n_chat == self.undercount_at:
-            # A dropped bill: the request was accepted and billed (its ticks land)
-            # but the meter's cumulative counter never saw it — the signature the
-            # runner's post-burst count check exists to catch.
-            pass
-        else:
+        # A dropped bill (undercount_at): the request was accepted and billed
+        # (its ticks land) but the meter's cumulative counter never sees it —
+        # the signature the runner's post-burst count check exists to catch.
+        if self.undercount_at is None or self._n_chat != self.undercount_at:
             self._counts[modelo] = self._counts.get(modelo, 0) + 1
         ticks = self.cached_ticks if cacheada else self.ticks_per_request
         if ticks:
@@ -185,16 +183,13 @@ class FakeOllama:
 
     def _reply_text(self, body: dict) -> str:
         if self.reply_for is not None:
-            mensajes = body.get("messages") or [{}]
-            return self.reply_for(mensajes[0].get("content") or "")
+            return self.reply_for(self._prompt_of(body))
         return "world"
 
     def _token_counts(self, body: dict) -> tuple[int, int]:
         if self.counts_for is not None:
-            mensajes = body.get("messages") or [{}]
-            prompt = mensajes[0].get("content") or ""
             semilla = (body.get("options") or {}).get("seed")
-            return self.counts_for(prompt, semilla)
+            return self.counts_for(self._prompt_of(body), semilla)
         return (26, 12)
 
     def _prompt_of(self, body: dict) -> str:

@@ -390,7 +390,7 @@ def tool_scenario(prompt: str) -> dict:
     Raises ValueError when the prompt names no known scenario: fixture drift is
     a harness bug, never a model verdict.
     """
-    m = re.search(r"Tool desk request (TR-\d+)\.", prompt)
+    m = _RE_SCENARIO.search(prompt)
     tid = m.group(1) if m else None
     if tid not in _TOOL_SCENARIOS:
         raise ValueError("tool_calling prompt carries no known scenario id")

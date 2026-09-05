@@ -49,9 +49,13 @@ def _pricing_dir(args: argparse.Namespace) -> pathlib.Path:
     return ruta if ruta.is_absolute() else _base(args) / ruta
 
 
+def _emit(msg: str) -> None:
+    print(msg, flush=True, file=sys.stderr)  # progress is log noise: stdout stays parseable
+
+
 def _validate_scenario(args: argparse.Namespace) -> str | None:
     """Validates --s/--reps; returns the error message or None."""
-    if math.isnan(args.s) or not (0.0 <= args.s <= 1.0):
+    if not (0.0 <= args.s <= 1.0):
         return f"--s must be in [0, 1] (S1 cache hit-rate); got {args.s!r}"
     if args.reps < 1:
         return f"--reps must be >= 1; got {args.reps!r}"
@@ -175,6 +179,45 @@ def _preflight_line(catalogo: preflight.CatalogReport) -> str:
     return "; ".join(partes)
 
 
+def _catalog_kwargs(catalogo: preflight.CatalogReport) -> dict:
+    """The runner's catalog/model_map kwargs, shared by every spending command."""
+    return {
+        "catalog": {"http": catalogo.http, "ids": catalogo.ids, "matched": catalogo.matched},
+        "model_map": {s: c for s, c in catalogo.matched.items() if c != s},
+    }
+
+
+def _spend_command(
+    args: argparse.Namespace, *, nivel: str, slate_ids: list[str], tabla: PriceTable, run
+) -> tuple[int, dict]:
+    """The skeleton of the three quota-spending commands: consume the dry-run
+    mark (require already passed), preflight the slate against the live
+    catalog, run the workstream, and print the parseable JSON tail on success.
+    Returns (exit_code, resumen) — resumen is {} on failure; the caller renders
+    its own human report.
+
+    The mark is consumed before preflight on purpose: the require->consume
+    window stays a pair of adjacent filesystem ops (a concurrent run can never
+    double the approved spend), and an aborted preflight only costs a fresh
+    (free) dry-run.
+    """
+    gate.consume(_base(args), nivel)  # one dry-run enables exactly one invocation
+    try:
+        catalogo = preflight.verify(slate_ids=slate_ids, table_models=tabla.models)
+    except preflight.PreflightError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1, {}
+    _emit(_preflight_line(catalogo))
+    try:
+        resumen = run(catalogo)
+    except RunnerError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1, {}
+    if args.json:
+        print(json.dumps(resumen, ensure_ascii=False, indent=2))
+    return 0, resumen
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     if args.level is None:
         print(f"error: {args.comando} requires --level", file=sys.stderr)
@@ -188,62 +231,38 @@ def cmd_run(args: argparse.Namespace) -> int:
         if error:
             print(f"error: {error}", file=sys.stderr)
             return 2
-    except TableError as e:
+    except (TableError, gate.GateClosed) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
-    except gate.GateClosed as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 2
-    if not os.environ.get("OLLAMA_API_KEY"):
-        print(
-            "error: OLLAMA_API_KEY is not set - the harness reads the key only from the "
-            "environment and never writes it to any dataset",
-            file=sys.stderr,
-        )
+    if not _require_api_key():
         return 2
     modelos = [args.model] if args.model else workloads.slate(args.level, tabla)
-    rep_filter = args.rep if args.rep else None
-
-    def _emit(msg: str) -> None:
-        print(msg, flush=True, file=sys.stderr)  # progress is log noise: stdout stays parseable
-
-    gate.consume(_base(args), args.level)  # one dry-run enables exactly one run
-
-    # Preflight before a single request is billed. The mark is consumed first:
-    # the require->consume window stays a pair of adjacent filesystem ops (a
-    # concurrent run can never double the approved spend), and an aborted
-    # preflight only costs a fresh (free) dry-run. The check covers the models
-    # THIS run will bill: --model narrowed the slate, so drift in a model the
-    # run never touches must not abort it.
-    try:
-        catalogo = preflight.verify(slate_ids=modelos, table_models=tabla.models)
-    except preflight.PreflightError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 1
-    _emit(_preflight_line(catalogo))
-
-    try:
-        resumen = run_level(
+    # The preflight check covers the models THIS run will bill: --model
+    # narrowed the slate, so drift in a model the run never touches must not
+    # abort it.
+    codigo, resumen = _spend_command(
+        args,
+        nivel=args.level,
+        slate_ids=modelos,
+        tabla=tabla,
+        run=lambda catalogo: run_level(
             _base(args),
             level=args.level,
             workloads=workloads.WORKLOADS_BY_LEVEL[args.level],
             models=modelos,
             reps=args.reps,
-            rep_filter=rep_filter,
+            rep_filter=args.rep,
             k=args.k,
             settle_s=args.settle_s,
             settle_poll_s=args.settle_poll_s,
             table_version=tabla.table_version,
-            catalog={"http": catalogo.http, "ids": catalogo.ids, "matched": catalogo.matched},
-            model_map={s: c for s, c in catalogo.matched.items() if c != s},
+            **_catalog_kwargs(catalogo),
             emit=_emit,
-        )
-    except RunnerError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 1
-    if args.json:
-        print(json.dumps(resumen, ensure_ascii=False, indent=2))
-    else:
+        ),
+    )
+    if codigo:
+        return codigo
+    if not args.json:
         print(
             f"{args.comando} {resumen['run_id']}: {resumen['batches_done']}/{resumen['batches_planned']} "
             f"batches done, {resumen['batches_skipped_done']} skipped, "
@@ -286,20 +305,21 @@ def _status_doc(nivel: str, manifiesto: Manifest) -> dict:
     # the report can state the canary's own consumption explicitly.
     canario = doc.get("canary")
     canario_dpp = canario.get("dpp") if isinstance(canario, dict) else None
+
+    def _pareada(salted, replay):
+        """A canary window's paired spend: salted + replay, or None when either
+        reading is unreadable (a half-pair would understate the quota)."""
+        salada, repeticion = _numero(salted), _numero(replay)
+        return salada + repeticion if salada is not None and repeticion is not None else None
+
     canario_sesion = canario_semanal = None
     if isinstance(canario_dpp, dict):
-        canario_sesion = _numero(canario_dpp.get("salted_session"))
-        replay_s = _numero(canario_dpp.get("replay_session"))
-        if canario_sesion is not None and replay_s is not None:
-            canario_sesion += replay_s
-        else:
-            canario_sesion = None
-        canario_semanal = _numero(canario_dpp.get("salted_weekly"))
-        replay_w = _numero(canario_dpp.get("replay_weekly"))
-        if canario_semanal is not None and replay_w is not None:
-            canario_semanal += replay_w
-        else:
-            canario_semanal = None
+        canario_sesion = _pareada(
+            canario_dpp.get("salted_session"), canario_dpp.get("replay_session")
+        )
+        canario_semanal = _pareada(
+            canario_dpp.get("salted_weekly"), canario_dpp.get("replay_weekly")
+        )
     for batch_id, entrada in doc.get("batches", {}).items():
         if not isinstance(entrada, dict):
             entrada = {"status": "corrupt"}
@@ -396,9 +416,12 @@ def _print_status(doc: dict) -> None:
         for b in doc["batches"]:
             if b["status"] in ("done",):
                 continue
-            carga = b["workload"] or (
-                "pool[" + "+".join(b["pool"]) + "]" if isinstance(b.get("pool"), list) else "?"
-            )
+            carga = b["workload"]
+            if not carga:
+                if isinstance(b.get("pool"), list):
+                    carga = "pool[" + "+".join(b["pool"]) + "]"
+                else:
+                    carga = "?"
             coordenada = f"{carga}/{b['model'] or '?'}"
             if b.get("rep"):
                 coordenada += f" rep{b['rep']}"
@@ -505,27 +528,18 @@ def cmd_probe_concurrency(args: argparse.Namespace) -> int:
             )
             return 2
         gate.require_dry_run(_base(args), "T1", table_version=tabla.table_version)
-    except TableError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 2
-    except gate.GateClosed as e:
+    except (TableError, gate.GateClosed) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     if not _require_api_key():
         return 2
 
-    def _emit(msg: str) -> None:
-        print(msg, flush=True, file=sys.stderr)  # progress is log noise: stdout stays parseable
-
-    gate.consume(_base(args), "T1")  # one dry-run enables exactly one probe invocation
-    try:
-        catalogo = preflight.verify(slate_ids=[args.model], table_models=tabla.models)
-    except preflight.PreflightError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 1
-    _emit(_preflight_line(catalogo))
-    try:
-        resumen = concurrency.run_probe(
+    codigo, resumen = _spend_command(
+        args,
+        nivel="T1",
+        slate_ids=[args.model],
+        tabla=tabla,
+        run=lambda catalogo: concurrency.run_probe(
             _base(args),
             model=args.model,
             k_max=args.k_max,
@@ -533,15 +547,13 @@ def cmd_probe_concurrency(args: argparse.Namespace) -> int:
             settle_poll_s=args.settle_poll_s,
             ancla=args.ancla,
             table_version=tabla.table_version,
-            catalog={"http": catalogo.http, "ids": catalogo.ids, "matched": catalogo.matched},
-            model_map={s: c for s, c in catalogo.matched.items() if c != s},
+            **_catalog_kwargs(catalogo),
             emit=_emit,
-        )
-    except RunnerError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 1
+        ),
+    )
+    if codigo:
+        return codigo
     if args.json:
-        print(json.dumps(resumen, ensure_ascii=False, indent=2))
         return 0
     corte = resumen["probe"]["cut_off"]
     corte_txt = "below the probe floor" if corte is None else str(corte)
@@ -611,27 +623,18 @@ def cmd_calibrate_cache(args: argparse.Namespace) -> int:
             )
             return 2
         gate.require_dry_run(_base(args), "T2", table_version=tabla.table_version)
-    except TableError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 2
-    except gate.GateClosed as e:
+    except (TableError, gate.GateClosed) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     if not _require_api_key():
         return 2
 
-    def _emit(msg: str) -> None:
-        print(msg, flush=True, file=sys.stderr)  # progress is log noise: stdout stays parseable
-
-    gate.consume(_base(args), "T2")  # one dry-run enables exactly one calibration
-    try:
-        catalogo = preflight.verify(slate_ids=modelos, table_models=tabla.models)
-    except preflight.PreflightError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 1
-    _emit(_preflight_line(catalogo))
-    try:
-        resumen = calibration.run_calibration(
+    codigo, resumen = _spend_command(
+        args,
+        nivel="T2",
+        slate_ids=modelos,
+        tabla=tabla,
+        run=lambda catalogo: calibration.run_calibration(
             _base(args),
             models=modelos,
             spaced_ages=edades,
@@ -639,15 +642,13 @@ def cmd_calibrate_cache(args: argparse.Namespace) -> int:
             settle_poll_s=args.settle_poll_s,
             table_version=tabla.table_version,
             tabla=tabla,
-            catalog={"http": catalogo.http, "ids": catalogo.ids, "matched": catalogo.matched},
-            model_map={s: c for s, c in catalogo.matched.items() if c != s},
+            **_catalog_kwargs(catalogo),
             emit=_emit,
-        )
-    except RunnerError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 1
+        ),
+    )
+    if codigo:
+        return codigo
     if args.json:
-        print(json.dumps(resumen, ensure_ascii=False, indent=2))
         return 0
     lecturas = resumen["readings"]
     print(
@@ -738,101 +739,53 @@ def _print_predict_report(doc: dict, ruta: pathlib.Path) -> int:
     return 0
 
 
-def cmd_predict(args: argparse.Namespace) -> int:
-    """The predictability HITL flow (methodology v1 §8). It never touches the API:
-    the estimates are recorded from the owner's judgment against the fixture's
-    public description and the rate table, and the report re-derives everything
-    offline from the raw datasets, like analyze."""
-    if args.level is not None:
-        print(
-            "error: predict runs on the predictability grid; it takes no --level",
-            file=sys.stderr,
-        )
-        return 2
-    grabando = args.phase is not None
-    if args.report and grabando:
-        print("error: give either --report or --phase, not both", file=sys.stderr)
-        return 2
-    grabadoras = (args.workload, args.model, args.pp, args.usd, args.notes)
-    if not (args.report or grabando) and any(v not in (None, "") for v in grabadoras):
-        print(
-            "error: --workload/--model/--pp/--usd/--notes record an estimate; "
-            "give --phase blind|informed (or --report)",
-            file=sys.stderr,
-        )
-        return 2
-    if args.report and any(v not in (None, "") for v in grabadoras):
-        print(
-            "error: the report covers the whole grid; it takes no recording flags "
-            "(--workload/--model/--pp/--usd/--notes)",
-            file=sys.stderr,
-        )
-        return 2
-    if grabando and (args.workload is None or args.model is None):
-        print(
-            "error: recording an estimate needs both --workload and --model (the cell)",
-            file=sys.stderr,
-        )
-        return 2
-    if grabando and (args.pp is None or args.usd is None):
-        print(
-            "error: recording an estimate needs both --pp (weekly pp, legacy) and "
-            "--usd (dollars of credits, new) - the estimate is in native units",
-            file=sys.stderr,
-        )
-        return 2
+def _predict_report(args: argparse.Namespace, tabla: PriceTable) -> int:
     try:
-        tabla = PriceTable.load(_pricing_dir(args), args.table_version)
-    except TableError as e:
+        doc = predict.build_report(_base(args), tabla=tabla)
+    except (predict.PredictError, analyze.AnalyzeError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
-
-    if args.report:
-        try:
-            doc = predict.build_report(_base(args), tabla=tabla)
-        except (predict.PredictError, analyze.AnalyzeError) as e:
-            print(f"error: {e}", file=sys.stderr)
-            return 2
-        ruta = pathlib.Path(_base(args)) / predict.PREDICT_DIR / "report.json"
-        ruta.parent.mkdir(parents=True, exist_ok=True)
-        ruta.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
-        if args.json:
-            print(json.dumps(doc, ensure_ascii=False, indent=2))
-            return 0
-        return _print_predict_report(doc, ruta)
-
-    if grabando:
-        try:
-            linea = predict.record_estimate(
-                _base(args),
-                phase=args.phase,
-                workload=args.workload,
-                model=args.model,
-                estimated_pp=args.pp,
-                estimated_usd=args.usd,
-                notes=args.notes,
-                tabla=tabla,
-            )
-        except predict.PredictError as e:
-            print(f"error: {e}", file=sys.stderr)
-            return 2
-        if args.json:
-            print(json.dumps(linea, ensure_ascii=False, indent=2))
-            return 0
-        print(
-            f"locked: {linea['phase']} estimate for {args.workload}/{args.model} - "
-            f"{linea['estimated_pp']:g} pp weekly, ${linea['estimated_usd']:g} credits "
-            f"(table {linea['table_version']}, hash {str(linea['hash'])[:12]})"
-        )
+    ruta = pathlib.Path(_base(args)) / predict.PREDICT_DIR / "report.json"
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    ruta.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    if args.json:
+        print(json.dumps(doc, ensure_ascii=False, indent=2))
         return 0
+    return _print_predict_report(doc, ruta)
 
-    # The walk-through: the grid's state plus the pending cells' public brief.
+
+def _predict_record(args: argparse.Namespace, tabla: PriceTable) -> int:
     try:
-        doc = predict.plan_doc(_base(args), tabla)
+        linea = predict.record_estimate(
+            _base(args),
+            phase=args.phase,
+            workload=args.workload,
+            model=args.model,
+            estimated_pp=args.pp,
+            estimated_usd=args.usd,
+            notes=args.notes,
+            tabla=tabla,
+        )
     except predict.PredictError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
-    except TableError as e:  # a table that no longer prices a grid model: clean refusal
+    if args.json:
+        print(json.dumps(linea, ensure_ascii=False, indent=2))
+        return 0
+    print(
+        f"locked: {linea['phase']} estimate for {args.workload}/{args.model} - "
+        f"{linea['estimated_pp']:g} pp weekly, ${linea['estimated_usd']:g} credits "
+        f"(table {linea['table_version']}, hash {str(linea['hash'])[:12]})"
+    )
+    return 0
+
+
+def _predict_walkthrough(args: argparse.Namespace, tabla: PriceTable) -> int:
+    # The walk-through: the grid's state plus the pending cells' public brief.
+    try:
+        doc = predict.plan_doc(_base(args), tabla)
+    except (predict.PredictError, TableError) as e:
+        # a table that no longer prices a grid model: clean refusal
         print(f"error: {e}", file=sys.stderr)
         return 2
     if args.json:
@@ -884,6 +837,61 @@ def cmd_predict(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_predict(args: argparse.Namespace) -> int:
+    """The predictability HITL flow (methodology v1 §8). It never touches the API:
+    the estimates are recorded from the owner's judgment against the fixture's
+    public description and the rate table, and the report re-derives everything
+    offline from the raw datasets, like analyze."""
+    if args.level is not None:
+        print(
+            "error: predict runs on the predictability grid; it takes no --level",
+            file=sys.stderr,
+        )
+        return 2
+    grabando = args.phase is not None
+    if args.report and grabando:
+        print("error: give either --report or --phase, not both", file=sys.stderr)
+        return 2
+    grabadoras = (args.workload, args.model, args.pp, args.usd, args.notes)
+    if not (args.report or grabando) and any(v not in (None, "") for v in grabadoras):
+        print(
+            "error: --workload/--model/--pp/--usd/--notes record an estimate; "
+            "give --phase blind|informed (or --report)",
+            file=sys.stderr,
+        )
+        return 2
+    if args.report and any(v not in (None, "") for v in grabadoras):
+        print(
+            "error: the report covers the whole grid; it takes no recording flags "
+            "(--workload/--model/--pp/--usd/--notes)",
+            file=sys.stderr,
+        )
+        return 2
+    if grabando and (args.workload is None or args.model is None):
+        print(
+            "error: recording an estimate needs both --workload and --model (the cell)",
+            file=sys.stderr,
+        )
+        return 2
+    if grabando and (args.pp is None or args.usd is None):
+        print(
+            "error: recording an estimate needs both --pp (weekly pp, legacy) and "
+            "--usd (dollars of credits, new) - the estimate is in native units",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        tabla = PriceTable.load(_pricing_dir(args), args.table_version)
+    except TableError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    if args.report:
+        return _predict_report(args, tabla)
+    if grabando:
+        return _predict_record(args, tabla)
+    return _predict_walkthrough(args, tabla)
+
+
 def _print_analyze(doc: dict, carpeta: pathlib.Path, etiqueta: str | None = None) -> None:
     """The analyze human report: the baseline params, the verdict census, the bundle."""
     bp = doc["base_params"]
@@ -911,9 +919,6 @@ def _analyze_release(args: argparse.Namespace) -> int:
     the raw<->code<->table pairing, consumed. Still offline against the API:
     only `gh` moves bytes."""
     base = _base(args)
-
-    def _emit(msg: str) -> None:
-        print(msg, file=sys.stderr, flush=True)
 
     if args.pricing_dir != "pricing":
         _emit("note: --pricing-dir is ignored with --release (the release carries its own table)")
@@ -974,7 +979,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     re-derives every derived number with zero quota spent. `--release <tag>`
     points it at a fetched dataset release instead of the local raw data.
     """
-    if math.isnan(args.s) or not (0.0 <= args.s <= 1.0):
+    if not (0.0 <= args.s <= 1.0):
         print(f"error: --s must be in [0, 1] (S1 cache hit-rate); got {args.s!r}", file=sys.stderr)
         return 2
     if not math.isfinite(args.ancla) or args.ancla <= 0:
@@ -1011,7 +1016,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         carpeta = analyze.write_bundle(
             _base(args),
             doc,
-            emit=lambda m: print(m, file=sys.stderr, flush=True),
+            emit=_emit,
             rates=analyze.rates_map(tabla, doc),
             calculator_rates=analyze.rates_map_full(tabla),
         )

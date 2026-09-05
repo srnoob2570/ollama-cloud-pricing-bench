@@ -124,8 +124,18 @@ def _judge_qa_short(prompt: str, rec: dict, _registros: list[dict]) -> bool:
     return any(_match_clean(tokens, _tokens(aceptada)) for aceptada in aceptadas)
 
 
+def _exact_word_ok(rec: dict) -> bool:
+    """The fixture's exact-word contract: the reply is the single word `ok`."""
+    return _tokens(rec["content"]) == ["ok"]
+
+
+def _band_violation(valor: int, mediana: float) -> bool:
+    """The shared 2 % token band: a token report off its siblings' median."""
+    return abs(valor - mediana) > CALIBRATION_BAND * mediana
+
+
 def _judge_calibration(_prompt: str, rec: dict, registros: list[dict]) -> bool:
-    if _tokens(rec["content"]) != ["ok"]:  # the fixture's exact-word contract
+    if not _exact_word_ok(rec):
         return False
     medianas = {}
     for done_campo in ("prompt_eval_count", "eval_count"):
@@ -147,7 +157,7 @@ def _judge_calibration(_prompt: str, rec: dict, registros: list[dict]) -> bool:
         # Zero (or missing) token reports grade as broken, never as the reference.
         if not isinstance(valor, int) or not mediana:
             return False
-        if abs(valor - mediana) > CALIBRATION_BAND * mediana:
+        if _band_violation(valor, mediana):
             return False
     return True
 
@@ -163,7 +173,7 @@ def _judge_concurrency(_prompt: str, rec: dict, registros: list[dict]) -> bool:
     computed over the reporting siblings; a lone survivor has no band evidence
     and grades on the word alone.
     """
-    if _tokens(rec["content"]) != ["ok"]:
+    if not _exact_word_ok(rec):
         return False
     for done_campo in ("prompt_eval_count", "eval_count"):
         valor = rec["done"].get(done_campo) if rec["done"] else None
@@ -179,7 +189,7 @@ def _judge_concurrency(_prompt: str, rec: dict, registros: list[dict]) -> bool:
         ]
         if len(hermanos) >= 2:
             mediana = statistics.median(hermanos)
-            if abs(valor - mediana) > CALIBRATION_BAND * mediana:
+            if _band_violation(valor, mediana):
                 return False
     return True
 
@@ -201,11 +211,6 @@ def _judge_throughput(_prompt: str, rec: dict, _registros: list[dict]) -> bool:
         return False
     tokens = _tokens(contenido)
     return bool(tokens) and tokens[-1] == "done"
-
-
-def _match_anywhere(tokens: list[str], patron: list[str]) -> bool:
-    """Whether `patron` appears in order anywhere, un-negated at some match."""
-    return _match_clean(tokens, patron)
 
 
 def _datum_presente(prompt: str, label: str, campo: str, rec: dict) -> bool:
@@ -236,7 +241,7 @@ def _judge_register(prompt: str, rec: dict, _registros: list[dict]) -> bool:
 
 def _judge_multi_turn(prompt: str, rec: dict, _registros: list[dict]) -> bool:
     esperado = fixtures_t2.multi_turn_expected(prompt)  # the code the FINAL turn asks about
-    return _match_anywhere(_tokens(rec["content"]), _tokens(esperado))
+    return _match_clean(_tokens(rec["content"]), _tokens(esperado))
 
 
 def _valor_del_tipo(valor, tipo: str) -> bool:
@@ -337,7 +342,7 @@ def _judge_long_generation(prompt: str, rec: dict, _registros: list[dict]) -> bo
 def _judge_reasoning(prompt: str, rec: dict, _registros: list[dict]) -> bool:
     esperado = fixtures_t2.reasoning_expected(prompt)  # derived from the prompt's own rules
     tokens = _tokens(rec["content"])
-    return "answer" in tokens and _match_anywhere(tokens, [str(esperado)])
+    return "answer" in tokens and _match_clean(tokens, [str(esperado)])
 
 
 def _judge_ratio_out(_prompt: str, rec: dict, _registros: list[dict]) -> bool:
@@ -383,7 +388,7 @@ def _judge_cache_prefix(_prompt: str, rec: dict, _registros: list[dict]) -> bool
     than a cold one, so the calibration band would grade the very phenomenon
     under measurement as drift.
     """
-    return _tokens(rec["content"]) == ["ok"]
+    return _exact_word_ok(rec)
 
 
 _JUDGES = {

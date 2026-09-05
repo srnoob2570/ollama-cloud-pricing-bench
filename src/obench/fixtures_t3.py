@@ -472,9 +472,6 @@ _TASKS = {
     "refactoring": _REFACTORING_TASK,
 }
 
-# Unique opening of every T3 task prompt (workload_of relies on it).
-_TASK_OPENING = "Sandbox task ("
-
 
 def workload_of(prompt: str) -> str:
     """Which T3 workload generated this prompt (every task opens with its name)."""

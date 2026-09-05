@@ -19,7 +19,7 @@ Plain static HTML with `__TOKEN__` placeholders, filled by pure `str.replace()` 
 
 JSON payloads are serialized with `ensure_ascii=False` and `"</"` is escaped to `"<\\/"` so the payload cannot close its own script tag. Every dynamic value elsewhere escapes through `html.escape` (Python side) or the JS `esc()` helper (client side); rendering uses `textContent`.
 
-Loaders in the consumer: `_plantilla_dashboard()` and `_plantilla_calculator()` (analyze.py:1164, analyze.py:1175) read each template from this package directory via `pathlib.Path(__file__).parent.joinpath("web", ...)`.
+Loaders in the consumer: `_plantilla(name)` (analyze.py) reads each template from this package directory via `pathlib.Path(__file__).parent.joinpath("web", ...)`.
 
 ## Flow
 

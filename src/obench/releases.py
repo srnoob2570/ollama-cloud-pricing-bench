@@ -413,7 +413,6 @@ def package(base, *, run_id: str, pricing_dir) -> Package:
         },
         "files": {rel: _sha256(ruta) for rel, ruta in archivos},
     }
-    releases_dir = base / RELEASES_DIR
     ruta_meta = releases_dir / f"metadata-{run_id}.json"
     ruta_notes = releases_dir / f"notes-{run_id}.md"
     ruta_tar = releases_dir / f"dataset-{run_id}.tar.gz"

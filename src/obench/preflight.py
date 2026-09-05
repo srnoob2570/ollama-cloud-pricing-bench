@@ -24,6 +24,11 @@ class PreflightError(Exception):
     """The live catalog drifted from the slate: the run must not spend."""
 
 
+# Every abort happens after the caller consumed the dry-run mark, so each
+# message must say how to mint a fresh one (a dry-run is free).
+_ABORT_NOTE = "the dry-run mark was consumed - re-run `bench dry-run --level <L>`"
+
+
 @dataclasses.dataclass(frozen=True)
 class CatalogReport:
     http: int
@@ -62,10 +67,7 @@ def _drift_message(reporte: CatalogReport, slate_count: int) -> str:
         lineas.append(
             "catalog ids not in the price table (rename candidates?): " + ", ".join(reporte.unseen)
         )
-    lineas.append(
-        "aborted before any request; the dry-run mark was consumed - re-run "
-        "`bench dry-run --level <L>` before the next attempt"
-    )
+    lineas.append(f"aborted before any request; {_ABORT_NOTE} before the next attempt")
     return "\n".join(lineas)
 
 
@@ -75,14 +77,14 @@ async def _verify_async(
     status, payload = await cliente.models()
     if status != 200 or not isinstance(payload, dict):
         raise PreflightError(
-            f"preflight: catalog read failed (HTTP {status}) - aborting before any request; "
-            "the dry-run mark was consumed - re-run `bench dry-run --level <L>`"
+            f"preflight: catalog read failed (HTTP {status}) - aborting before any "
+            f"request; {_ABORT_NOTE}"
         )
     data = payload.get("data")
     if not isinstance(data, list):
         raise PreflightError(
-            "preflight: /v1/models returned an unrecognized payload - aborting before "
-            "any request; the dry-run mark was consumed - re-run `bench dry-run --level <L>`"
+            f"preflight: /v1/models returned an unrecognized payload - aborting "
+            f"before any request; {_ABORT_NOTE}"
         )
     catalog_ids = sorted(
         entrada["id"]
@@ -140,6 +142,6 @@ def verify(*, slate_ids: list[str], table_models) -> CatalogReport:
         raise
     except Exception as e:  # noqa: BLE001 - a transport failure is a clean abort, not a crash
         raise PreflightError(
-            f"preflight: catalog read failed ({type(e).__name__}: {e}) - aborting before "
-            "any request; the dry-run mark was consumed - re-run `bench dry-run --level <L>`"
+            f"preflight: catalog read failed ({type(e).__name__}: {e}) - aborting "
+            f"before any request; {_ABORT_NOTE}"
         ) from None

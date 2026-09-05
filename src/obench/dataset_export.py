@@ -132,19 +132,19 @@ def _columns(filas: list[dict]) -> list[str]:
     return columnas
 
 
-def _celda(valor, *, plano: bool):
-    """One row value for the flat formats. `plano` (CSV/XLSX) serializes the
-    nested shapes as compact JSON; None reads as an empty cell and booleans
-    as lowercase literals (JSON's, not Python's)."""
+def _celda(valor):
+    """One row value for the flat formats: nested shapes serialize as compact
+    JSON; None reads as an empty cell and booleans as lowercase literals
+    (JSON's, not Python's)."""
     if valor is None:
-        return None if not plano else ""
+        return ""
     if valor is True:
         return "true"
     if valor is False:
         return "false"
     if isinstance(valor, (str, int, float)):
         return valor
-    return valor if not plano else json.dumps(valor, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(valor, ensure_ascii=False, separators=(",", ":"))
 
 
 def _write_json(
@@ -170,7 +170,7 @@ def _write_csvs(dir_salida: pathlib.Path, tablas: dict[str, list[dict]]) -> None
             columnas = _columns(filas)
             escritor.writerow(columnas)
             for fila in filas:
-                escritor.writerow([_celda(fila.get(c), plano=True) for c in columnas])
+                escritor.writerow([_celda(fila.get(c)) for c in columnas])
         tmp.replace(ruta)
 
 
@@ -207,7 +207,7 @@ def _write_xlsx(
             hoja.write(0, c, str(clave))
         for f, fila_doc in enumerate(filas, start=1):
             for c, clave in enumerate(columnas):
-                hoja.write(f, c, _celda(fila_doc.get(clave), plano=True))
+                hoja.write(f, c, _celda(fila_doc.get(clave)))
     libro.close()
     tmp.replace(ruta)
 

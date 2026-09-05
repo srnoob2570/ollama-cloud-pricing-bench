@@ -59,7 +59,6 @@ def budget(level: str, tabla, *, reps: int = 5, s: float = 0.5) -> list[BudgetLi
     for w in workloads.WORKLOADS_BY_LEVEL[level]:
         t_in_total = 0
         t_out_total = 0
-        nonce_total = 0
         s0_total = 0.0
         s1_total = 0.0
         # The cache-free lane's per-request overhead (protocol v3): the same
@@ -72,21 +71,17 @@ def budget(level: str, tabla, *, reps: int = 5, s: float = 0.5) -> list[BudgetLi
         # own nonce. The gate approves the WORST case - a run may never bill
         # more than the dry-run approved.
         pasos = MAX_STEPS if level == "T3" else 1
+        nonce_total = nonce_por_request * w.requests * reps * pasos * len(modelos)
         for modelo in modelos:
             tarifa = tabla.rate(modelo)
-            if pasos == 1:
-                t_in = (w.t_in + nonce_por_request) * w.requests * reps
-                t_out = w.t_out * w.requests * reps
-            else:
-                t_in = (
-                    w.requests
-                    * reps
-                    * sum(w.t_in + nonce_por_request + paso * w.t_out for paso in range(pasos))
-                )
-                t_out = w.t_out * w.requests * reps * pasos
+            t_in = (
+                w.requests
+                * reps
+                * sum(w.t_in + nonce_por_request + paso * w.t_out for paso in range(pasos))
+            )
+            t_out = w.t_out * w.requests * reps * pasos
             t_in_total += t_in
             t_out_total += t_out
-            nonce_total += nonce_por_request * w.requests * reps * pasos
             s0 = new_task_cost(t_in, t_out, tarifa, s=0.0, per=tabla.per)
             s0_total += s0
             # no cache discount: new_task_cost already makes S1 equal S0

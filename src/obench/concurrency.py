@@ -325,9 +325,12 @@ def _build_summary(
     batches = _read_jsonl(batches_dir / f"batches-{run_id}.jsonl")
     requests = _read_jsonl(runs_dir / f"requests-{run_id}.jsonl")
     celdas = []
+    por_batch: dict[str | None, list[dict]] = {}
+    for r in requests:
+        por_batch.setdefault(r.get("batch_id"), []).append(r)
     # (model, k): the doc covers every model of the run, grouped and stable
     for b in sorted(batches, key=lambda x: (x["model"], x["k"])):
-        lineas = [r for r in requests if r.get("batch_id") == b.get("batch_id")]
+        lineas = por_batch.get(b.get("batch_id"), [])
         aceptadas = sum(1 for r in lineas if r.get("http") == 200)
         completadas = sum(1 for r in lineas if r.get("checker") == "pass")
         dpp_weekly = b.get("dpp_weekly")

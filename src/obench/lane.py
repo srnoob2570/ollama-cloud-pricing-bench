@@ -202,13 +202,17 @@ def salted_prompt(prompt: str, nonce: str) -> str:
     return f"{nonce}\n\n{prompt}"
 
 
+def _sha256_hex(texto: str) -> str:
+    return hashlib.sha256(texto.encode("utf-8")).hexdigest()
+
+
 def prompt_sha256(prompt: str) -> str:
     """sha256 over the exact prompt bytes sent (the line's billing evidence)."""
-    return hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    return _sha256_hex(prompt)
 
 
 def nonce_sha256(nonce: str) -> str:
-    return hashlib.sha256(nonce.encode("utf-8")).hexdigest()
+    return _sha256_hex(nonce)
 
 
 def expected_tin(level: str, workload: str) -> int:

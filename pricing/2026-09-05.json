@@ -1,0 +1,119 @@
+{
+  "table_version": "2026-09-05",
+  "captured": "2026-09-05",
+  "source": "https://raw.githubusercontent.com/srnoob2570/ollama-cloud-catalog/main/pricing.json (upstream https://ollama.com/pricing)",
+  "per": 1000000,
+  "currency": "USD",
+  "models": {
+    "deepseek-v4-flash": {
+      "input": 0.22,
+      "cached_input": 0.007,
+      "output": 0.66
+    },
+    "deepseek-v4-pro": {
+      "input": 0.66,
+      "cached_input": 0.022,
+      "output": 1.98
+    },
+    "gemma4": {
+      "input": 0.14,
+      "cached_input": 0.05,
+      "output": 0.4
+    },
+    "glm-5.1": {
+      "input": 1.0,
+      "cached_input": 0.2,
+      "output": 3.2
+    },
+    "glm-5.2": {
+      "input": 1.4,
+      "cached_input": 0.26,
+      "output": 4.4
+    },
+    "glm-5.3": {
+      "input": 1.4,
+      "cached_input": 0.26,
+      "output": 4.4
+    },
+    "glm-5.3-flash": {
+      "input": 0.15,
+      "cached_input": 0.03,
+      "output": 0.5
+    },
+    "gpt-oss:120b": {
+      "input": 0.15,
+      "cached_input": 0.014,
+      "output": 0.6
+    },
+    "gpt-oss:20b": {
+      "input": 0.07,
+      "cached_input": 0.035,
+      "output": 0.3
+    },
+    "kimi-k2.6": {
+      "input": 0.95,
+      "cached_input": 0.16,
+      "output": 4.0
+    },
+    "kimi-k2.7-code": {
+      "input": 0.95,
+      "cached_input": 0.19,
+      "output": 4.0
+    },
+    "kimi-k3": {
+      "input": 3.0,
+      "cached_input": 0.3,
+      "output": 15.0
+    },
+    "minimax-m2.7": {
+      "input": 0.3,
+      "cached_input": 0.06,
+      "output": 1.2
+    },
+    "minimax-m3": {
+      "input": 0.6,
+      "cached_input": 0.12,
+      "output": 2.4
+    },
+    "mistral-large-3": {
+      "input": 0.5,
+      "cached_input": 0.5,
+      "output": 1.5
+    },
+    "nemotron-3-nano": {
+      "input": 0.06,
+      "cached_input": 0.06,
+      "output": 0.24
+    },
+    "nemotron-3-super": {
+      "input": 0.015,
+      "cached_input": 0.015,
+      "output": 0.6
+    },
+    "nemotron-3-ultra": {
+      "input": 0.1,
+      "cached_input": 0.1,
+      "output": 3.0
+    },
+    "qwen3.5:397b": {
+      "input": 0.6,
+      "cached_input": 0.6,
+      "output": 3.6
+    }
+  },
+  "peak": {
+    "window": "Peak pricing applies between 12:00 and 18:00 UTC, Monday to Friday.",
+    "rates": {
+      "deepseek-v4-flash": {
+        "input": 0.44,
+        "cached_input": 0.014,
+        "output": 1.32
+      },
+      "deepseek-v4-pro": {
+        "input": 1.32,
+        "cached_input": 0.044,
+        "output": 3.96
+      }
+    }
+  }
+}

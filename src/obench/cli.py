@@ -19,6 +19,7 @@ from . import (
     gate,
     predict,
     preflight,
+    pricing_pull,
     releases,
     workloads,
 )
@@ -36,6 +37,7 @@ SUBCOMMANDS = (
     "resume",
     "release",
     "dataset",
+    "pricing-pull",
 )
 
 
@@ -426,6 +428,50 @@ def _print_status(doc: dict) -> None:
             if b.get("rep"):
                 coordenada += f" rep{b['rep']}"
             print(f"    {b['status']}: {coordenada} [{str(b['batch_id'])[:12]}]")
+
+
+def cmd_pricing_pull(args: argparse.Namespace) -> int:
+    """`bench pricing-pull`: snapshots the upstream rate card into a new
+    versioned price table. Maintenance, zero API quota: it fetches the
+    published catalog artifact (never ollama.com), diffs it rate-by-rate
+    against the latest local table and lands a new `pricing/<version>.json`.
+    It never overwrites a landed table and never re-prices past data: the new
+    table only reaches verdicts through the next run's own vintage."""
+    try:
+        informe = pricing_pull.pull(args.url, _pricing_dir(args), check=args.check)
+    except pricing_pull.PullError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(informe, ensure_ascii=False, indent=2))
+        return 0
+    print(f"pricing-pull: {informe['table_version']} (generated_at {informe['generated_at']})")
+    print(f"  source: {informe['source_url']}")
+    if informe["latest"]:
+        print(f"  diff vs {informe['latest']}:")
+    else:
+        print("  no local table yet; every model is new:")
+    for modelo in informe["changes"]["added"]:
+        print(f"    + {modelo}")
+    for modelo in informe["changes"]["removed"]:
+        print(f"    - {modelo}")
+    for cambio in informe["changes"]["updated"]:
+        viejo, nuevo = cambio["old"], cambio["new"]
+        print(
+            f"    ~ {cambio['model']}: input {viejo['input']}->{nuevo['input']}, "
+            f"cached_input {viejo['cached_input']}->{nuevo['cached_input']}, "
+            f"output {viejo['output']}->{nuevo['output']}"
+        )
+    for nota in informe["notes"]:
+        print(f"  note: {nota}")
+    if informe["up_to_date"]:
+        print(f"up to date: {informe['latest']} already carries these rates")
+        return 0
+    if args.check:
+        print("check only: nothing written")
+        return 0
+    print(f"wrote {informe['path']} ({informe['models']} models)")
+    return 0
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -1133,6 +1179,7 @@ DESPACHO = {
     "resume": cmd_run,
     "release": cmd_release,
     "dataset": cmd_dataset,
+    "pricing-pull": cmd_pricing_pull,
 }
 
 
@@ -1171,15 +1218,30 @@ def build_parser() -> argparse.ArgumentParser:
                 default=None,
                 help="output directory (default: releases/export-<run_id> under --base)",
             )
+        elif nombre == "pricing-pull":
+            # The pull never tunes a spend or an assumption either: it fetches
+            # the published rate card and lands a new snapshot. Knobs: --url
+            # (the artifact source) and --check (diff only, nothing written).
+            parser.add_argument(
+                "--url",
+                default=pricing_pull.DEFAULT_PRICING_URL,
+                help="the upstream rate card to snapshot",
+            )
+            parser.add_argument(
+                "--check",
+                action="store_true",
+                help="diff against the latest local table without writing",
+            )
         else:
             parser.add_argument("--level", choices=["T1", "T2", "T3"], default=None)
-        if nombre not in ("release", "dataset"):  # neither touches a model
+        if nombre not in ("release", "dataset", "pricing-pull"):  # none touches a model
             parser.add_argument("--model", default=None)
         if nombre != "dataset":  # a release pairs its dataset with its own table
             parser.add_argument(
                 "--pricing-dir", default="pricing", help="tables directory (relative to --base)"
             )
-        if nombre not in ("release", "dataset"):  # the manifest binds the table; no override
+        if nombre not in ("release", "dataset", "pricing-pull"):  # the manifest binds the table;
+            # a pull derives its own version from the upstream generated_at, never an override
             parser.add_argument("--table-version", default=None)
         if nombre == "probe-concurrency":
             # The probe reads none of --s/--reps/--rep/--k: a silent no-op flag
@@ -1286,7 +1348,8 @@ def build_parser() -> argparse.ArgumentParser:
             parser.add_argument("--k", type=int, default=1, help="concurrency of the burst")
         # release takes none of the above: it never tunes a spend or an
         # assumption. Its knobs are --run and --repo only.
-        if nombre not in ("release", "dataset"):  # neither reads a settle (neither brackets)
+        if nombre not in ("release", "dataset", "pricing-pull"):  # neither reads a settle
+            # (neither brackets, and the pull never registers anything)
             parser.add_argument(
                 "--settle-s",
                 type=float,

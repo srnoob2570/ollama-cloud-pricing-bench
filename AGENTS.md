@@ -28,12 +28,15 @@
 - Exit codes: `0` ok · `1` aborted run (preflight/runner) · `2` usage/validation/gate ·
   `3` unimplemented subcommand.
 - Free & offline: tests, `dry-run`, `analyze`, `predict`, `status`, `release` (gh only).
+- No-quota but networked: `pricing-pull` fetches the published catalog artifact
+  (never ollama.com), never touches the API.
 - Quota-spending — only with explicit owner instruction in that same conversation:
   `run`, `resume`, `probe-concurrency`, `calibrate-cache`.
 - Gate: `dry-run --level <L> --reps <N>` writes the mark; one mark enables exactly one
   run with the same level/table/reps. `resume` requires a fresh mark too.
-- Price change = new `pricing/<version>.json` + re-derive with `--table-version`;
-  never edit a shipped table or past raw data.
+- Price change = `bench pricing-pull` lands a new `pricing/<version>.json` (review its
+  rate-by-rate diff) + re-derive with `--table-version`; never edit a shipped table or
+  past raw data.
 - `analyze` refuses cleanly without local raw data; published datasets are consumed
   offline via `bench analyze --release <tag>` (the release's own table vintage).
 - `OLLAMA_API_KEY` is read only from the environment; nothing auto-loads `.env`.

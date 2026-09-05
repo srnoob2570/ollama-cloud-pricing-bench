@@ -83,6 +83,7 @@ work happens, run manifests, `analysis/` (derivatives, dashboard + calculator),
 | `analyze --release <tag> [--repo owner/name]` | The same analysis over a fetched dataset release, verified against its metadata sha256 map and priced by the release's own table. |
 | `status [--level L]` | Pending/done/aborted/in-flight batches and the quota consumed per level, read from the manifests alone. |
 | `release --run <run_id> [--repo owner/name]` | Packages one run's dataset: requests + batches + the binding manifest + the price-table snapshot + a `metadata.json` (code commit, table version + sha256, protocol version, a sha256 map over every file), and publishes it as a GitHub release. **One release per run, never rewritten**; the live API key (and any bearer-token-shaped string) must not appear in any packaged byte or the release refuses. |
+| `pricing-pull [--url URL] [--check]` | Snapshots the upstream rate card (the [ollama-cloud-catalog](https://github.com/srnoob2570/ollama-cloud-catalog) artifact, scraped from ollama.com/pricing) into a new `pricing/<version>.json`: fails loudly on any structure surprise, maps catalog ids onto the harness's ids, diffs rate-by-rate against the latest local table and lands the snapshot only when prices actually move (idempotent; `--check` diffs without writing; a landed table is never overwritten). The peak/off-peak rates ride along as a `peak` metadata block. Zero API quota; the table only reaches verdicts through the next run's own vintage. |
 
 ### The pages' Pages-first styling
 

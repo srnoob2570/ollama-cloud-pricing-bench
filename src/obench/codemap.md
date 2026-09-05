@@ -71,6 +71,7 @@ Invariants threaded through the flow: the API key exists only in the environment
 | `preflight.py` | Catalog preflight: slate coverage against `/v1/models`, tag matching, drift abort before billing. |
 | `predict.py` | Predictability HITL flow: hash-locked blind/informed estimate registries + comparative MAPE report (paired bootstrap CI). |
 | `pricing.py` | Versioned price table loading/validation (input / cached input / output rates, `per` unit). |
+| `pricing_pull.py` | `bench pricing-pull`: snapshots the upstream rate card (ollama-cloud-catalog artifact) into a new versioned table — fail-loud validation, alias mapping, rate-by-rate diff, immutable-landing refusal, peak block as metadata. |
 | `releases.py` | Dataset releases via `gh`: package/publish/fetch/verify (sha256 both directions, credential scrub, frozen v2 handling). |
 | `runner.py` | Bracketed-batch protocol: plan, manifest/resume/drift guards, burst, registration settle, Δpp, billing canary, raw line writing. |
 | `sandbox.py` | T3 checker sandbox: rebuild the graded copy (fixture-owned tests/config), run pytest in a bounded subprocess. |

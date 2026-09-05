@@ -553,21 +553,20 @@ def test_dashboard_v2_cache_recomputes_from_embedded_rates(tmp_path):
 
 
 def test_dashboard_v2_usage_block_compares_both_plans_at_full_meter(tmp_path):
-    """The hero's right column states the plan comparison as one multiplier:
-    how much more usage one plan buys over the other at 100% — legacy from the
-    anchor over the measured $/task (the weekly read, session-backed when
-    sub-tick), new from ancla x credit_ratio of face-value credits at the live
-    price — with the min-max range as the margin of error. Live JS from
-    embedded data; nothing persisted."""
+    """The hero's right column is one plain sentence: for the same monthly
+    price, the winner delivers ×N more usage (legacy plan vs the $300 in
+    credits), with a muted note that the figure varies by workload. Live JS
+    from embedded data; nothing persisted."""
     html = render_dashboard_v2(tmp_path)
     assert 'id="reco-usage"' in html
     # the multiplier and its derivation wiring ride the template's JS
     assert "usageBlock" in html
     assert "more usage" in html
-    assert "100% of each plan" in html
+    assert "for the same $" in html
     assert "in credits" in html
-    # the margin of error is explicit: the min-max range over cells
-    assert "usage-range" in html and "range " in html
+    assert "legacy plan" in html
+    # the margin of error, said in words: the figure varies by workload
+    assert "varies by workload" in html
 
 
 def test_dashboard_v2_marks_measured_s_and_notes_the_s0_models(tmp_path):

@@ -583,14 +583,10 @@
                 font-weight: 600;
                 color: var(--muted-foreground);
             }
-            .usage-range,
             .usage-foot {
                 font-size: 12px;
                 color: var(--muted-foreground);
-            }
-            .usage-foot {
                 margin-top: 8px;
-                max-width: 36ch;
             }
             @media (max-width: 820px) {
                 .usage {
@@ -1278,7 +1274,7 @@
                 <aside
                     class="usage"
                     id="reco-usage"
-                    aria-label="How much more usage one plan buys over the other at 100%"
+                    aria-label="Plan usage comparison at 100%"
                 ></aside>
             </section>
 
@@ -1436,7 +1432,8 @@
                             </div>
                         </div>
                         <div class="ctl s-ctl">
-                            <label class="ctl-label" for="cache-s">cache hit-rate</label
+                            <label class="ctl-label" for="cache-s"
+                                >cache hit-rate</label
                             >
                             <div class="ctl-row cache-presets">
                                 <button
@@ -1598,7 +1595,13 @@
                     per
                 );
             }
-            function verdictOf(legacy, nuevo, tickUsd, legacySession, creditRatio) {
+            function verdictOf(
+                legacy,
+                nuevo,
+                tickUsd,
+                legacySession,
+                creditRatio,
+            ) {
                 // the same rule as the persisted verdicts: the new side re-denominates to
                 // paid dollars (credits divide by the plan's credit multiplier) BEFORE the
                 // comparison, so the tie band is the MINIMUM of 2 ticks and 5 % of the
@@ -1609,7 +1612,10 @@
                 if (isNull(legacy) || isNull(nuevo))
                     return { winner: "no data", margin_pct: null };
                 nuevo = nuevo / (creditRatio || 1);
-                var band = Math.min(2 * tickUsd, 0.05 * Math.min(legacy, nuevo));
+                var band = Math.min(
+                    2 * tickUsd,
+                    0.05 * Math.min(legacy, nuevo),
+                );
                 if (Math.abs(legacy - nuevo) <= band)
                     return { winner: "tie", margin_pct: null };
                 if (legacy < nuevo) {
@@ -1841,15 +1847,12 @@
                 return n >= 10 ? String(Math.round(n)) : n.toFixed(1);
             }
             function usageBlock() {
-                // how much more usage one plan buys over the other at 100%,
-                // per month, from the filtered cells. Legacy: the anchor
-                // amortizes the plan price over the weekly window, so $ancla /
-                // measured $-per-task = the tasks a fully drained meter affords
-                // (the session-derived weekly-equivalent backs a sub-tick read,
-                // the same fallback the verdict uses). New: ancla x credit_ratio
-                // of face-value credits at the live per-task price. The token
-                // figures cancel inside the ratio; the multiplier is the
-                // per-task paid-cost ratio inverted. Nothing persisted.
+                // legacy at 100%: the anchor amortizes the plan price over the
+                // weekly window, so $ancla / measured $-per-task = tasks a fully
+                // drained meter affords (session-derived weekly-equivalent backs
+                // a sub-tick read). New: ancla x credit_ratio of face-value
+                // credits at the live per-task price. Tokens cancel in the
+                // ratio; nothing persisted.
                 var rs = [];
                 cellsFiltered().forEach(function (c) {
                     var t = taskTokens(c);
@@ -1863,40 +1866,27 @@
                     if (l > 0 && n > 0 && isFinite(l / n)) rs.push(l / n);
                 });
                 if (!rs.length) return "";
-                // central estimate = median of the per-cell ratios; the min-max
-                // range is the margin of error (the meter drains per workload
-                // shape and model)
                 var mid = medianOf(rs);
-                var lo = Math.min.apply(null, rs);
-                var hi = Math.max.apply(null, rs);
                 var nuevo = mid < 1;
                 var x = nuevo ? 1 / mid : mid;
-                var xl = nuevo ? 1 / hi : lo;
-                var xh = nuevo ? 1 / lo : hi;
-                var who = nuevo
-                    ? "the $" +
-                      Math.round(BP.ancla * CREDITRATIO) +
-                      " in credits buy this much more usage than the old meter"
-                    : "the old meter buys this much more usage than the $" +
-                      Math.round(BP.ancla * CREDITRATIO) +
-                      " in credits";
                 return (
-                    '<div class="usage-kicker">usage if you burn 100% of each plan</div>' +
+                    '<div class="usage-kicker">for the same $' +
+                    Math.round(BP.ancla) +
+                    " a month</div>" +
                     '<div class="usage-num ' +
                     (nuevo ? "u-new" : "u-legacy") +
                     '">&times;' +
                     fmtX(x) +
                     '<span class="usage-unit"> more usage</span></div>' +
-                    '<div class="usage-range">range &times;' +
-                    fmtX(xl) +
-                    "&ndash;&times;" +
-                    fmtX(xh) +
-                    " &middot; by workload mix</div>" +
                     '<div class="usage-foot">' +
-                    who +
-                    "; median across " +
-                    rs.length +
-                    " workloads (&plusmn; half a meter tick per read, credits priced at the current hit-rate setting)</div>"
+                    (nuevo
+                        ? "with the $" +
+                          Math.round(BP.ancla * CREDITRATIO) +
+                          " in credits than with the legacy plan"
+                        : "with the legacy plan than with the $" +
+                          Math.round(BP.ancla * CREDITRATIO) +
+                          " in credits") +
+                    " &middot; varies by workload</div>"
                 );
             }
 
@@ -1986,15 +1976,6 @@
                 $("reco-pills").innerHTML =
                     pills ||
                     '<p class="note">no measured cell under this filter</p>';
-                $("reco-sub").textContent =
-                    "The margin is how much more expensive the loser is; picking the winner avoids " +
-                    "paying that premium. Anchor: $" +
-                    BP.ancla +
-                    "/mo = " +
-                    Number(USDPP).toFixed(6) +
-                    " USD per weekly pp (tick $" +
-                    Number(TICKUSD).toFixed(6) +
-                    ").";
                 $("reco-usage").innerHTML = usageBlock();
             }
 
@@ -2401,11 +2382,10 @@
                                 item.getAttribute("data-value"),
                             ) !== -1;
                         item.setAttribute("aria-selected", selected);
-                        item.querySelector(
-                            ".model-picker-check",
-                        ).innerHTML = selected
-                            ? '<i data-lucide="check" aria-hidden="true"></i>'
-                            : "";
+                        item.querySelector(".model-picker-check").innerHTML =
+                            selected
+                                ? '<i data-lucide="check" aria-hidden="true"></i>'
+                                : "";
                     },
                 );
                 refrescoIconos();
@@ -2536,7 +2516,8 @@
                 // keep the dropdown open so the user can toggle more models; the refocus
                 // must not scroll: focusing the search box (top of the dropdown) would
                 // otherwise yank a mid-list toggle back to the top of the list
-                if (pickerOpen) $("model-search").focus({ preventScroll: true });
+                if (pickerOpen)
+                    $("model-search").focus({ preventScroll: true });
             });
 
             $("model-picker-dropdown").addEventListener(

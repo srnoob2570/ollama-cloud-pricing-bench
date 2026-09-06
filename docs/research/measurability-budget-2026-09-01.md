@@ -9,7 +9,7 @@ Glossary: [`CONTEXT.md`](../../CONTEXT.md) (pp, tick, bracketed batch, anchor). 
 for the composition grilling ticket; to be re-derived after the latency re-measurement ticket
 lands (§7).
 
-**Conventions** (same as [`medidor-vivo-2026-08-31.md`](./medidor-vivo-2026-08-31.md)):
+**Conventions** (same as [`live-meter-2026-08-31.md`](./live-meter-2026-08-31.md)):
 `usage` values are the fraction exactly as the API returns it (`0.382` = 38.2 %); one step of
 `0.001` = **0.1 pp = 1 tick**. Δpp below is quoted in pp (`dpp_weekly = 0.1` means 0.1 pp =
 1 tick). The **weekly** window is the unit of account (the anchor), so the sizing targets are

@@ -1,9 +1,9 @@
-# Formato (ruff-format) + chequeos de sintaxis (ruff-check, check-toml) e
-# higiene básica. Ruff-format lee su config de pyproject.toml (line-length 100);
-# ruff-check se fija en E9+F821 (sintaxis y nombres no definidos), sin depender
-# del set default de cada versión de ruff.
-# Instalar una vez: pre-commit install
-# Reformateo único: pre-commit run --all-files
+# Format (ruff-format) + syntax checks (ruff-check, check-toml) and basic
+# hygiene. Ruff-format reads its config from pyproject.toml (line-length 100);
+# ruff-check pins E9+F821 (syntax and undefined names), independent of each
+# ruff version's default ruleset.
+# Install once: pre-commit install
+# One-time reformat: pre-commit run --all-files
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0

@@ -3,41 +3,41 @@
 **Version 1.3 · 2026-09-02 · status: specified, ready for execution** (a phase after this
 wayfinder map). This document integrates the decisions of every closed ticket of the
 [map](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/1), of the Harness
-v1.1 map ([#27](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/27): medibilidad,
-latencia, precisión y lectura) and of the Methodology v1.2 map
-([#44](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/44): carriles sin cache
-y S(x) custom). A future session must be able to run the benchmarks by reading
+v1.1 map ([#27](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/27): measurability,
+latency, precision, and reading) and of the Methodology v1.2 map
+([#44](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/44): cache-free lanes and
+custom S(x)). A future session must be able to run the benchmarks by reading
 this without making any design decision. Glossary: [`CONTEXT.md`](../CONTEXT.md).
 
-**v1.1 changelog** (map #27: [composición](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/30) ·
+**v1.1 changelog** (map #27: [composition](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/30) ·
 [settle](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/31) ·
-[latencia](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/29) ·
-[sesión-USD](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/36)):
-composición híbrida de brackets (T1 calibrador, T2 híbrido real) · settle por registro
-(el fijo de 90 s muere) · precisión exacta (cero redondeos en lo persistido) · margen del
-veredicto {winner, margin_pct} · sesión como señal secundaria con $/pp derivado ·
-predictibilidad re-alcanzada sobre el conjunto medible.
+[latency](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/29) ·
+[session-USD](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/36)):
+hybrid bracket composition (T1 calibrator, T2 real hybrid) · per-record settle (the fixed 90 s
+is dead) · exact precision (zero rounding in anything persisted) · verdict margin
+{winner, margin_pct} · session as a secondary signal with derived $/pp ·
+predictability re-achieved over the measurable set.
 
-**v1.2 changelog** (map #44: [carril sin cache](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/45) ·
-[S(x) custom](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/46) ·
-[cierre](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/47)):
-**carril sin cache**: todo request medido lleva un nonce seeded por run (~1.5 % de los
-tokens de entrada esperados, clamp [4, 400] palabras) que fuerza cache-miss: el pp medido es
-trabajo raw (el subconteo de cache del dataset v2 es el defecto documentado detrás de esto) ·
-**canario de facturación**: 5 salted + 5 replays por run; alarma ratio > 0.5 aborta en
-compuerta; más el detector pasivo Δpp-vs-presupuesto · **S(x)**: S1 pasa a ser el default
-versionado (50 %) declarado aquí; el par S0/S1 sigue siendo la referencia persistida (MAPE
-anclado al par); S ≠ default se congela solo como re-runs estampados · el dashboard muestra
-el S efectivo por modelo · el re-run T1/T2 bajo v3 con carriles sin cache es requisito
-de v1.2 pendiente de la compuerta del owner (§11).
+**v1.2 changelog** (map #44: [cache-free lane](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/45) ·
+[custom S(x)](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/46) ·
+[closure](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/47)):
+**cache-free lane**: every measured request carries a run-seeded nonce (~1.5 % of the
+expected input tokens, clamped [4, 400] words) that forces a cache miss: the measured pp is
+raw work (the v2 dataset's baked-in caching is the documented defect behind this) ·
+**billing canary**: 5 salted + 5 replays per run; a ratio > 0.5 alarm aborts at the
+gate; plus the passive Δpp-vs-budget detector · **S(x)**: S1 becomes the default
+versioned (50 %) declared here; the S0/S1 pair remains the persisted reference (MAPE
+anchored to the pair); S ≠ default is frozen only as stamped re-runs · the dashboard shows
+the effective S per model · the T1/T2 re-run under v3 with cache-free lanes is the v1.2
+requirement, pending the owner's gate (§11).
 
-**v1.3 changelog** (credit ratio, post-hoc): veredicto, margen y umbral pp/1M comparan en
-**dólares pagados**: el lado nuevo vende créditos con multiplicador por tier (Pro ×3,
-Max ×3, Team ×2; el ancla es el tier Max ⇒ `--credit-ratio` default 3), su coste nominal
-en créditos se divide por el ratio antes de comparar; las cifras de coste por tarea se
-quedan a valor nominal; ratio 1 reproduce la comparación 1:1 de v1.2. Corrección puramente
-post-hoc: no re-mide nada, pero mueve veredictos y márgenes (el re-run v3 pendiente de
-compuerta la incorpora).
+**v1.3 changelog** (credit ratio, post-hoc): verdict, margin, and the pp/1M threshold compare in
+**paid dollars**: the new side sells credits with a per-tier multiplier (Pro ×3,
+Max ×3, Team ×2; the anchor is the Max tier ⇒ `--credit-ratio` default 3); its nominal
+credit cost divides by the ratio before comparing; the per-task cost figures stay
+at face value; ratio 1 reproduces the v1.2 1:1 credit comparison. Purely
+post-hoc correction: it re-measures nothing, but it moves verdicts and margins (the pending-gate
+v3 re-run incorporates it).
 
 **Hard guardrails**: 🚫 do not migrate the legacy Max account (the only live GPU-time key;
 migration is voluntary and irreversible) · 💰 pre-approved spend covers only the meter

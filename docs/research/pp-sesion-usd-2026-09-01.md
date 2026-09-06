@@ -1,15 +1,15 @@
-# ¿Cuánto vale un pp de sesión en dólares? Conversión sesión↔semanal (2026-09-01)
+# How many dollars is a session pp worth? Session↔weekly conversion (2026-09-01)
 
-Resolves the research ticket "¿Cuánto vale un pp de sesión en dólares? (conversión
-sesión↔semanal)" of the [Harness v1.1 map](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/27).
+Resolves the research ticket "How many dollars is a session pp worth? (session↔weekly
+conversion)" of the [Harness v1.1 map](https://github.com/srnoob2570/ollama-cloud-pricing-bench/issues/27).
 The $/pp anchor is built on the **weekly** window ($0.2302/pp, `methodology-v1.md` §3); the
 session window is a saturation constraint with no independent anchor, and the composition
 ticket fixed it as a secondary resolution signal. This ticket asks whether a session pp can be
 priced anyway, via the measured session:weekly conversion. Purely local derivation: **no API
 calls, no spend**; every number is recomputed from the raw lines already on disk. Extends §2
-and §7 of [`presupuesto-medibilidad-2026-09-01.md`](./presupuesto-medibilidad-2026-09-01.md)
+and §7 of [`measurability-budget-2026-09-01.md`](./measurability-budget-2026-09-01.md)
 (the session:weekly evidence and caveats live there) and the co-landing point of
-[`latencia-medidor-2026-09-01.md`](./latencia-medidor-2026-09-01.md) (the super-tick probe).
+[`latency-meter-2026-09-01.md`](./latency-meter-2026-09-01.md) (the super-tick probe).
 
 **Conventions** (same as the budget doc): `usage` values are the fraction exactly as the API
 returns it; one step of `0.001` = 0.1 pp = **1 tick**. The conversion **R** below is
@@ -26,7 +26,7 @@ Uncommitted, per the standing rule.
 ## 1. What the raw lines confirm before any conversion
 
 - **9 of 66 brackets moved any window** (4 of 57 in T1, 5 of 9 in T2), re-summed from the
-  raw `medidor_pre`/`medidor_post` readings, matching the budget doc's §1 census.
+  raw `meter_pre`/`meter_post` readings, matching the budget doc's §1 census.
 - **Exactly one bracket-level co-landing point**: `kimi-k3` @ `long_context` read session
   0.060 → 0.065 (+0.5 pp = 5 ticks) and weekly 0.383 → 0.384 (+0.1 pp = 1 tick). Every other
   mover is single-window: 7 session-only (weekly sub-tick) and 1 inverted,

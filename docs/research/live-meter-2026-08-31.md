@@ -6,7 +6,7 @@ this map (map guardrail: ~10 trivial requests). Actual spend: 6 requests to
 
 Raw logs: [`logs/medidor-vivo-2026-08-31/reads.jsonl`](./logs/medidor-vivo-2026-08-31/reads.jsonl)
 (and sibling `requests.jsonl`). No credentials. Theoretical complement:
-[`medidor-uso-ollama.md`](./medidor-uso-ollama.md), which this doc corrects live.
+[`ollama-usage-meter.md`](./ollama-usage-meter.md), which this doc corrects live.
 
 ## 1. The API key (Bearer) DOES authenticate the meter
 

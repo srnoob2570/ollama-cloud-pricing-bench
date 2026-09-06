@@ -13,7 +13,7 @@ releases/
 analysis/
 batches/
 
-# Credenciales — jamás en el repo
+# Credentials — never in the repo
 .env*
 *.key
 .claude/

@@ -42,10 +42,17 @@ def mark_dry_run(base, level: str, estimado: dict) -> pathlib.Path:
 
 
 def require_dry_run(
-    base, level: str, *, table_version: str | None = None, reps: int | None = None
+    base,
+    level: str,
+    *,
+    table_version: str | None = None,
+    reps: int | None = None,
+    models: list[str] | None = None,
 ) -> None:
-    """Raises GateClosed if the mark is missing, corrupt, from another table, or does not
-    cover this run's density (--reps): the gate binds what was approved to what will bill."""
+    """Raises GateClosed if the mark is missing, corrupt, from another table, does not
+    cover this run's density (--reps) or its models: the gate binds what was approved
+    to what will bill. The models check (a run may never bill what the dry-run did
+    not approve) skips marks written before it existed."""
     ruta = _mark_path(base, level)
     if not ruta.exists():
         raise GateClosed(f"gate: run `bench dry-run --level {level}` before running this level")
@@ -81,6 +88,16 @@ def require_dry_run(
                 f"execute {reps!r}; the run may never bill more than the dry-run approved - "
                 f"re-run `bench dry-run --level {level}`"
             )
+    if models is not None:
+        aprobados = marca.get("estimado", {}).get("models")
+        if aprobados is not None:
+            fuera = [m for m in models if m not in aprobados]
+            if fuera:
+                raise GateClosed(
+                    f"gate: the dry-run approved {aprobados!r} models but this run would "
+                    f"bill {fuera!r}; the run may never bill what the dry-run did not "
+                    f"approve - re-run `bench dry-run --level {level}`"
+                )
 
 
 def consume(base, level: str) -> None:

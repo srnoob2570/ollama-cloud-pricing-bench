@@ -86,6 +86,27 @@ def _validate_settle(args: argparse.Namespace) -> str | None:
     return None
 
 
+def _model_list(args: argparse.Namespace) -> list[str] | None:
+    """The requested --model list, deduped (first-seen order); None = the full slate."""
+    if not args.model:
+        return None
+    return list(dict.fromkeys(args.model))
+
+
+def _slate_error(args: argparse.Namespace, tabla: PriceTable) -> str | None:
+    """Every requested --model must be in the level's slate (the list replaces the
+    slate, never adds outside it); error message or None."""
+    if not args.model:
+        return None
+    modelos = workloads.slate(args.level, tabla)
+    fuera = [m for m in dict.fromkeys(args.model) if m not in modelos]
+    if fuera:
+        return (
+            f"--model {', '.join(fuera)} is not in the {args.level} slate ({len(modelos)} models)"
+        )
+    return None
+
+
 def _validate_run(args: argparse.Namespace, tabla: PriceTable) -> str | None:
     """Validates the run's parameters against the level's slate; error message or None."""
     if args.k < 1:
@@ -106,10 +127,7 @@ def _validate_run(args: argparse.Namespace, tabla: PriceTable) -> str | None:
             "every rep of a cell into one bracket (the strong four per-cell, the weak "
             "trio pooled per model) - run the full density (drop --rep)"
         )
-    modelos = workloads.slate(args.level, tabla)
-    if args.model is not None and args.model not in modelos:
-        return f"--model {args.model!r} is not in the {args.level} slate ({len(modelos)} models)"
-    return None
+    return _slate_error(args, tabla)
 
 
 def cmd_dry_run(args: argparse.Namespace) -> int:
@@ -122,8 +140,17 @@ def cmd_dry_run(args: argparse.Namespace) -> int:
         return 2
     try:
         tabla = PriceTable.load(_pricing_dir(args), args.table_version)
-        filas = cost.budget(args.level, tabla, reps=args.reps, s=args.s)
-    except (TableError, ValueError) as e:
+    except TableError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    error = _slate_error(args, tabla)
+    if error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    modelos = _model_list(args)
+    try:
+        filas = cost.budget(args.level, tabla, reps=args.reps, s=args.s, models=modelos)
+    except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     estimado = {
@@ -131,6 +158,10 @@ def cmd_dry_run(args: argparse.Namespace) -> int:
         "level": args.level,
         "reps": args.reps,
         "s": args.s,
+        # The resolved approved set (the gate's subset check compares against
+        # it): a narrowed request recorded as the full slate would authorize
+        # models the operator never priced.
+        "models": modelos if modelos is not None else workloads.slate(args.level, tabla),
         "rows": [dataclasses.asdict(f) for f in filas],
         "canary": cost.canary_estimate(),
     }
@@ -226,8 +257,13 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 2
     try:
         tabla = PriceTable.load(_pricing_dir(args), args.table_version)
+        modelos = _model_list(args) or workloads.slate(args.level, tabla)
         gate.require_dry_run(
-            _base(args), args.level, table_version=tabla.table_version, reps=args.reps
+            _base(args),
+            args.level,
+            table_version=tabla.table_version,
+            reps=args.reps,
+            models=modelos,
         )
         error = _validate_run(args, tabla)
         if error:
@@ -238,7 +274,6 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 2
     if not _require_api_key():
         return 2
-    modelos = [args.model] if args.model else workloads.slate(args.level, tabla)
     # The preflight check covers the models THIS run will bill: --model
     # narrowed the slate, so drift in a model the run never touches must not
     # abort it.
@@ -446,6 +481,13 @@ def cmd_probe_concurrency(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    if len(args.model) > 1:
+        print(
+            "error: --model takes exactly one value (the cells run on one model)",
+            file=sys.stderr,
+        )
+        return 2
+    modelo = args.model[0]
     if not concurrency.PROBE_K_FROM <= args.k_max <= concurrency.PROBE_K_CEILING:
         print(
             f"error: --k-max must be in [{concurrency.PROBE_K_FROM}, "
@@ -463,14 +505,14 @@ def cmd_probe_concurrency(args: argparse.Namespace) -> int:
         return 2
     try:
         tabla = PriceTable.load(_pricing_dir(args), args.table_version)
-        if args.model not in tabla.models:
+        if modelo not in tabla.models:
             print(
-                f"error: --model {args.model!r} is not in the price table "
+                f"error: --model {modelo!r} is not in the price table "
                 f"{tabla.table_version!r} ({len(tabla.models)} models)",
                 file=sys.stderr,
             )
             return 2
-        gate.require_dry_run(_base(args), "T1", table_version=tabla.table_version)
+        gate.require_dry_run(_base(args), "T1", table_version=tabla.table_version, models=[modelo])
     except (TableError, gate.GateClosed) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -480,11 +522,11 @@ def cmd_probe_concurrency(args: argparse.Namespace) -> int:
     codigo, resumen = _spend_command(
         args,
         nivel="T1",
-        slate_ids=[args.model],
+        slate_ids=[modelo],
         tabla=tabla,
         run=lambda catalogo: concurrency.run_probe(
             _base(args),
-            model=args.model,
+            model=modelo,
             k_max=args.k_max,
             settle_s=args.settle_s,
             settle_poll_s=args.settle_poll_s,
@@ -557,7 +599,7 @@ def cmd_calibrate_cache(args: argparse.Namespace) -> int:
     try:
         tabla = PriceTable.load(_pricing_dir(args), args.table_version)
         slate = workloads.slate("T2", tabla)
-        modelos = [args.model] if args.model else list(slate)
+        modelos = _model_list(args) or list(slate)
         fuera = [m for m in modelos if m not in slate]
         if fuera:
             print(
@@ -565,7 +607,7 @@ def cmd_calibrate_cache(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
-        gate.require_dry_run(_base(args), "T2", table_version=tabla.table_version)
+        gate.require_dry_run(_base(args), "T2", table_version=tabla.table_version, models=modelos)
     except (TableError, gate.GateClosed) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -697,13 +739,13 @@ def _predict_report(args: argparse.Namespace, tabla: PriceTable) -> int:
     return _print_predict_report(doc, ruta)
 
 
-def _predict_record(args: argparse.Namespace, tabla: PriceTable) -> int:
+def _predict_record(args: argparse.Namespace, tabla: PriceTable, modelo: str) -> int:
     try:
         linea = predict.record_estimate(
             _base(args),
             phase=args.phase,
             workload=args.workload,
-            model=args.model,
+            model=modelo,
             estimated_pp=args.pp,
             estimated_usd=args.usd,
             notes=args.notes,
@@ -716,7 +758,7 @@ def _predict_record(args: argparse.Namespace, tabla: PriceTable) -> int:
         print(json.dumps(linea, ensure_ascii=False, indent=2))
         return 0
     print(
-        f"locked: {linea['phase']} estimate for {args.workload}/{args.model} - "
+        f"locked: {linea['phase']} estimate for {args.workload}/{modelo} - "
         f"{linea['estimated_pp']:g} pp weekly, ${linea['estimated_usd']:g} credits "
         f"(table {linea['table_version']}, hash {str(linea['hash'])[:12]})"
     )
@@ -791,11 +833,18 @@ def cmd_predict(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    if args.model and len(args.model) > 1:
+        print(
+            "error: --model takes exactly one value (a cell is one workload/model pair)",
+            file=sys.stderr,
+        )
+        return 2
+    modelo = args.model[0] if args.model else None
     grabando = args.phase is not None
     if args.report and grabando:
         print("error: give either --report or --phase, not both", file=sys.stderr)
         return 2
-    grabadoras = (args.workload, args.model, args.pp, args.usd, args.notes)
+    grabadoras = (args.workload, modelo, args.pp, args.usd, args.notes)
     if not (args.report or grabando) and any(v not in (None, "") for v in grabadoras):
         print(
             "error: --workload/--model/--pp/--usd/--notes record an estimate; "
@@ -810,7 +859,7 @@ def cmd_predict(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    if grabando and (args.workload is None or args.model is None):
+    if grabando and (args.workload is None or modelo is None):
         print(
             "error: recording an estimate needs both --workload and --model (the cell)",
             file=sys.stderr,
@@ -830,8 +879,8 @@ def cmd_predict(args: argparse.Namespace) -> int:
         return 2
     if args.report:
         return _predict_report(args, tabla)
-    if grabando:
-        return _predict_record(args, tabla)
+    if grabando and modelo is not None:
+        return _predict_record(args, tabla, modelo)
     return _predict_walkthrough(args, tabla)
 
 
@@ -856,7 +905,7 @@ def _print_analyze(doc: dict, carpeta: pathlib.Path, etiqueta: str | None = None
     print(f"  bundle: {carpeta} (analysis.json, dashboard.html, calculator.html)")
 
 
-def _analyze_release(args: argparse.Namespace) -> int:
+def _analyze_release(args: argparse.Namespace, modelo: str | None) -> int:
     """`analyze --release <tag>`: fetch the dataset release, verify it against
     its metadata's sha256 map, and analyze it with the release's OWN table —
     the raw<->code<->table pairing, consumed. Still offline against the API:
@@ -876,7 +925,7 @@ def _analyze_release(args: argparse.Namespace) -> int:
             repo=repo,
             table_version=args.table_version,
             level=args.level,
-            model=args.model,
+            model=modelo,
         )
         tabla = releases.release_table(stage)
     except (releases.ReleaseError, TableError) as e:
@@ -889,7 +938,7 @@ def _analyze_release(args: argparse.Namespace) -> int:
             ancla=args.ancla,
             s=args.s,
             level=args.level,
-            model=args.model,
+            model=modelo,
             protocol_version=meta.get("protocol_version"),
             credit_ratio=args.credit_ratio,
         )
@@ -919,6 +968,14 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     if not (0.0 <= args.s <= 1.0):
         print(f"error: --s must be in [0, 1] (S1 cache hit-rate); got {args.s!r}", file=sys.stderr)
         return 2
+    if args.model and len(args.model) > 1:
+        print(
+            "error: --model takes exactly one value (a filtered --model doc is a narrower "
+            "view, never the reference)",
+            file=sys.stderr,
+        )
+        return 2
+    modelo = args.model[0] if args.model else None
     if not math.isfinite(args.ancla) or args.ancla <= 0:
         print(f"error: --ancla must be a finite number > 0; got {args.ancla!r}", file=sys.stderr)
         return 2
@@ -930,7 +987,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         )
         return 2
     if args.release is not None:
-        return _analyze_release(args)
+        return _analyze_release(args, modelo)
     try:
         tabla = PriceTable.load(_pricing_dir(args), args.table_version)
     except TableError as e:
@@ -943,7 +1000,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             ancla=args.ancla,
             s=args.s,
             level=args.level,
-            model=args.model,
+            model=modelo,
             credit_ratio=args.credit_ratio,
         )
     except analyze.AnalyzeError as e:
@@ -1120,7 +1177,10 @@ def build_parser() -> argparse.ArgumentParser:
         else:
             parser.add_argument("--level", choices=["T1", "T2", "T3"], default=None)
         if nombre not in ("release", "dataset", "pricing-pull"):  # none touches a model
-            parser.add_argument("--model", default=None)
+            # 1..N models after the flag (`--model m1 m2 m3`): the list replaces
+            # the level's slate, never adds outside it; single consumers keep
+            # their exactly-one guard (probe-concurrency, predict, analyze).
+            parser.add_argument("--model", nargs="+", default=None)
         if nombre != "dataset":  # a release pairs its dataset with its own table
             parser.add_argument(
                 "--pricing-dir", default="pricing", help="tables directory (relative to --base)"

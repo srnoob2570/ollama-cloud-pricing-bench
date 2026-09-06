@@ -45,16 +45,19 @@ class BudgetLine:
     pp_expected: float | None  # requires pp/1M calibration; None = unmeasured
 
 
-def budget(level: str, tabla, *, reps: int = 5, s: float = 0.5) -> list[BudgetLine]:
+def budget(
+    level: str, tabla, *, reps: int = 5, s: float = 0.5, models: list[str] | None = None
+) -> list[BudgetLine]:
     """Estimates the cost of a full level, per workload, under the S0 and S1 scenarios.
 
     `s` is the S1 cache hit-rate assumption. Models without a cache discount in the
     table (cached_input == input) are identical under both scenarios. The table's
-    declared `per` unit is honored (1M is not assumed).
+    declared `per` unit is honored (1M is not assumed). `models` prices a subset of
+    the slate (the requested list replaces it; None = the level's full slate).
     """
     if level not in workloads.WORKLOADS_BY_LEVEL:
         raise ValueError(f"unknown level: {level!r}")
-    modelos = workloads.slate(level, tabla)
+    modelos = list(models) if models is not None else workloads.slate(level, tabla)
     filas: list[BudgetLine] = []
     for w in workloads.WORKLOADS_BY_LEVEL[level]:
         t_in_total = 0

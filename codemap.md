@@ -7,7 +7,7 @@
 ## System Entry Points
 
 - `pyproject.toml` — package manifest (`obench` 0.1.0, hatchling, deps `httpx` + `xlsxwriter`); defines the sole console script: `bench = "obench.cli:main"`.
-- `src/obench/cli.py` — CLI dispatch of the ten `bench` subcommands (`dry-run`, `run`, `probe-concurrency`, `calibrate-cache`, `predict`, `analyze`, `status`, `resume`, `release`, `dataset`). The CLI is the system's only external seam.
+- `src/obench/cli.py` — CLI dispatch of the eleven `bench` subcommands (`dry-run`, `run`, `probe-concurrency`, `calibrate-cache`, `predict`, `analyze`, `status`, `resume`, `release`, `dataset`, `pricing-pull`). The CLI is the system's only external seam.
 - `.github/workflows/pages.yml` — CI: on release publish, re-derives the dashboard/calculator from the release itself (`bench analyze --release <tag>`, zero quota) and pushes them to the `gh-pages` branch.
 - `CONTEXT.md` — glossary of record (pp, anchor, bracketed batch, slate, checker, S0/S1, prefix replay, measured hit-rate); `docs/methodology-v1.md` is the behavioral source of truth.
 
@@ -25,7 +25,7 @@
 | Path | Role |
 |------|------|
 | `pricing/2026-08-31.json` | The versioned price-table snapshot; tables resolve by `--table-version` (latest by default). |
-| `tests/` | CLI-seam end-to-end tests against the fake transport (+ fake `gh` for releases); targeted unit tests only for pure analysis functions. |
+| `tests/` | CLI-seam end-to-end tests against the fake transport (+ fake `gh` for releases); targeted unit tests only for pure analysis functions; `tests/test_model_list.py` pins the `--model` 1..N list semantics (slate replacement, dedupe, gate subset enforcement). |
 | `runs/`, `batches/`, `releases/`, `analysis/` | Run artifacts: immutable raw JSONL evidence (requests/batches/probes/canary), release packages, and derived analysis bundles. |
 | `live-probes/` | One-off manual probe scripts and console logs (paired cache probe, weekly session test). |
 | `docs/` | Methodology (Spanish, source of truth), runbook, research notes. |
@@ -37,7 +37,7 @@
 
 ## Integration & Invariants
 
-- External services: only `ollama.com` (chat/usage/models) and the `gh` CLI; everything else is offline.
+- External services: only `ollama.com` (chat/usage/models), the `gh` CLI, and the `pricing-pull` fetch of the published catalog artifact (GitHub-hosted, never ollama.com); everything else is offline.
 - API key (`OLLAMA_API_KEY`) lives only in the environment; releases scrub credentials.
 - Raw JSONL is immutable; derivatives regenerate; every line carries `table_version` + `protocol_version`.
-- No real run without its dry-run mark; one mark enables exactly one run.
+- No real run without its dry-run mark; one mark enables exactly one run; the mark records the approved `models` set and a run may never bill a model the mark did not approve (`--model` lists are slate subsets).

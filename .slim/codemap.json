@@ -1,0 +1,50 @@
+{
+  "metadata": {
+    "version": "1.0.0",
+    "last_run": "2026-09-06T20:31:17.911Z",
+    "root": "/home/srnoob/Documentos/srnoob2570/ollama-cloud-pricing-bench",
+    "include_patterns": [
+      "src/**/*.py",
+      "pyproject.toml"
+    ],
+    "exclude_patterns": [],
+    "exceptions": []
+  },
+  "file_hashes": {
+    "pyproject.toml": "6e9e006c7e22961de7ce565de6680813",
+    "src/obench/__init__.py": "d41d8cd98f00b204e9800998ecf8427e",
+    "src/obench/agent.py": "3e5043c4447bf5e85809042d92610fb2",
+    "src/obench/analyze.py": "61d225db719657baabbdc9295936e8b7",
+    "src/obench/calibration.py": "4f513387d1640b73b5e135bf28eddfb9",
+    "src/obench/checkers.py": "cfff2596c9bd47229ae800630ddac867",
+    "src/obench/cli.py": "f8b939faa97faf5170cc3a6566f13b2d",
+    "src/obench/client.py": "0777439a6c7961aafce0dec487114994",
+    "src/obench/concurrency.py": "d3740eebacceff848bb6cec74ad9504b",
+    "src/obench/cost.py": "4ae86462b05429937b9bb78c94e9bba8",
+    "src/obench/dataset_export.py": "2a4abe9d302a31dc485026fcc000d378",
+    "src/obench/fixtures.py": "2d67d2248beb2dce173596d44472bf5c",
+    "src/obench/fixtures_t2.py": "4489f9a3385a95734fad3ef2e2d7a6a5",
+    "src/obench/fixtures_t3.py": "8649633a0f9d640433de1743ae90fae0",
+    "src/obench/gate.py": "a8d54ab5379a0e2fccd02f40e8ff10ee",
+    "src/obench/lane.py": "bfb2dd8ac9387fdcf2b319c222ea1a67",
+    "src/obench/meter.py": "2a72b019dc196323b503a4bd90790a70",
+    "src/obench/predict.py": "8c927758b23e9998d497a655eaa636cc",
+    "src/obench/preflight.py": "37f376aad62f8e90e38152df85976f9c",
+    "src/obench/pricing.py": "8004b2709ce2f56944024d96457a54e2",
+    "src/obench/pricing_pull.py": "d7d46abcf7ebe7ed41c66f0759332b60",
+    "src/obench/releases.py": "9443f4a2982521927208d132ff85fcf3",
+    "src/obench/runner.py": "4be7a648b7d4a44cfb58ca50a1234422",
+    "src/obench/sandbox.py": "9f7939aa612b903321c72984102af014",
+    "src/obench/sandbox_runner.py": "760ab99fe52c6010fdf3669696ee1051",
+    "src/obench/schema.py": "3d3e67c436f793cb4fb6ad1623b64331",
+    "src/obench/testing/__init__.py": "d41d8cd98f00b204e9800998ecf8427e",
+    "src/obench/testing/fake.py": "bf6bf647d6bad6a1c1247970553a8bc8",
+    "src/obench/workloads.py": "c71eb1824d851bd53c8d6e373d3e6976"
+  },
+  "folder_hashes": {
+    ".": "c9c6a24ee43fde74ed8fc961eb780b67",
+    "src": "c502f37f8d93018d41b5b324f58e5fc9",
+    "src/obench": "c502f37f8d93018d41b5b324f58e5fc9",
+    "src/obench/testing": "5a31e54cfcc20abdaa9e2a4f38804c79"
+  }
+}

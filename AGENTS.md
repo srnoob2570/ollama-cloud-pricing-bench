@@ -24,16 +24,23 @@
 
 ## bench CLI basics
 - `--base <dir>` goes BEFORE the subcommand: `bench --base <dir> analyze ...`.
+- Relative paths inside subcommands (`--pricing-dir` default `pricing`) resolve against
+  `--base`, not the cwd.
 - `--json` exists on every subcommand: parseable stdout, progress on stderr.
 - Exit codes: `0` ok · `1` aborted run (preflight/runner) · `2` usage/validation/gate ·
   `3` unimplemented subcommand.
-- Free & offline: tests, `dry-run`, `analyze`, `predict`, `status`, `release` (gh only).
+- Free & offline: tests, `dry-run`, `analyze`, `predict`, `status`, `dataset`,
+  `release` (gh only).
 - No-quota but networked: `pricing-pull` fetches the published catalog artifact
   (never ollama.com), never touches the API.
 - Quota-spending — only with explicit owner instruction in that same conversation:
   `run`, `resume`, `probe-concurrency`, `calibrate-cache`.
-- Gate: `dry-run --level <L> --reps <N>` writes the mark; one mark enables exactly one
-  run with the same level/table/reps. `resume` requires a fresh mark too.
+- `--model` takes a 1..N space-separated list on `dry-run`/`run`/`calibrate-cache`
+  (replaces the level's slate; never adds models outside it) and exactly ONE value on
+  `probe-concurrency`/`predict`/`analyze` (exit 2 otherwise).
+- Gate: `dry-run --level <L> --reps <N>` writes the mark recording level/table/reps and
+  the resolved `models` set; one mark enables exactly one run whose model list must be a
+  subset of the mark's. `resume` requires a fresh mark too.
 - Price change = `bench pricing-pull` lands a new `pricing/<version>.json` (review its
   rate-by-rate diff) + re-derive with `--table-version`; never edit a shipped table or
   past raw data.

@@ -20,3 +20,4 @@ batches/
 
 # deepwork session state (git-local, OpenCode-readable)
 .slim/deepwork/
+ANGLICIZE-NOTES.md

@@ -1595,13 +1595,7 @@
                     per
                 );
             }
-            function verdictOf(
-                legacy,
-                nuevo,
-                tickUsd,
-                legacySession,
-                creditRatio,
-            ) {
+            function verdictOf(legacy, nuevo, tickUsd, legacySession, creditRatio) {
                 // the same rule as the persisted verdicts: the new side re-denominates to
                 // paid dollars (credits divide by the plan's credit multiplier) BEFORE the
                 // comparison, so the tie band is the MINIMUM of 2 ticks and 5 % of the
@@ -1612,10 +1606,7 @@
                 if (isNull(legacy) || isNull(nuevo))
                     return { winner: "no data", margin_pct: null };
                 nuevo = nuevo / (creditRatio || 1);
-                var band = Math.min(
-                    2 * tickUsd,
-                    0.05 * Math.min(legacy, nuevo),
-                );
+                var band = Math.min(2 * tickUsd, 0.05 * Math.min(legacy, nuevo));
                 if (Math.abs(legacy - nuevo) <= band)
                     return { winner: "tie", margin_pct: null };
                 if (legacy < nuevo) {

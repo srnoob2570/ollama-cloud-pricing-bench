@@ -26,19 +26,19 @@ def _mark_path(base, level: str) -> pathlib.Path:
 
 def mark_dry_run(base, level: str, estimado: dict) -> pathlib.Path:
     """Registers the level's dry-run atomically (crash-safe: tmp + rename)."""
-    ruta = _mark_path(base, level)
-    ruta.parent.mkdir(parents=True, exist_ok=True)
-    marca = {
+    path = _mark_path(base, level)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mark = {
         "dry_run_at": time.time(),
         "level": level,
         "table_version": str(estimado.get("table_version")),
         "protocol_version": PROTOCOL_VERSION,
         "estimado": estimado,
     }
-    tmp = ruta.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(marca), encoding="utf-8")
-    tmp.replace(ruta)
-    return ruta
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(mark), encoding="utf-8")
+    tmp.replace(path)
+    return path
 
 
 def require_dry_run(
@@ -53,35 +53,35 @@ def require_dry_run(
     cover this run's density (--reps) or its models: the gate binds what was approved
     to what will bill. The models check (a run may never bill what the dry-run did
     not approve) skips marks written before it existed."""
-    ruta = _mark_path(base, level)
-    if not ruta.exists():
+    path = _mark_path(base, level)
+    if not path.exists():
         raise GateClosed(f"gate: run `bench dry-run --level {level}` before running this level")
     try:
-        marca = json.loads(ruta.read_text(encoding="utf-8"))
-        assert marca["level"] == level
-        assert isinstance(marca["dry_run_at"], (int, float))
-        assert marca["estimado"]["rows"]
+        mark = json.loads(path.read_text(encoding="utf-8"))
+        assert mark["level"] == level
+        assert isinstance(mark["dry_run_at"], (int, float))
+        assert mark["estimado"]["rows"]
     except (json.JSONDecodeError, KeyError, AssertionError, TypeError):
         raise GateClosed(
             f"gate: the mark for {level} is corrupt - re-run `bench dry-run --level {level}`"
         ) from None
-    if table_version is not None and marca.get("table_version") != str(table_version):
+    if table_version is not None and mark.get("table_version") != str(table_version):
         raise GateClosed(
-            f"gate: the dry-run approved table {marca.get('table_version')!r} but the run "
+            f"gate: the dry-run approved table {mark.get('table_version')!r} but the run "
             f"would use {table_version!r}; re-run `bench dry-run --level {level}`"
         )
-    if marca.get("protocol_version") != PROTOCOL_VERSION:
+    if mark.get("protocol_version") != PROTOCOL_VERSION:
         # A mark from another protocol vintage priced a different spend: the
         # billing canary and the lane's nonce overhead are protocol v3 costs a
         # pre-v3 mark never approved (and never knew existed).
         raise GateClosed(
             f"gate: the dry-run mark was written under protocol "
-            f"{marca.get('protocol_version')!r} but this harness bills under "
+            f"{mark.get('protocol_version')!r} but this harness bills under "
             f"{PROTOCOL_VERSION!r} (the billing canary + the lane's nonce overhead are "
             f"v3 spend the mark never priced); re-run `bench dry-run --level {level}`"
         )
     if reps is not None:
-        aprobadas = marca.get("estimado", {}).get("reps")
+        aprobadas = mark.get("estimado", {}).get("reps")
         if aprobadas != reps:
             raise GateClosed(
                 f"gate: the dry-run approved {aprobadas!r} repetitions but this run would "
@@ -89,7 +89,7 @@ def require_dry_run(
                 f"re-run `bench dry-run --level {level}`"
             )
     if models is not None:
-        aprobados = marca.get("estimado", {}).get("models")
+        aprobados = mark.get("estimado", {}).get("models")
         if aprobados is not None:
             fuera = [m for m in models if m not in aprobados]
             if fuera:
@@ -102,6 +102,6 @@ def require_dry_run(
 
 def consume(base, level: str) -> None:
     """Consumes the level's mark (its run has started): one dry-run, one run."""
-    ruta = _mark_path(base, level)
-    if ruta.exists():
-        ruta.unlink()
+    path = _mark_path(base, level)
+    if path.exists():
+        path.unlink()

@@ -21,7 +21,7 @@ Two phases against the live endpoint, one `bench probe-concurrency` invocation:
    are exempt.
 
 The verdict metric — **effective cost per task under k** — is computed from the
-raw `batches/*.jsonl` + `runs/*.jsonl` lines with the anchor (`--ancla` USD/month
+raw `batches/*.jsonl` + `runs/*.jsonl` lines with the anchor (`--anchor` USD/month
 amortized weekly ÷ 100 pp): cost per task = Δpp(weekly) × USD/pp ÷ tasks, per
 attempted and per completed (checker-passed) task. The probe and the cells share
 one per-level manifest (`runs/manifest-<level>-concurrency.json`): the cut-off
@@ -75,26 +75,26 @@ def re_anchor(cut_off: int | None) -> list[tuple[int, str]]:
     planeados: dict[int, list[int]] = {}
     for k in sorted(CELL_KS):
         planeados.setdefault(min(k, cut_off), []).append(k)
-    celdas = []
-    for efectivo, origenes in sorted(planeados.items()):
+    cells = []
+    for effective, origenes in sorted(planeados.items()):
         re_anclados = [k for k in origenes if k > cut_off]
         if re_anclados:
-            nota = (
+            note = (
                 f"re-anchored: probe cut-off {cut_off} < planned k "
-                f"{', '.join(str(k) for k in re_anclados)}; the cell runs at k={efectivo} "
+                f"{', '.join(str(k) for k in re_anclados)}; the cell runs at k={effective} "
                 "(the max the key sustained)"
             )
         else:
-            nota = ""
-        celdas.append((efectivo, nota))
-    return celdas
+            note = ""
+        cells.append((effective, note))
+    return cells
 
 
-def _probe_attempt(ruta_probe: pathlib.Path, run_id: str) -> int:
+def _probe_attempt(probe_path: pathlib.Path, run_id: str) -> int:
     """The next probe attempt number for this run_id (a re-probed sweep is a new attempt)."""
     prefijo = f"{run_id}-a"
     mayor = 0
-    for linea in read_jsonl(ruta_probe):
+    for linea in read_jsonl(probe_path):
         pid = linea.get("probe_id")
         if isinstance(pid, str) and pid.startswith(prefijo):
             cola = pid[len(prefijo) :].split("-", 1)[0]
@@ -144,11 +144,11 @@ def _probe_line(
 async def _sweep(
     client: OllamaCloud,
     model: str,
-    modelo_api: str,
+    api_model: str,
     *,
     k_max: int,
     run_id: str,
-    ruta_probe: pathlib.Path,
+    probe_path: pathlib.Path,
     table_version: str,
     emit,
 ) -> tuple[int | None, str, list[dict]]:
@@ -161,13 +161,13 @@ async def _sweep(
 
     Stops at the first volley that is not fully accepted. Returns
     (cut_off, cut_off_note, volley summaries); the raw per-request evidence
-    lands in `ruta_probe` as schema-validated lines. Like every dataset line,
+    lands in `probe_path` as schema-validated lines. Like every dataset line,
     the volley records the slate id (`model`) while the wire carries
-    `modelo_api` (the preflight's catalog match).
+    `api_model` (the preflight's catalog match).
     """
-    attempt = _probe_attempt(ruta_probe, run_id)
+    attempt = _probe_attempt(probe_path, run_id)
     volleys: list[dict] = []
-    fallo: dict | None = None
+    failure: dict | None = None
     for k in range(PROBE_K_FROM, k_max + 1):
         specs = fixtures.build(ANCHOR_LEVEL, ANCHOR_WORKLOAD, k)
         hash_fixture = fixtures.fixture_hash(specs)
@@ -185,11 +185,11 @@ async def _sweep(
             fixture_hash=hash_fixture,
         )
         t_start = time.time()
-        registros = await burst(client, volley, specs, modelo_api)
+        records = await burst(client, volley, specs, api_model)
         t_total = time.time()
         semillas = [fixtures.seed(PROBE_WORKLOAD, model, volley.rep, i) for i in range(volley.n)]
         outcomes = [
-            {"http": r["http"], "err": r["err"], "done": r["done"] is not None} for r in registros
+            {"http": r["http"], "err": r["err"], "done": r["done"] is not None} for r in records
         ]
         linea = _probe_line(
             probe_id=probe_id,
@@ -204,8 +204,8 @@ async def _sweep(
             table_version=table_version,
         )
         schema.validate_probe_line(linea)
-        write_jsonl(ruta_probe, linea)
-        resumen = {
+        write_jsonl(probe_path, linea)
+        summary = {
             "probe_id": probe_id,
             "k": k,
             "requested": linea["requested"],
@@ -213,7 +213,7 @@ async def _sweep(
             "rejected": linea["rejected"],
             "errored": linea["errored"],
         }
-        volleys.append(resumen)
+        volleys.append(summary)
         if emit:
             emit(
                 f"probe: k={k}: {linea['accepted']}/{k} accepted, "
@@ -231,23 +231,23 @@ async def _sweep(
                     "(transport failures, not 429 rejections) - the cut-off cannot be "
                     "measured from failed requests; re-run the probe"
                 )
-            fallo = resumen
+            failure = summary
             break
-    if fallo is None:
+    if failure is None:
         cut_off = k_max
-        nota = f"no rejection up to the probe ceiling k={k_max}; the cut-off is >= {k_max}"
-    elif fallo["k"] <= PROBE_K_FROM:
+        note = f"no rejection up to the probe ceiling k={k_max}; the cut-off is >= {k_max}"
+    elif failure["k"] <= PROBE_K_FROM:
         cut_off = None
-        nota = (
-            f"the cut-off is below the probe floor ({PROBE_K_FROM}): even the k={fallo['k']} "
-            f"volley was not fully accepted ({fallo['rejected']} rejected) - only the k=1 "
+        note = (
+            f"the cut-off is below the probe floor ({PROBE_K_FROM}): even the k={failure['k']} "
+            f"volley was not fully accepted ({failure['rejected']} rejected) - only the k=1 "
             "cell is viable"
         )
     else:
-        cut_off = fallo["k"] - 1
-        causa = f"{fallo['rejected']} of {fallo['requested']} rejected (HTTP 429)"
-        nota = f"volley k={fallo['k']}: {causa}; the cut-off is {cut_off}"
-    return cut_off, nota, volleys
+        cut_off = failure["k"] - 1
+        cause = f"{failure['rejected']} of {failure['requested']} rejected (HTTP 429)"
+        note = f"volley k={failure['k']}: {cause}; the cut-off is {cut_off}"
+    return cut_off, note, volleys
 
 
 def _cell_specs(*, run_id: str, model: str, cut_off: int | None) -> list[BatchSpec]:
@@ -255,7 +255,7 @@ def _cell_specs(*, run_id: str, model: str, cut_off: int | None) -> list[BatchSp
     specs_requeridos = fixtures.build(ANCHOR_LEVEL, ANCHOR_WORKLOAD, CELL_REQUESTS)
     hash_fixture = fixtures.fixture_hash(specs_requeridos)
     specs = []
-    for k, nota in re_anchor(cut_off):
+    for k, note in re_anchor(cut_off):
         specs.append(
             BatchSpec(
                 level=ANCHOR_LEVEL,
@@ -266,7 +266,7 @@ def _cell_specs(*, run_id: str, model: str, cut_off: int | None) -> list[BatchSp
                 k=k,
                 n=CELL_REQUESTS,
                 fixture_hash=hash_fixture,
-                plan_note=nota,
+                plan_note=note,
             )
         )
     return specs
@@ -274,13 +274,13 @@ def _cell_specs(*, run_id: str, model: str, cut_off: int | None) -> list[BatchSp
 
 def cell_plan(cut_off: int | None) -> dict:
     """The manifest-stamped cell plan (ks + n), for the resume drift guard."""
-    return {"ks": [k for k, _nota in re_anchor(cut_off)], "n": CELL_REQUESTS}
+    return {"ks": [k for k, _note in re_anchor(cut_off)], "n": CELL_REQUESTS}
 
 
 def _build_summary(
     *,
     run_id: str,
-    ancla: float,
+    anchor: float,
     cut_off: int | None,
     cut_off_note: str,
     volleys: list[dict],
@@ -298,18 +298,18 @@ def _build_summary(
     level; the cut-off is a per-key property) — so `models` lists them and each
     cell carries its own model.
     """
-    usd = usd_per_pp(ancla)
+    usd = usd_per_pp(anchor)
     batches = read_jsonl(batches_dir / f"batches-{run_id}.jsonl")
     requests = read_jsonl(runs_dir / f"requests-{run_id}.jsonl")
-    celdas = []
-    por_batch: dict[str | None, list[dict]] = {}
+    cells = []
+    by_batch: dict[str | None, list[dict]] = {}
     for r in requests:
-        por_batch.setdefault(r.get("batch_id"), []).append(r)
+        by_batch.setdefault(r.get("batch_id"), []).append(r)
     # (model, k): the doc covers every model of the run, grouped and stable
     for b in sorted(batches, key=lambda x: (x["model"], x["k"])):
-        lineas = por_batch.get(b.get("batch_id"), [])
-        aceptadas = sum(1 for r in lineas if r.get("http") == 200)
-        completadas = sum(1 for r in lineas if r.get("checker") == "pass")
+        lines = by_batch.get(b.get("batch_id"), [])
+        aceptadas = sum(1 for r in lines if r.get("http") == 200)
+        completadas = sum(1 for r in lines if r.get("checker") == "pass")
         dpp_weekly = b.get("dpp_weekly")
         # The bracket's Δpp bills only the requests the endpoint ACCEPTED (a
         # 429 never lands on the meter), so the attempted-task cost divides by
@@ -325,7 +325,7 @@ def _build_summary(
             if isinstance(dpp_weekly, (int, float)) and completadas
             else None
         )
-        celdas.append(
+        cells.append(
             {
                 "k": b["k"],
                 "batch_id": b["batch_id"],
@@ -346,10 +346,10 @@ def _build_summary(
         "run_id": run_id,
         "level": ANCHOR_LEVEL,
         "kind": "concurrency",
-        "models": sorted({c["model"] for c in celdas}),
+        "models": sorted({c["model"] for c in cells}),
         "table_version": table_version,
         "protocol_version": PROTOCOL_VERSION,
-        "ancla": ancla,
+        "anchor": anchor,
         "usd_per_pp": usd,
         "probe": {
             "k_from": PROBE_K_FROM,
@@ -358,7 +358,7 @@ def _build_summary(
             "cut_off_note": cut_off_note,
             "volleys": volleys,
         },
-        "cells": celdas,
+        "cells": cells,
         "notes": (
             "effective cost per task = dpp_weekly x usd_per_pp / tasks (the weekly window "
             "anchors the study), per attempted and per completed (checker-passed) task; "
@@ -369,25 +369,25 @@ def _build_summary(
     }
 
 
-def _celda_arranque(spec: BatchSpec) -> str | None:
+def _cell_start(spec: BatchSpec) -> str | None:
     """The cell's pre-bracket line: which k is about to bill."""
     return f"cells: k={spec.k}" + (f" ({spec.plan_note})" if spec.plan_note else "")
 
 
-def _celda_skip(spec: BatchSpec, estado: str) -> str | None:
+def _cell_skip(spec: BatchSpec, state: str) -> str | None:
     """The cells' resume note: loud for in_flight, spend-attributed otherwise."""
     return (
-        f"resume: cell k={spec.k} ({spec.batch_id}) {estado} from an "
+        f"resume: cell k={spec.k} ({spec.batch_id}) {state} from an "
         "earlier attempt - skipped"
         + (
             ", never silently retried"
-            if estado == "in_flight"
+            if state == "in_flight"
             else "; its spend is already in the dataset"
         )
     )
 
 
-def _celda_progreso(model: str):
+def _cell_progress(model: str):
     """The cells' progress line, bound to the invocation's slate model."""
 
     def _linea(spec: BatchSpec, resultado, idx: str) -> str:
@@ -408,14 +408,14 @@ async def _run_async(
     k_max: int,
     settle_s: float,
     settle_poll_s: float,
-    ancla: float,
+    anchor: float,
     table_version: str,
     catalog: dict | None,
     model_map: dict[str, str],
     transport,
     emit,
 ) -> dict:
-    sesion = open_workstream(
+    session = open_workstream(
         base,
         # The workstream's own identity: `status` renders it from the manifest doc,
         # while the batch/request lines carry the anchor's density class (T1)
@@ -433,22 +433,22 @@ async def _run_async(
         transport=transport,
         emit=emit,
     )
-    async with sesion:
-        manifiesto = sesion.manifiesto
-        run_id = sesion.run_id
-        ruta_manifest = manifiesto.ruta
-        ruta_probe = sesion.runs_dir / f"probe-{run_id}.jsonl"
-        modelo_api = sesion.modelo_api(model)
+    async with session:
+        manifest = session.manifest
+        run_id = session.run_id
+        manifest_path = manifest.path
+        probe_path = session.runs_dir / f"probe-{run_id}.jsonl"
+        api_model = session.api_model(model)
 
         # ---- phase 0: the billing canary (once per run) ----
         # The k-cells are measured brackets under the cache-free lane: the lane
         # is proven before anything bills under it, exactly like `bench run`.
         # The canary's own spend is unbracketed; the flush below baselines it
         # together with the probe's before the first cell's pre-read.
-        await sesion.canary(ANCHOR_LEVEL)
+        await session.canary(ANCHOR_LEVEL)
 
         # ---- phase 1: the probe (once per run: the cut-off is a per-key property) ----
-        probe_doc = manifiesto.doc.get("probe") or {}
+        probe_doc = manifest.doc.get("probe") or {}
         probe_ran_ahora = False
         if probe_doc.get("status") == "done":
             cut_off = probe_doc.get("cut_off")
@@ -457,21 +457,21 @@ async def _run_async(
             if emit:
                 emit(
                     f"probe: already measured for this run - reusing cut-off {cut_off} "
-                    f"({cut_off_note}); delete {ruta_manifest.name} to re-probe"
+                    f"({cut_off_note}); delete {manifest_path.name} to re-probe"
                 )
         else:
             probe_ran_ahora = True
             probe_doc = {"status": "in_flight", "k_max": k_max, "at": time.time()}
-            manifiesto.doc["probe"] = probe_doc
-            manifiesto.save()
+            manifest.doc["probe"] = probe_doc
+            manifest.save()
             try:
                 cut_off, cut_off_note, volleys = await _sweep(
-                    sesion.client,
+                    session.client,
                     model,
-                    modelo_api,
+                    api_model,
                     k_max=k_max,
                     run_id=run_id,
-                    ruta_probe=ruta_probe,
+                    probe_path=probe_path,
                     table_version=table_version,
                     emit=emit,
                 )
@@ -487,20 +487,20 @@ async def _run_async(
                     "at": time.time(),
                 }
             )
-            manifiesto.doc["probe"] = probe_doc
-            manifiesto.save()
+            manifest.doc["probe"] = probe_doc
+            manifest.save()
 
         # ---- phase 2: the k-cells as bracketed batches ----
         specs = _cell_specs(run_id=run_id, model=model, cut_off=cut_off)
         # The cell plan (ks + n) is pinned once per run_id: a harness change to
         # CELL_KS/CELL_REQUESTS between invocations must not append a mixed plan
         # under one run_id — the same drift the runner's k guard prevents for k.
-        sesion.pin("cell_plan", cell_plan(cut_off))
-        pendientes = [s for s in specs if manifiesto.status(s.batch_id) is None]
+        session.pin("cell_plan", cell_plan(cut_off))
+        pendientes = [s for s in specs if manifest.status(s.batch_id) is None]
 
         cerradas = [
             e
-            for e in manifiesto.doc["batches"].values()
+            for e in manifest.doc["batches"].values()
             if isinstance(e, dict) and e.get("status") in ("done", "aborted")
         ]
         if pendientes and (probe_ran_ahora or not cerradas):
@@ -516,7 +516,7 @@ async def _run_async(
             # silently absorb it into the first cell's Δpp. Only a stable flush
             # proves the spend predates the cells.
             flush = await registration_settle(
-                sesion.client, primera=None, cap_s=settle_s, poll_s=settle_poll_s
+                session.client, primera=None, cap_s=settle_s, poll_s=settle_poll_s
             )
             if flush["exit"] != "stable" or flush["post"] is None:
                 raise RunnerError(
@@ -530,27 +530,27 @@ async def _run_async(
                     f"({flush['reads']} reads, {flush['exit']})"
                 )
 
-        sesion.grow_planned(max(len(manifiesto.doc["batches"]) + len(pendientes), len(specs)))
-        await sesion.brackets(
+        session.grow_planned(max(len(manifest.doc["batches"]) + len(pendientes), len(specs)))
+        await session.brackets(
             specs,
-            on_start=_celda_arranque,
-            on_skip=_celda_skip,
-            on_progress=_celda_progreso(model),
+            on_start=_cell_start,
+            on_skip=_cell_skip,
+            on_progress=_cell_progress(model),
         )
 
-    resumen = _build_summary(
+    summary = _build_summary(
         run_id=run_id,
-        ancla=ancla,
+        anchor=anchor,
         cut_off=cut_off,
         cut_off_note=cut_off_note,
         volleys=volleys,
         k_max=probe_doc.get("k_max", k_max),
         table_version=table_version,
-        runs_dir=sesion.runs_dir,
-        batches_dir=sesion.batches_dir,
+        runs_dir=session.runs_dir,
+        batches_dir=session.batches_dir,
     )
-    sesion.write_summary("concurrency", resumen)
-    return resumen
+    session.write_summary("concurrency", summary)
+    return summary
 
 
 def run_probe(
@@ -560,7 +560,7 @@ def run_probe(
     k_max: int,
     settle_s: float,
     settle_poll_s: float = 5.0,
-    ancla: float,
+    anchor: float,
     table_version: str,
     catalog: dict | None = None,
     model_map: dict[str, str] | None = None,
@@ -580,7 +580,7 @@ def run_probe(
             k_max=k_max,
             settle_s=settle_s,
             settle_poll_s=settle_poll_s,
-            ancla=ancla,
+            anchor=anchor,
             table_version=table_version,
             catalog=catalog,
             model_map=model_map or {},

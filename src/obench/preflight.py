@@ -6,7 +6,7 @@ run with a diff. The caller has already consumed the dry-run mark by then (the
 require->consume window stays two adjacent filesystem ops, so a concurrent run
 can never double the approved spend): an aborted preflight only costs a fresh
 (free) dry-run, which every abort message says. Catalog ids arrive tagged where
-the price table lists the base id (medidor-vivo-2026-08-31 §5:
+the price table lists the base id (meter-vivo-2026-08-31 §5:
 `nemotron-3-nano:30b` vs `nemotron-3-nano`), so a slate id that already carries
 a tag must match exactly, and a base id matches its tagged variants. The
 snapshot seen at run start is pinned in the manifest.
@@ -57,18 +57,18 @@ def _match(slate_id: str, catalog_ids: list[str]) -> list[str]:
 
 
 def _drift_message(reporte: CatalogReport, slate_count: int) -> str:
-    lineas = [
+    lines = [
         (
             f"preflight: catalog drift - /v1/models is missing {len(reporte.missing)} of "
             f"{slate_count} slate ids: {', '.join(reporte.missing)}"
         )
     ]
     if reporte.unseen:
-        lineas.append(
+        lines.append(
             "catalog ids not in the price table (rename candidates?): " + ", ".join(reporte.unseen)
         )
-    lineas.append(f"aborted before any request; {_ABORT_NOTE} before the next attempt")
-    return "\n".join(lineas)
+    lines.append(f"aborted before any request; {_ABORT_NOTE} before the next attempt")
+    return "\n".join(lines)
 
 
 async def _verify_async(
@@ -87,9 +87,9 @@ async def _verify_async(
             f"before any request; {_ABORT_NOTE}"
         )
     catalog_ids = sorted(
-        entrada["id"]
-        for entrada in data
-        if isinstance(entrada, dict) and isinstance(entrada.get("id"), str)
+        input["id"]
+        for input in data
+        if isinstance(input, dict) and isinstance(input.get("id"), str)
     )
     matched: dict[str, str] = {}
     missing: list[str] = []
@@ -105,8 +105,8 @@ async def _verify_async(
                 # will bill whichever sorted first, while the price table prices
                 # the untagged row. Surfaced loudly, never silently swallowed.
                 ambiguous[slate_id] = coincidencias
-    bases_tabla = {_base(m) for m in table_models}
-    unseen = sorted(c for c in catalog_ids if _base(c) not in bases_tabla)
+    table_bases = {_base(m) for m in table_models}
+    unseen = sorted(c for c in catalog_ids if _base(c) not in table_bases)
     reporte = CatalogReport(
         http=status,
         ids=catalog_ids,

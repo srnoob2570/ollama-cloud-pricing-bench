@@ -67,7 +67,7 @@ def test_renamed_id_shows_as_missing_plus_new_in_the_diff(tmp_path, fake_cli):
 
 
 def test_tagged_catalog_ids_satisfy_the_slate(tmp_path, fake_cli):
-    """Catalog ids carry tags the table lacks (medidor-vivo §5): base id matches."""
+    """Catalog ids carry tags the table lacks (meter-vivo §5): base id matches."""
     catalogo = full_catalog()
     catalogo.remove("gemma4")
     fake_cli.catalog = sorted(catalogo + ["gemma4:31b"])
@@ -86,8 +86,8 @@ def test_single_model_run_ignores_drift_in_models_it_will_not_bill(tmp_path, fak
     prepare(tmp_path)
     code, out, err = run_t1(tmp_path, "--model", "glm-5.3-flash")
     assert code == 0, out or err  # no abort over a model the run never touches
-    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
-    snapshot = manifiesto["catalog"][-1]
+    manifest = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    snapshot = manifest["catalog"][-1]
     assert list(snapshot["matched"]) == ["glm-5.3-flash"]  # exactly what it bills
 
 
@@ -106,8 +106,8 @@ def test_new_catalog_models_are_surfaced_but_do_not_abort(tmp_path, fake_cli):
     code, out, err = run_t1(tmp_path, "--model", "glm-5.3-flash")
     assert code == 0, out or err
     assert "glm-6" in err  # visible in the preflight line: rename candidates are data
-    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
-    snapshot = manifiesto["catalog"][-1]  # one snapshot per attempt, latest last
+    manifest = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    snapshot = manifest["catalog"][-1]  # one snapshot per attempt, latest last
     assert set(snapshot["ids"]) == set(full_catalog() + ["glm-6"])
     assert snapshot["http"] == 200
     assert snapshot["matched"]["glm-5.3-flash"] == "glm-5.3-flash"
@@ -160,7 +160,7 @@ def test_resume_appends_its_own_catalog_snapshot(tmp_path, fake_cli):
     )
     code, out, err = run_t1(tmp_path, "--model", "glm-5.3-flash")
     assert code == 0, out or err
-    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
-    assert len(manifiesto["catalog"]) == 2
-    assert set(manifiesto["catalog"][0]["ids"]) == set(full_catalog())
-    assert set(manifiesto["catalog"][-1]["ids"]) == set(full_catalog() + ["glm-6"])
+    manifest = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    assert len(manifest["catalog"]) == 2
+    assert set(manifest["catalog"][0]["ids"]) == set(full_catalog())
+    assert set(manifest["catalog"][-1]["ids"]) == set(full_catalog() + ["glm-6"])

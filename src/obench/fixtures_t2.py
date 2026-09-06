@@ -80,7 +80,7 @@ _RE_ASK_DAYS = re.compile(
 # anchors every datum to the sentence that carries it (a right value attached
 # to no unit cannot be graded), so "code only, nothing else" was an
 # unsatisfiable instruction — every model obeyed it and failed 30/30 (#audit
-# 2026-09-02, OBSERVACIÓN 9).
+# 2026-09-02, OBSERVATION 9).
 _REGISTER_REPLY_ONLY = (
     "Reply in one short sentence: name the unit and its access code, nothing else."
 )
@@ -129,10 +129,10 @@ def _register_text(rng: random.Random, lines: int, asks: list[tuple[int, str]]) 
         f"{i}) "
         + (
             f"What is the access code of the unit tagged [R-{label:04d}]?"
-            if campo == "code"
+            if field == "code"
             else f"How many days pass between inspections of the unit tagged [R-{label:04d}]?"
         )
-        for i, (label, campo) in enumerate(asks, 1)
+        for i, (label, field) in enumerate(asks, 1)
     )
     return f"{_REGISTER_HEADER}\n\n" + "\n".join(unidades) + f"\n\n{_REGISTER_TASK}\n{preguntas}"
 
@@ -167,15 +167,15 @@ def register_asks(prompt: str) -> list[tuple[str, str]]:
 
 def _long_context(rng: random.Random) -> list[tuple[str, tuple[dict, ...]]]:
     asks = [(311, "code"), (87, "days"), (901, "code")]
-    texto = _register_text(rng, lines=950, asks=asks)  # ~30K tokens of document
-    return [(f"{texto}\nKeep every answer to one short sentence.", ())]
+    text = _register_text(rng, lines=950, asks=asks)  # ~30K tokens of document
+    return [(f"{text}\nKeep every answer to one short sentence.", ())]
 
 
 def _ratio_in(rng: random.Random) -> list[tuple[str, tuple[dict, ...]]]:
     # One datum buried in a very large input; the answer is one short line
     # that names the unit (the checker anchors the datum to its label).
-    texto = _register_text(rng, lines=1600, asks=[(1500, "code")])
-    return [(f"{texto}\n{_REGISTER_REPLY_ONLY}", ())]
+    text = _register_text(rng, lines=1600, asks=[(1500, "code")])
+    return [(f"{text}\n{_REGISTER_REPLY_ONLY}", ())]
 
 
 # ---------------------------------------------------------------
@@ -195,29 +195,29 @@ _MULTI_TURN_PREAMBLE = (
 
 def _multi_turn(rng: random.Random) -> list[tuple[str, tuple[dict, ...]]]:
     codigos = _unique_codes(rng, len(_MT_UNITS))
-    codigo_de = dict(zip(_MT_UNITS, codigos))
+    code_of = dict(zip(_MT_UNITS, codigos))
     turnos: list[tuple[str, str]] = []  # (unit online this turn, unit its question asks about)
     for t in range(1, len(_MT_UNITS) + 1):
         preguntada = rng.randrange(1, t + 1)  # the question may ask about any line so far
         turnos.append((_MT_UNITS[t - 1], _MT_UNITS[preguntada - 1]))
     prompts: list[str] = []
     for t in range(1, len(turnos) + 1):
-        lineas = []
+        lines = []
         for i, (unit, preguntada) in enumerate(turnos[:t], 1):
             detalle = rng.choice(_PAD_SENTENCES)
-            hecho = f"[Turn {i}] operator: the {unit} line came online; access code {codigo_de[unit]}; {detalle}."
+            hecho = f"[Turn {i}] operator: the {unit} line came online; access code {code_of[unit]}; {detalle}."
             if i < t:
-                lineas.append(hecho)
+                lines.append(hecho)
                 # A past answer quotes the code of the unit its question asked about —
                 # the transcript must stay true, or an attentive model is misled.
                 respondida = turnos[i - 1][1]
-                lineas.append(
+                lines.append(
                     f"[Turn {i}] assistant: The access code of the {respondida} line is "
-                    f"{codigo_de[respondida]}."
+                    f"{code_of[respondida]}."
                 )
             else:
-                lineas.append(f"{hecho} What is the access code of the {preguntada} line?")
-        prompts.append(f"{_MULTI_TURN_HEADER}\n{_MULTI_TURN_PREAMBLE}\n\n" + "\n".join(lineas))
+                lines.append(f"{hecho} What is the access code of the {preguntada} line?")
+        prompts.append(f"{_MULTI_TURN_HEADER}\n{_MULTI_TURN_PREAMBLE}\n\n" + "\n".join(lines))
     return [(p, ()) for p in prompts]
 
 
@@ -305,13 +305,13 @@ def _tool_scenarios() -> dict[str, dict]:
     geocod = _tool_decl(
         "geocode", "Resolve a city to coordinates", {"city": {"type": "string"}}, ("city",)
     )
-    lectura = _tool_decl(
+    reading = _tool_decl(
         "log_reading",
         "Append a sensor reading to the log",
         {"sensor": {"type": "string"}, "value": {"type": "number"}},
         ("sensor", "value"),
     )
-    medidor = _tool_decl(
+    meter = _tool_decl(
         "meter_read", "Read one meter", {"meter_id": {"type": "string"}}, ("meter_id",)
     )
     averia = _tool_decl(
@@ -329,7 +329,7 @@ def _tool_scenarios() -> dict[str, dict]:
         {"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 9}},
         ("query", "limit"),
     )
-    precio = _tool_decl(
+    price = _tool_decl(
         "price_check",
         "Price one part",
         {"part": {"type": "string"}, "currency": {"type": "string", "enum": ["USD", "EUR"]}},
@@ -363,19 +363,19 @@ def _tool_scenarios() -> dict[str, dict]:
             "task": "Locate the city of Porto, check the weather there in celsius, then log "
             "the temperature on sensor OUT-7.",
             "sequence": ("geocode", "weather_lookup", "log_reading"),
-            "tools": (geocod, clima, lectura),
+            "tools": (geocod, clima, reading),
         },
         "TR-5": {
             "task": "Read meter MTR-118, then report an outage for the north zone affecting "
             "12 customers.",
             "sequence": ("meter_read", "report_outage"),
-            "tools": (medidor, averia),
+            "tools": (meter, averia),
         },
         "TR-6": {
             "task": "Search parts matching drive belt, price the first result in USD, then "
             "schedule its delivery in 3 days.",
             "sequence": ("parts_search", "price_check", "schedule_delivery"),
-            "tools": (busqueda, precio, entrega),
+            "tools": (busqueda, price, entrega),
         },
     }
 
@@ -440,14 +440,14 @@ _LONGGEN_DEVICE_PREFIX = (
 
 
 def _long_generation(rng: random.Random) -> list[tuple[str, tuple[dict, ...]]]:
-    entradas = []
+    inputs = []
     for i in range(1, 61):
         _device, prefix = _LONGGEN_DEVICE_PREFIX[i % len(_LONGGEN_DEVICE_PREFIX)]
-        entradas.append(
+        inputs.append(
             f"raw {prefix}-{rng.randrange(100, 1000)} bay {rng.randrange(1, 41)} "
             f"torque {rng.randrange(10, 90)} Nm {rng.choice(_PAD_SENTENCES)}"
         )
-    return [(f"{_LONGGEN_HEADER}\n\n" + "\n".join(entradas), ())]
+    return [(f"{_LONGGEN_HEADER}\n\n" + "\n".join(inputs), ())]
 
 
 # ---------------------------------------------------------------
@@ -462,13 +462,13 @@ def _pad_paragraph(rng: random.Random, sentences: int) -> str:
 
 
 def _reasoning(rng: random.Random) -> list[tuple[str, tuple[dict, ...]]]:
-    filas = rng.randrange(5, 41)
-    columnas = rng.randrange(3, 13)
+    rows = rng.randrange(5, 41)
+    columns = rng.randrange(3, 13)
     reservadas = rng.randrange(1, 100)
-    texto = (
+    text = (
         f"{REASONING_OPENING}\n"
-        f"Rows: {filas}\n"
-        f"Columns: {columnas}\n"
+        f"Rows: {rows}\n"
+        f"Columns: {columns}\n"
         f"Reserved bays: {reservadas}\n"
         "Rule: the bay access number equals the number of rows times the number of "
         "columns plus the number of reserved bays.\n\n"
@@ -476,17 +476,17 @@ def _reasoning(rng: random.Random) -> list[tuple[str, tuple[dict, ...]]]:
         + "\n\nWhat is the bay access number? End your reply with a line of the form: "
         "ANSWER: <number>"
     )
-    return [(texto, ())]
+    return [(text, ())]
 
 
 def reasoning_expected(prompt: str) -> int:
     """The bay access number the prompt's rules determine (checker + test helper)."""
-    filas = re.search(r"^Rows: (\d+)$", prompt, re.MULTILINE)
-    columnas = re.search(r"^Columns: (\d+)$", prompt, re.MULTILINE)
+    rows = re.search(r"^Rows: (\d+)$", prompt, re.MULTILINE)
+    columns = re.search(r"^Columns: (\d+)$", prompt, re.MULTILINE)
     reservadas = re.search(r"^Reserved bays: (\d+)$", prompt, re.MULTILINE)
-    if not (filas and columnas and reservadas):
+    if not (rows and columns and reservadas):
         raise ValueError("reasoning prompt does not carry the three rule lines")
-    return int(filas.group(1)) * int(columnas.group(1)) + int(reservadas.group(1))
+    return int(rows.group(1)) * int(columns.group(1)) + int(reservadas.group(1))
 
 
 # ---------------------------------------------------------------
@@ -563,9 +563,9 @@ def cache_prefix_prompt() -> str:
     `workload_of` unambiguous).
     """
     largo, _ = _long_context(_rng("long_context"))[0]
-    cuerpo = largo[: largo.index(f"\n\n{_REGISTER_TASK}")]  # register only: no task block
-    lineas = cuerpo.splitlines()[2:]  # drop the register header + blank: the replay carries its own
-    return f"{_CACHE_HEADER}\n\n" + "\n".join(lineas[:CACHE_PREFIX_LINES]) + f"\n\n{_CACHE_TASK}"
+    body = largo[: largo.index(f"\n\n{_REGISTER_TASK}")]  # register only: no task block
+    lines = body.splitlines()[2:]  # drop the register header + blank: the replay carries its own
+    return f"{_CACHE_HEADER}\n\n" + "\n".join(lines[:CACHE_PREFIX_LINES]) + f"\n\n{_CACHE_TASK}"
 
 
 # ---------------------------------------------------------------

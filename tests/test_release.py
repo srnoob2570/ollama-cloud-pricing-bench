@@ -73,19 +73,19 @@ if argv[:2] == ["release", "create"]:
         else:
             files.append(rest[i])
             i += 1
-    destino = store(tag)
-    if destino.is_dir():
+    dest = store(tag)
+    if dest.is_dir():
         die("already exists")
-    destino.mkdir(parents=True)
+    dest.mkdir(parents=True)
     notes = (
         pathlib.Path(flags["--notes-file"]).read_text(encoding="utf-8")
         if "--notes-file" in flags
         else ""
     )
-    (destino / "_notes.md").write_text(notes, encoding="utf-8")
-    (destino / "_flags.json").write_text(json.dumps(flags), encoding="utf-8")
-    for ruta in files:
-        shutil.copy(ruta, destino / pathlib.Path(ruta).name)
+    (dest / "_notes.md").write_text(notes, encoding="utf-8")
+    (dest / "_flags.json").write_text(json.dumps(flags), encoding="utf-8")
+    for path in files:
+        shutil.copy(path, dest / pathlib.Path(path).name)
     sys.exit(0)
 
 if argv[:2] == ["release", "download"]:
@@ -106,27 +106,27 @@ die(f"fake gh: unsupported invocation: {argv}")
 @pytest.fixture()
 def fake_gh(tmp_path, monkeypatch) -> pathlib.Path:
     """The fake gh wired as the release seam: PATH wins over any real gh."""
-    estado = tmp_path / "gh-fake"
-    estado.mkdir()
-    carpeta_bin = tmp_path / "gh-bin"
-    carpeta_bin.mkdir()
-    gh = carpeta_bin / "gh"
+    state = tmp_path / "gh-fake"
+    state.mkdir()
+    bin_folder = tmp_path / "gh-bin"
+    bin_folder.mkdir()
+    gh = bin_folder / "gh"
     gh.write_text(FAKE_GH, encoding="utf-8")
     gh.chmod(0o755)
-    monkeypatch.setenv("OBENCH_FAKE_GH_STATE", str(estado))
-    monkeypatch.setenv("PATH", str(carpeta_bin) + os.pathsep + os.environ["PATH"])
-    return estado
+    monkeypatch.setenv("OBENCH_FAKE_GH_STATE", str(state))
+    monkeypatch.setenv("PATH", str(bin_folder) + os.pathsep + os.environ["PATH"])
+    return state
 
 
-def gh_calls(estado: pathlib.Path) -> list[list[str]]:
-    ruta = estado / "calls.jsonl"
-    if not ruta.exists():
+def gh_calls(state: pathlib.Path) -> list[list[str]]:
+    path = state / "calls.jsonl"
+    if not path.exists():
         return []
-    return [json.loads(l) for l in ruta.read_text(encoding="utf-8").splitlines() if l.strip()]
+    return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
 
 
-def gh_assets(estado: pathlib.Path, tag: str) -> pathlib.Path:
-    return estado / "releases" / REPO / tag
+def gh_assets(state: pathlib.Path, tag: str) -> pathlib.Path:
+    return state / "releases" / REPO / tag
 
 
 # ---------------------------------------------------------------------------
@@ -192,8 +192,8 @@ def hand_dataset(tmp_path, run_id: str = RUN, *, poison: str | None = None) -> s
         "settle_exit": "stable",
         "count_check_s": 0.5,
         "wall_clock_s": 1.0,
-        "medidor_pre": {"limits": {"session": {"usage": 0.5}, "weekly": {"usage": 0.6}}},
-        "medidor_post": {"limits": {"session": {"usage": 0.5}, "weekly": {"usage": 0.602}}},
+        "meter_pre": {"limits": {"session": {"usage": 0.5}, "weekly": {"usage": 0.6}}},
+        "meter_post": {"limits": {"session": {"usage": 0.5}, "weekly": {"usage": 0.602}}},
         "dpp_session": 0.2,
         "dpp_weekly": 0.2,
         "request_counts": {"pre": {}, "count_check": {}, "post": {}},
@@ -203,7 +203,7 @@ def hand_dataset(tmp_path, run_id: str = RUN, *, poison: str | None = None) -> s
     }
     validate_request_line(linea_req)
     validate_batch_line(linea_batch)
-    manifiesto = {
+    manifest = {
         "run_id": run_id,
         "level": "T1",
         "table_version": "2026-08-31",
@@ -223,7 +223,7 @@ def hand_dataset(tmp_path, run_id: str = RUN, *, poison: str | None = None) -> s
         json.dumps(linea_batch) + "\n", encoding="utf-8"
     )
     (tmp_path / "runs" / "manifest-T1.json").write_text(
-        json.dumps(manifiesto, indent=2), encoding="utf-8"
+        json.dumps(manifest, indent=2), encoding="utf-8"
     )
     return str(tmp_path / "pricing")
 
@@ -255,8 +255,8 @@ def test_release_publishes_a_run_end_to_end(tmp_path, fake_cli, fake_gh):
     )
     run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
 
-    codigo, salida, errores = run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)
-    assert codigo == 0, salida or errores
+    code, output, errors = run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)
+    assert code == 0, output or errors
     tag = f"run-{run_id}"
     creates = [c for c in gh_calls(fake_gh) if c[:2] == ["release", "create"]]
     assert len(creates) == 1
@@ -303,30 +303,30 @@ def test_release_publishes_a_run_end_to_end(tmp_path, fake_cli, fake_gh):
     with tarfile.open(gh_assets(fake_gh, tag) / "dataset.tar.gz") as tar:
         for rel, sha in meta["files"].items():
             assert len(sha) == 64
-            contenido = tar.extractfile(rel).read()
-            assert hashlib.sha256(contenido).hexdigest() == sha, rel
+            content = tar.extractfile(rel).read()
+            assert hashlib.sha256(content).hexdigest() == sha, rel
         plano = json.loads(tar.extractfile("dataset/dataset.json").read())
     assert len(plano["tables"]["requests"]) == 19 * 24
     assert len(plano["tables"]["batches"]) == 19 * 3
     assert plano["tables"]["pricing"][0]["table_version"] == "2026-08-31"
-    notas = (gh_assets(fake_gh, tag) / "_notes.md").read_text(encoding="utf-8")
-    assert tag in notas and "analyze --release" in notas
-    assert "dataset/dataset.json" in notas and "dataset/dataset.xlsx" in notas
+    notes = (gh_assets(fake_gh, tag) / "_notes.md").read_text(encoding="utf-8")
+    assert tag in notes and "analyze --release" in notes
+    assert "dataset/dataset.json" in notes and "dataset/dataset.xlsx" in notes
 
 
 def test_release_notes_freeze_a_protocol_v2_dataset(tmp_path, fake_cli, fake_gh):
     """The v2 freeze (methodology v1.2): a protocol-2 dataset's release notes
     carry the freeze sentence - the opacity case study, never mixed with v3."""
     hand_dataset(tmp_path, RUN)
-    ruta_manifiesto = tmp_path / "runs" / "manifest-T1.json"
-    manifiesto = json.loads(ruta_manifiesto.read_text(encoding="utf-8"))
-    manifiesto["protocol_version"] = "2"
-    ruta_manifiesto.write_text(json.dumps(manifiesto), encoding="utf-8")
+    manifest_path = tmp_path / "runs" / "manifest-T1.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["protocol_version"] = "2"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     assert run_cli(tmp_path, "release", "--run", RUN, "--repo", REPO)[0] == 0
     tag = f"run-{RUN}"
-    notas = (gh_assets(fake_gh, tag) / "_notes.md").read_text(encoding="utf-8")
-    assert "protocol v2 dataset, frozen" in notas
-    assert "never mixed with v3" in notas
+    notes = (gh_assets(fake_gh, tag) / "_notes.md").read_text(encoding="utf-8")
+    assert "protocol v2 dataset, frozen" in notes
+    assert "never mixed with v3" in notes
 
 
 def test_release_priced_table_snapshot_matches_the_run(tmp_path, fake_cli, fake_gh):
@@ -363,44 +363,44 @@ def test_release_priced_table_snapshot_matches_the_run(tmp_path, fake_cli, fake_
 
 def test_release_refuses_an_unknown_run(tmp_path, fake_gh):
     pricing = hand_dataset(tmp_path)
-    codigo, _, errores = run_cli(
+    code, _, errors = run_cli(
         tmp_path, "release", "--run", "no-such-run", "--repo", REPO, "--pricing-dir", pricing
     )
-    assert codigo == 2
-    assert "no-such-run" in errores
+    assert code == 2
+    assert "no-such-run" in errors
     assert gh_calls(fake_gh) == []  # nothing reached gh
 
 
 def test_release_refuses_an_empty_dataset(tmp_path, fake_gh):
     pricing = hand_dataset(tmp_path)
     (tmp_path / "runs" / f"requests-{RUN}.jsonl").write_text("", encoding="utf-8")
-    codigo, _, errores = run_cli(
+    code, _, errors = run_cli(
         tmp_path, "release", "--run", RUN, "--repo", REPO, "--pricing-dir", pricing
     )
-    assert codigo == 2
-    assert "empty" in errores
+    assert code == 2
+    assert "empty" in errors
     assert gh_calls(fake_gh) == []
 
 
 def test_release_refuses_a_run_without_a_manifest(tmp_path, fake_gh):
     pricing = hand_dataset(tmp_path)
     (tmp_path / "runs" / "manifest-T1.json").unlink()
-    codigo, _, errores = run_cli(
+    code, _, errors = run_cli(
         tmp_path, "release", "--run", RUN, "--repo", REPO, "--pricing-dir", pricing
     )
-    assert codigo == 2
-    assert "manifest" in errores
+    assert code == 2
+    assert "manifest" in errors
     assert gh_calls(fake_gh) == []
 
 
 def test_release_refuses_when_the_table_snapshot_is_missing(tmp_path, fake_gh):
     pricing = hand_dataset(tmp_path)
     (tmp_path / "pricing" / "2026-08-31.json").unlink()
-    codigo, _, errores = run_cli(
+    code, _, errors = run_cli(
         tmp_path, "release", "--run", RUN, "--repo", REPO, "--pricing-dir", pricing
     )
-    assert codigo == 2
-    assert "2026-08-31" in errores
+    assert code == 2
+    assert "2026-08-31" in errors
     assert gh_calls(fake_gh) == []
 
 
@@ -409,38 +409,38 @@ def test_release_never_rewrites_a_published_release(tmp_path, fake_gh):
     assert (
         run_cli(tmp_path, "release", "--run", RUN, "--repo", REPO, "--pricing-dir", pricing)[0] == 0
     )
-    codigo, _, errores = run_cli(
+    code, _, errors = run_cli(
         tmp_path, "release", "--run", RUN, "--repo", REPO, "--pricing-dir", pricing
     )
-    assert codigo == 2
-    assert "already" in errores
+    assert code == 2
+    assert "already" in errors
     creates = [c for c in gh_calls(fake_gh) if c[:2] == ["release", "create"]]
     assert len(creates) == 1  # the second attempt only viewed
 
 
 def test_release_scrubs_the_api_key_from_the_dataset(tmp_path, monkeypatch, fake_gh):
     """The guardrail: a credential that reached the raw data blocks the release."""
-    clave = "ollama-live-secret-777"
-    monkeypatch.setenv("OLLAMA_API_KEY", clave)
-    pricing = hand_dataset(tmp_path, poison=clave)
-    codigo, _, errores = run_cli(
+    key = "ollama-live-secret-777"
+    monkeypatch.setenv("OLLAMA_API_KEY", key)
+    pricing = hand_dataset(tmp_path, poison=key)
+    code, _, errors = run_cli(
         tmp_path, "release", "--run", RUN, "--repo", REPO, "--pricing-dir", pricing
     )
-    assert codigo == 2
-    assert "credential" in errores and f"requests-{RUN}.jsonl" in errores
+    assert code == 2
+    assert "credential" in errors and f"requests-{RUN}.jsonl" in errors
     assert gh_calls(fake_gh) == []
 
 
 def test_release_scrubs_bearer_shaped_tokens(tmp_path, monkeypatch, fake_gh):
     """A credential shape (e.g. a rotated-out key the env no longer holds) is
     caught too: a meter payload echoing an Authorization header blocks it."""
-    monkeypatch.setenv("OLLAMA_API_KEY", "otra-clave-sin-relacion")
+    monkeypatch.setenv("OLLAMA_API_KEY", "otra-key-sin-relacion")
     pricing = hand_dataset(tmp_path, poison="Bearer abcdef0123456789abcdef")
-    codigo, _, errores = run_cli(
+    code, _, errors = run_cli(
         tmp_path, "release", "--run", RUN, "--repo", REPO, "--pricing-dir", pricing
     )
-    assert codigo == 2
-    assert "credential" in errores
+    assert code == 2
+    assert "credential" in errors
     assert gh_calls(fake_gh) == []
 
 
@@ -466,10 +466,10 @@ def test_release_reports_a_missing_gh_cleanly(tmp_path, monkeypatch, fake_cli):
     )
     run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
     monkeypatch.setenv("PATH", str(tmp_path / "no-gh-here"))
-    codigo, _, errores = run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)
-    assert codigo == 2
-    assert "gh" in errores.lower()
-    assert "Traceback" not in errores
+    code, _, errors = run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)
+    assert code == 2
+    assert "gh" in errors.lower()
+    assert "Traceback" not in errors
 
 
 def test_release_carries_the_code_commit(tmp_path, fake_cli, fake_gh):
@@ -509,8 +509,8 @@ def test_release_carries_the_code_commit(tmp_path, fake_cli, fake_gh):
         text=True,
     ).stdout.strip()
     git("remote", "add", "origin", str(tmp_path / "remote.git"))  # configured, nothing pushed
-    (tmp_path / "nota.txt").write_text("staged, uncommitted\n", encoding="utf-8")
-    git("add", "nota.txt")  # a tracked-but-uncommitted change -> dirty
+    (tmp_path / "note.txt").write_text("staged, uncommitted\n", encoding="utf-8")
+    git("add", "note.txt")  # a tracked-but-uncommitted change -> dirty
 
     prepare(tmp_path)
     assert (
@@ -529,11 +529,9 @@ def test_release_carries_the_code_commit(tmp_path, fake_cli, fake_gh):
         == 0
     )
     run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
-    codigo, salida, errores = run_cli(
-        tmp_path, "release", "--run", run_id, "--repo", REPO, "--json"
-    )
-    assert codigo == 0, salida or errores
-    doc = json.loads(salida)
+    code, output, errors = run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO, "--json")
+    assert code == 0, output or errors
+    doc = json.loads(output)
     assert doc["metadata"]["code"] == {"git_commit": sha, "dirty": True}
     creates = [c for c in gh_calls(fake_gh) if c[:2] == ["release", "create"]]
     assert len(creates) == 1 and "--target" not in creates[0]  # unpushed: no --target
@@ -571,11 +569,9 @@ def test_release_carries_the_code_commit(tmp_path, fake_cli, fake_gh):
         capture_output=True,
         text=True,
     ).stdout.strip()
-    codigo, salida, errores = run_cli(
-        tmp_path, "release", "--run", run_id_2, "--repo", REPO, "--json"
-    )
-    assert codigo == 0, salida or errores
-    doc2 = json.loads(salida)
+    code, output, errors = run_cli(tmp_path, "release", "--run", run_id_2, "--repo", REPO, "--json")
+    assert code == 0, output or errors
+    doc2 = json.loads(output)
     assert doc2["metadata"]["code"] == {"git_commit": sha_2, "dirty": False}
     creates = [c for c in gh_calls(fake_gh) if c[:2] == ["release", "create"]]
     assert "--target" in creates[-1] and sha_2 in creates[-1]
@@ -611,15 +607,13 @@ def test_analyze_consumes_the_release_offline(tmp_path, fake_cli, fake_gh):
     tag = f"run-{run_id}"
     assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO, "--json")[0] == 0
 
-    codigo, salida, errores = run_cli(tmp_path, "analyze", "--json")
-    assert codigo == 0, salida or errores
-    local = json.loads(salida)
+    code, output, errors = run_cli(tmp_path, "analyze", "--json")
+    assert code == 0, output or errors
+    local = json.loads(output)
 
-    codigo, salida, errores = run_cli(
-        tmp_path, "analyze", "--release", tag, "--repo", REPO, "--json"
-    )
-    assert codigo == 0, salida or errores
-    remoto = json.loads(salida)
+    code, output, errors = run_cli(tmp_path, "analyze", "--release", tag, "--repo", REPO, "--json")
+    assert code == 0, output or errors
+    remoto = json.loads(output)
 
     assert remoto["raw"]["run_ids"] == [run_id]
     assert remoto["base_params"]["table_version"] == "2026-08-31"
@@ -652,7 +646,7 @@ def test_analyze_release_binds_the_table_version(tmp_path, fake_cli, fake_gh):
     )
     run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
     assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)[0] == 0
-    codigo, _, errores = run_cli(
+    code, _, errors = run_cli(
         tmp_path,
         "analyze",
         "--release",
@@ -662,8 +656,8 @@ def test_analyze_release_binds_the_table_version(tmp_path, fake_cli, fake_gh):
         "--table-version",
         "2026-09-01",
     )
-    assert codigo == 2
-    assert "table" in errores
+    assert code == 2
+    assert "table" in errors
 
 
 def test_analyze_release_refuses_a_tampered_release(tmp_path, fake_cli, fake_gh):
@@ -694,25 +688,25 @@ def test_analyze_release_refuses_a_tampered_release(tmp_path, fake_cli, fake_gh)
     # 1) a well-formed tarball whose CONTENT no longer matches the metadata
     tarball = activos / "dataset.tar.gz"
     with tarfile.open(tarball) as tar:
-        destino = tmp_path / "retar"
-        destino.mkdir()
-        tar.extractall(destino, filter="data")
-    victima = destino / f"runs/requests-{run_id}.jsonl"
-    lineas = victima.read_text(encoding="utf-8").splitlines()
-    victima.write_text(lineas[0] + "\n", encoding="utf-8")  # one line dropped
+        dest = tmp_path / "retar"
+        dest.mkdir()
+        tar.extractall(dest, filter="data")
+    victima = dest / f"runs/requests-{run_id}.jsonl"
+    lines = victima.read_text(encoding="utf-8").splitlines()
+    victima.write_text(lines[0] + "\n", encoding="utf-8")  # one line dropped
     with tarfile.open(tarball, "w:gz") as t:
-        for p in sorted(destino.rglob("*")):
+        for p in sorted(dest.rglob("*")):
             if p.is_file():
-                t.add(p, arcname=p.relative_to(destino).as_posix())
-    codigo, _, errores = run_cli(tmp_path, "analyze", "--release", f"run-{run_id}", "--repo", REPO)
-    assert codigo == 2
-    assert "sha256" in errores.lower()
+                t.add(p, arcname=p.relative_to(dest).as_posix())
+    code, _, errors = run_cli(tmp_path, "analyze", "--release", f"run-{run_id}", "--repo", REPO)
+    assert code == 2
+    assert "sha256" in errors.lower()
 
     # 2) a truncated tarball (a partial upload): not even a readable archive
     tarball.write_bytes(tarball.read_bytes()[: len(tarball.read_bytes()) // 2])
-    codigo, _, errores = run_cli(tmp_path, "analyze", "--release", f"run-{run_id}", "--repo", REPO)
-    assert codigo == 2
-    assert "integrity" in errores.lower() or "tarball" in errores.lower()
+    code, _, errors = run_cli(tmp_path, "analyze", "--release", f"run-{run_id}", "--repo", REPO)
+    assert code == 2
+    assert "integrity" in errors.lower() or "tarball" in errors.lower()
 
 
 def test_analyze_release_refuses_a_metadata_of_another_run(tmp_path, fake_cli, fake_gh):
@@ -743,17 +737,17 @@ def test_analyze_release_refuses_a_metadata_of_another_run(tmp_path, fake_cli, f
     (activos / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
     # the metadata INSIDE the tarball must lie too: rebuild it consistently
     with tarfile.open(activos / "dataset.tar.gz") as tar:
-        destino = tmp_path / "retar2"
-        destino.mkdir()
-        tar.extractall(destino, filter="data")
-    (destino / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+        dest = tmp_path / "retar2"
+        dest.mkdir()
+        tar.extractall(dest, filter="data")
+    (dest / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
     with tarfile.open(activos / "dataset.tar.gz", "w:gz") as t:
-        for p in sorted(destino.rglob("*")):
+        for p in sorted(dest.rglob("*")):
             if p.is_file():
-                t.add(p, arcname=p.relative_to(destino).as_posix())
-    codigo, _, errores = run_cli(tmp_path, "analyze", "--release", f"run-{run_id}", "--repo", REPO)
-    assert codigo == 2
-    assert "run-otro" in errores or "tag" in errores
+                t.add(p, arcname=p.relative_to(dest).as_posix())
+    code, _, errors = run_cli(tmp_path, "analyze", "--release", f"run-{run_id}", "--repo", REPO)
+    assert code == 2
+    assert "run-otro" in errors or "tag" in errors
 
 
 def test_analyze_release_accepts_the_pre_rename_dataset_stamp(tmp_path, fake_cli, fake_gh):
@@ -783,19 +777,19 @@ def test_analyze_release_accepts_the_pre_rename_dataset_stamp(tmp_path, fake_cli
     activos = gh_assets(fake_gh, f"run-{run_id}")
     # the stamp the pre-rename harness shipped, inside and outside the tarball
     with tarfile.open(activos / "dataset.tar.gz") as tar:
-        destino = tmp_path / "retar"
-        destino.mkdir()
-        tar.extractall(destino, filter="data")
-    (destino / "metadata.json").write_text(
-        (destino / "metadata.json")
+        dest = tmp_path / "retar"
+        dest.mkdir()
+        tar.extractall(dest, filter="data")
+    (dest / "metadata.json").write_text(
+        (dest / "metadata.json")
         .read_text(encoding="utf-8")
         .replace('"kind": "obench-dataset"', '"kind": "ocharness-dataset"'),
         encoding="utf-8",
     )
     with tarfile.open(activos / "dataset.tar.gz", "w:gz") as t:
-        for p in sorted(destino.rglob("*")):
+        for p in sorted(dest.rglob("*")):
             if p.is_file():
-                t.add(p, arcname=p.relative_to(destino).as_posix())
+                t.add(p, arcname=p.relative_to(dest).as_posix())
     meta = json.loads((activos / "metadata.json").read_text(encoding="utf-8"))
     meta["kind"] = "ocharness-dataset"
     (activos / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
@@ -831,7 +825,7 @@ def test_resume_skips_completed_batches_without_new_requests(tmp_path, fake_cli)
         run_cli(tmp_path, "dry-run", "--level", "T1", "--reps", "1", "--pricing-dir", pricing)[0]
         == 0
     )
-    codigo, salida, errores = run_cli(
+    code, output, errors = run_cli(
         tmp_path,
         "resume",
         "--level",
@@ -843,8 +837,8 @@ def test_resume_skips_completed_batches_without_new_requests(tmp_path, fake_cli)
         "--reps",
         "1",
     )
-    assert codigo == 0, salida or errores
-    assert "not implemented" not in (salida + errores)
+    assert code == 0, output or errors
+    assert "not implemented" not in (output + errors)
     assert len(consumer_calls(fake_cli)) == antes  # zero new requests: every batch was done
 
 
@@ -857,16 +851,16 @@ def test_release_refuses_an_unfinished_run(tmp_path, fake_gh):
     """A run with in_flight batches is not a dataset yet: releasing it would
     burn the one-release-per-run tag on partial evidence."""
     pricing = hand_dataset(tmp_path)
-    ruta = tmp_path / "runs" / "manifest-T1.json"
-    manifiesto = json.loads(ruta.read_text(encoding="utf-8"))
-    victima = next(iter(manifiesto["batches"]))
-    manifiesto["batches"][victima]["status"] = "in_flight"
-    ruta.write_text(json.dumps(manifiesto), encoding="utf-8")
-    codigo, _, errores = run_cli(
+    path = tmp_path / "runs" / "manifest-T1.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    victima = next(iter(manifest["batches"]))
+    manifest["batches"][victima]["status"] = "in_flight"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    code, _, errors = run_cli(
         tmp_path, "release", "--run", RUN, "--repo", REPO, "--pricing-dir", pricing
     )
-    assert codigo == 2
-    assert "in_flight" in errores
+    assert code == 2
+    assert "in_flight" in errors
     assert gh_calls(fake_gh) == []
 
 
@@ -875,11 +869,11 @@ def test_release_refuses_a_corrupt_table_snapshot(tmp_path, fake_gh):
     (the tag cannot be rewritten), so packaging refuses."""
     pricing = hand_dataset(tmp_path)
     (tmp_path / "pricing" / "2026-08-31.json").write_text("{not json", encoding="utf-8")
-    codigo, _, errores = run_cli(
+    code, _, errors = run_cli(
         tmp_path, "release", "--run", RUN, "--repo", REPO, "--pricing-dir", pricing
     )
-    assert codigo == 2
-    assert "unreadable" in errores
+    assert code == 2
+    assert "unreadable" in errors
     assert gh_calls(fake_gh) == []
 
 
@@ -887,15 +881,15 @@ def test_release_refuses_a_mismatched_raw_table_stamp(tmp_path, fake_gh):
     """Raw lines priced under another table than the manifest binds would be
     published with rates they were never measured under."""
     pricing = hand_dataset(tmp_path)
-    ruta = tmp_path / "runs" / f"requests-{RUN}.jsonl"
-    linea = json.loads(ruta.read_text(encoding="utf-8"))
+    path = tmp_path / "runs" / f"requests-{RUN}.jsonl"
+    linea = json.loads(path.read_text(encoding="utf-8"))
     linea["table_version"] = "2026-09-01"
-    ruta.write_text(json.dumps(linea) + "\n", encoding="utf-8")
-    codigo, _, errores = run_cli(
+    path.write_text(json.dumps(linea) + "\n", encoding="utf-8")
+    code, _, errors = run_cli(
         tmp_path, "release", "--run", RUN, "--repo", REPO, "--pricing-dir", pricing
     )
-    assert codigo == 2
-    assert "2026-09-01" in errores
+    assert code == 2
+    assert "2026-09-01" in errors
     assert gh_calls(fake_gh) == []
 
 
@@ -939,17 +933,15 @@ def test_release_carries_the_model_calibrations_and_skips_blank_sidecars(
     tag = f"run-{run_id}"
     assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)[0] == 0
     with tarfile.open(gh_assets(fake_gh, tag) / "dataset.tar.gz") as tar:
-        nombres = tar.getnames()
-    assert "runs/calibration-T2-cache-x.json" in nombres  # the run's model's reading
-    assert "runs/calibration-other.json" not in nombres  # nobody in this run is zeta
-    assert f"runs/probe-{run_id}.jsonl" not in nombres  # blank sidecar skipped, not fatal
+        names = tar.getnames()
+    assert "runs/calibration-T2-cache-x.json" in names  # the run's model's reading
+    assert "runs/calibration-other.json" not in names  # nobody in this run is zeta
+    assert f"runs/probe-{run_id}.jsonl" not in names  # blank sidecar skipped, not fatal
 
     # and analyze --release prices the model with the MEASURED hit rate, not S1
-    codigo, salida, errores = run_cli(
-        tmp_path, "analyze", "--release", tag, "--repo", REPO, "--json"
-    )
-    assert codigo == 0, salida or errores
-    remoto = json.loads(salida)
+    code, output, errors = run_cli(tmp_path, "analyze", "--release", tag, "--repo", REPO, "--json")
+    assert code == 0, output or errors
+    remoto = json.loads(output)
     assert remoto["s_per_model"]["glm-5.3-flash"]["source"] == "measured"
     assert remoto["s_per_model"]["glm-5.3-flash"]["s"] == 0.9
 
@@ -979,11 +971,11 @@ def test_analyze_release_refuses_added_files(tmp_path, fake_cli, fake_gh):
     assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)[0] == 0
     tarball = gh_assets(fake_gh, f"run-{run_id}") / "dataset.tar.gz"
     with tarfile.open(tarball) as tar:
-        destino = tmp_path / "retar"
-        destino.mkdir()
-        tar.extractall(destino, filter="data")
+        dest = tmp_path / "retar"
+        dest.mkdir()
+        tar.extractall(dest, filter="data")
     # add an extra batch file with one extra line (analyze would fold it in)
-    extra = destino / "batches" / f"batches-extra.jsonl"
+    extra = dest / "batches" / f"batches-extra.jsonl"
     extra.write_text(
         json.dumps(
             {
@@ -999,22 +991,22 @@ def test_analyze_release_refuses_added_files(tmp_path, fake_cli, fake_gh):
         encoding="utf-8",
     )
     with tarfile.open(tarball, "w:gz") as t:
-        for p in sorted(destino.rglob("*")):
+        for p in sorted(dest.rglob("*")):
             if p.is_file():
-                t.add(p, arcname=p.relative_to(destino).as_posix())
-    codigo, _, errores = run_cli(tmp_path, "analyze", "--release", f"run-{run_id}", "--repo", REPO)
-    assert codigo == 2
-    assert "does not stamp" in errores
+                t.add(p, arcname=p.relative_to(dest).as_posix())
+    code, _, errors = run_cli(tmp_path, "analyze", "--release", f"run-{run_id}", "--repo", REPO)
+    assert code == 2
+    assert "does not stamp" in errors
 
 
 def test_analyze_release_refuses_a_slash_tag(tmp_path, fake_gh):
     """A slash-bearing tag is legal on GitHub but is not a bench dataset tag:
     refused before anything touches the filesystem or gh."""
     hand_dataset(tmp_path)
-    codigo, _, errores = run_cli(tmp_path, "analyze", "--release", "run-2026/v2", "--repo", REPO)
-    assert codigo == 2
-    assert "not a bench dataset tag" in errores
-    assert "Traceback" not in errores
+    code, _, errors = run_cli(tmp_path, "analyze", "--release", "run-2026/v2", "--repo", REPO)
+    assert code == 2
+    assert "not a bench dataset tag" in errors
+    assert "Traceback" not in errors
     assert gh_calls(fake_gh) == []
 
 
@@ -1045,11 +1037,11 @@ def test_analyze_release_keeps_the_previous_bundle_when_refused(tmp_path, fake_c
     assert run_cli(tmp_path, "analyze", "--release", tag, "--repo", REPO)[0] == 0
     bundle = tmp_path / "releases" / tag / "analysis" / "analysis.json"
     assert bundle.exists()
-    codigo, _, errores = run_cli(
+    code, _, errors = run_cli(
         tmp_path, "analyze", "--release", tag, "--repo", REPO, "--table-version", "2026-09-01"
     )
-    assert codigo == 2
-    assert "table" in errores
+    assert code == 2
+    assert "table" in errors
     assert bundle.exists()  # the refused re-run left the fetched bundle alone
 
 
@@ -1077,30 +1069,30 @@ def test_analyze_release_refuses_a_foreign_level_or_model(tmp_path, fake_cli, fa
     run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
     assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)[0] == 0
     tag = f"run-{run_id}"
-    codigo, _, errores = run_cli(
+    code, _, errors = run_cli(
         tmp_path, "analyze", "--release", tag, "--repo", REPO, "--level", "T2"
     )
-    assert codigo == 2
-    assert "level" in errores
-    codigo, _, errores = run_cli(
-        tmp_path, "analyze", "--release", tag, "--repo", REPO, "--model", "no-esta-modelo"
+    assert code == 2
+    assert "level" in errors
+    code, _, errors = run_cli(
+        tmp_path, "analyze", "--release", tag, "--repo", REPO, "--model", "no-esta-model"
     )
-    assert codigo == 2
-    assert "no-esta-modelo" in errores
+    assert code == 2
+    assert "no-esta-model" in errors
 
 
 def test_release_scrubs_a_json_escaped_key(tmp_path, monkeypatch, fake_gh):
     """A key carrying characters JSON escapes (quotes, backslashes) reaches the
     dataset in escaped form (the raw bytes never appear): the scrub matches
     the escaped form too."""
-    clave = 'ollama-live"secret\\777'
-    monkeypatch.setenv("OLLAMA_API_KEY", clave)
-    pricing = hand_dataset(tmp_path, poison=clave)  # the writer JSON-escapes it on disk
-    codigo, _, errores = run_cli(
+    key = 'ollama-live"secret\\777'
+    monkeypatch.setenv("OLLAMA_API_KEY", key)
+    pricing = hand_dataset(tmp_path, poison=key)  # the writer JSON-escapes it on disk
+    code, _, errors = run_cli(
         tmp_path, "release", "--run", RUN, "--repo", REPO, "--pricing-dir", pricing
     )
-    assert codigo == 2
-    assert "credential" in errores
+    assert code == 2
+    assert "credential" in errors
     assert gh_calls(fake_gh) == []
 
 
@@ -1108,8 +1100,8 @@ def test_status_still_accepts_the_run_flags(tmp_path):
     """status never reads --reps/--rep/--k but accepted them before Harness 10;
     scripts mirroring `run`'s shape keep parsing."""
     hand_dataset(tmp_path)
-    codigo, _, errores = run_cli(tmp_path, "status", "--reps", "5", "--rep", "1", "--k", "4")
-    assert codigo == 0, errores
+    code, _, errors = run_cli(tmp_path, "status", "--reps", "5", "--rep", "1", "--k", "4")
+    assert code == 0, errors
 
 
 def test_analyze_release_custom_s_stamps_the_set(tmp_path, fake_cli, fake_gh):
@@ -1137,11 +1129,11 @@ def test_analyze_release_custom_s_stamps_the_set(tmp_path, fake_cli, fake_gh):
     tag = f"run-{run_id}"
     assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO, "--json")[0] == 0
 
-    codigo, salida, errores = run_cli(
+    code, output, errors = run_cli(
         tmp_path, "analyze", "--release", tag, "--repo", REPO, "--s", "0.35", "--json"
     )
-    assert codigo == 0, salida or errores
-    doc = json.loads(salida)
+    assert code == 0, output or errors
+    doc = json.loads(output)
     assert doc["base_params"]["s"] == 0.35
     sellada = tmp_path / "releases" / tag / "analysis-s0.35"
     assert (sellada / "analysis.json").exists()
@@ -1224,10 +1216,10 @@ def test_dataset_command_regenerates_from_a_published_release(tmp_path, fake_cli
     tag = f"run-{run_id}"
     assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)[0] == 0
 
-    codigo, salida, errores = run_cli(tmp_path, "dataset", "--release", tag, "--repo", REPO)
-    assert codigo == 0, salida or errores
-    destino = tmp_path / "releases" / f"export-{run_id}"
-    escritos = sorted(p.name for p in destino.iterdir())
+    code, output, errors = run_cli(tmp_path, "dataset", "--release", tag, "--repo", REPO)
+    assert code == 0, output or errors
+    dest = tmp_path / "releases" / f"export-{run_id}"
+    escritos = sorted(p.name for p in dest.iterdir())
     assert escritos == [
         "batches.csv",
         "canary.csv",
@@ -1236,7 +1228,7 @@ def test_dataset_command_regenerates_from_a_published_release(tmp_path, fake_cli
         "pricing.csv",
         "requests.csv",
     ]
-    plano = json.loads((destino / "dataset.json").read_text(encoding="utf-8"))
+    plano = json.loads((dest / "dataset.json").read_text(encoding="utf-8"))
     assert plano["kind"] == "obench-dataset-readable"
     assert plano["run_id"] == run_id and plano["table_version"] == "2026-08-31"
     assert len(plano["tables"]["requests"]) == 19 * 24
@@ -1244,16 +1236,16 @@ def test_dataset_command_regenerates_from_a_published_release(tmp_path, fake_cli
     assert all(len(sha) == 64 for sha in plano["generated_from"].values())
     # --out wins over the default export-<run_id> directory
     afuera = tmp_path / "afuera"
-    codigo, salida, errores = run_cli(
+    code, output, errors = run_cli(
         tmp_path, "dataset", "--release", tag, "--repo", REPO, "--out", str(afuera)
     )
-    assert codigo == 0, salida or errores
+    assert code == 0, output or errors
     assert (afuera / "dataset.xlsx").exists()
 
 
 def test_dataset_csvs_roundtrip_the_raw_lines(tmp_path, fake_cli, fake_gh):
     """Every raw JSONL line is one CSV row, in order; nested shapes (api,
-    medidor_*) serialize as compact JSON that re-parses to the same object."""
+    meter_*) serialize as compact JSON that re-parses to the same object."""
     from test_run import prepare
 
     prepare(tmp_path)
@@ -1275,7 +1267,7 @@ def test_dataset_csvs_roundtrip_the_raw_lines(tmp_path, fake_cli, fake_gh):
     run_id = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text())["run_id"]
     tag = f"run-{run_id}"
     assert run_cli(tmp_path, "release", "--run", run_id, "--repo", REPO)[0] == 0
-    destino = tmp_path / "releases" / f"export-{run_id}"
+    dest = tmp_path / "releases" / f"export-{run_id}"
     assert run_cli(tmp_path, "dataset", "--release", tag, "--repo", REPO)[0] == 0
 
     crudas = [
@@ -1287,13 +1279,13 @@ def test_dataset_csvs_roundtrip_the_raw_lines(tmp_path, fake_cli, fake_gh):
     ]
     import csv as _csv
 
-    with (destino / "requests.csv").open(encoding="utf-8", newline="") as f:
-        filas = list(_csv.DictReader(f))
-    assert len(filas) == len(crudas)
-    anidadas = sum(1 for fila in filas if fila["api"].startswith("{"))
+    with (dest / "requests.csv").open(encoding="utf-8", newline="") as f:
+        rows = list(_csv.DictReader(f))
+    assert len(rows) == len(crudas)
+    anidadas = sum(1 for row in rows if row["api"].startswith("{"))
     assert anidadas == len(crudas)  # every row carries its nested api payload
-    assert json.loads(filas[0]["api"]) == crudas[0]["api"]
-    assert json.loads(filas[0]["tool_calls"]) == crudas[0]["tool_calls"]
+    assert json.loads(rows[0]["api"]) == crudas[0]["api"]
+    assert json.loads(rows[0]["tool_calls"]) == crudas[0]["tool_calls"]
 
 
 def test_fetch_still_accepts_a_published_legacy_release(tmp_path, fake_cli, fake_gh):

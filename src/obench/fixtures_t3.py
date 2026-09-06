@@ -159,22 +159,22 @@ def test_a_nonpositive_window_is_rejected():
 def test_the_reference_batch_means_match_the_data():
     import statistics
 
-    muestras = [float(x) for x in DATA.read_text(encoding="utf-8").split()]
+    samples = [float(x) for x in DATA.read_text(encoding="utf-8").split()]
     esperadas = [
-        round(statistics.fmean(muestras[i : i + 4]), 6) for i in range(len(muestras) - 3)
+        round(statistics.fmean(samples[i : i + 4]), 6) for i in range(len(samples) - 3)
     ]
-    assert moving_average(muestras, 4) == esperadas
+    assert moving_average(samples, 4) == esperadas
 '''
 
 
 def _debugging_repo() -> tuple[tuple[str, str], ...]:
     rng = _rng("debugging")
-    lecturas = "\n".join(f"{round(rng.uniform(-20.0, 120.0), 1)}" for _ in range(60))
+    readings = "\n".join(f"{round(rng.uniform(-20.0, 120.0), 1)}" for _ in range(60))
     return (
         ("conftest.py", _CONFTEST),
         ("plantmon/__init__.py", '"""Sensor statistics for plant monitoring."""\n'),
         ("plantmon/sensors.py", _SENSORS_BUGGY),
-        ("plantmon/data/reference_batch.txt", lecturas + "\n"),
+        ("plantmon/data/reference_batch.txt", readings + "\n"),
         ("tests/test_sensors.py", _SENSORS_TESTS),
     )
 
@@ -287,11 +287,11 @@ def test_reserve_rejects_quantities_above_stock():
 
 
 def test_the_ledger_enforces_the_active_cap():
-    libro = Ledger()
+    workbook = Ledger()
     for _ in range(MAX_ACTIVE_RESERVATIONS):
-        libro.add(reserve("BR-2214", 1))
+        workbook.add(reserve("BR-2214", 1))
     with pytest.raises(RuntimeError):
-        libro.add(reserve("BR-2214", 1))
+        workbook.add(reserve("BR-2214", 1))
 '''
 
 _LIMITS_FILE = '''"""Operational limits of the warehouse."""
@@ -387,10 +387,10 @@ _KILNLOG_REPORT_INITIAL = '''"""Shift report rendering for the kiln line."""
 
 def build_report(readings) -> str:
     """One line per (unit, celsius) reading: '<unit> reads <c> degrees'."""
-    lineas = []
+    lines = []
     for unit, celsius in readings:
-        lineas.append(f"{unit} reads {celsius:.1f} degrees")
-    return "\\n".join(lineas)
+        lines.append(f"{unit} reads {celsius:.1f} degrees")
+    return "\\n".join(lines)
 '''
 
 _KILNLOG_REPORT_TESTS = '''"""The existing behavior the refactor must preserve."""
@@ -427,10 +427,10 @@ _REPORT_FIX = (
     "kilnlog/report.py",
     '''def build_report(readings) -> str:
     """One line per (unit, celsius) reading: '<unit> reads <c> degrees'."""
-    lineas = []
+    lines = []
     for unit, celsius in readings:
-        lineas.append(f"{unit} reads {celsius:.1f} degrees")
-    return "\\n".join(lineas)
+        lines.append(f"{unit} reads {celsius:.1f} degrees")
+    return "\\n".join(lines)
 ''',
     '''def format_reading(reading) -> str:
     """One line for one (unit, celsius) reading; an empty unit is rejected."""
@@ -501,8 +501,8 @@ def specs(workload: str, n: int) -> list[tuple[str, tuple[tuple[str, str], ...]]
 def fix_steps(workload: str) -> list[dict]:
     """The canonical fix as loop actions — the scripted transcript's edits."""
     if workload == "debugging":
-        ruta, busca, reemplazo = _SENSORS_FIX
-        return [{"action": "apply_patch", "path": ruta, "search": busca, "replace": reemplazo}]
+        path, busca, reemplazo = _SENSORS_FIX
+        return [{"action": "apply_patch", "path": path, "search": busca, "replace": reemplazo}]
     if workload == "multi_file":
         return [
             {"action": "write_file", "path": "warehouse/limits.py", "content": _LIMITS_FILE},
@@ -519,8 +519,8 @@ def fix_steps(workload: str) -> list[dict]:
             },
         ]
     if workload == "refactoring":
-        ruta, busca, reemplazo = _REPORT_FIX
-        return [{"action": "apply_patch", "path": ruta, "search": busca, "replace": reemplazo}]
+        path, busca, reemplazo = _REPORT_FIX
+        return [{"action": "apply_patch", "path": path, "search": busca, "replace": reemplazo}]
     raise ValueError(f"unknown T3 workload: {workload!r}")
 
 

@@ -118,10 +118,10 @@ def test_table_version_is_the_upstream_scrape_date():
 
 
 def test_map_models_applies_aliases_and_notes_the_missing_cache():
-    modelos, notas = pricing_pull.map_models(upstream_doc())
-    assert modelos["deepseek-v4-flash"] == {"input": 0.22, "cached_input": 0.007, "output": 0.66}
-    assert modelos["qwen3.5:397b"] == {"input": 0.6, "cached_input": 0.6, "output": 3.6}
-    assert any(n.startswith("qwen3.5:397b: no cache_read") for n in notas)
+    models, notes = pricing_pull.map_models(upstream_doc())
+    assert models["deepseek-v4-flash"] == {"input": 0.22, "cached_input": 0.007, "output": 0.66}
+    assert models["qwen3.5:397b"] == {"input": 0.6, "cached_input": 0.6, "output": 3.6}
+    assert any(n.startswith("qwen3.5:397b: no cache_read") for n in notes)
 
 
 def test_map_models_fails_on_an_alias_collapse(monkeypatch):
@@ -171,10 +171,10 @@ def test_pull_lands_a_new_table_and_the_diff_shows_every_change(tmp_path):
         "output": 0.66,
     }
     # The landed table is a real PriceTable: the harness consumes it like any other.
-    tabla = PriceTable.load(pricing, "2026-09-05")
-    assert tabla.rate("deepseek-v4-flash").input == 0.22
+    table = PriceTable.load(pricing, "2026-09-05")
+    assert table.rate("deepseek-v4-flash").input == 0.22
     # kimi-k3 only rides along when the upstream doc carries it; identity ids stay.
-    assert "glm-5.3-flash" in tabla.models
+    assert "glm-5.3-flash" in table.models
 
 
 def test_pull_upstream_rates_reach_the_table(tmp_path):
@@ -182,8 +182,8 @@ def test_pull_upstream_rates_reach_the_table(tmp_path):
     doc = upstream_doc()
     doc["models"]["kimi-k3"] = {"input": 3.0, "cache_read": 0.3, "output": 15.0}
     pricing_pull.pull(URL, pricing, transport=serve(doc))
-    tabla = PriceTable.load(pricing, "2026-09-05")
-    assert tabla.rate("kimi-k3").output == 15.0
+    table = PriceTable.load(pricing, "2026-09-05")
+    assert table.rate("kimi-k3").output == 15.0
 
 
 def test_pull_is_a_no_op_when_rates_unchanged(tmp_path):
@@ -238,9 +238,9 @@ def test_cli_error_is_a_clean_exit_2(tmp_path, monkeypatch):
         raise pricing_pull.PullError("pricing fetch failed for x: HTTP 404")
 
     monkeypatch.setattr(pricing_pull, "fetch_document", roto)
-    codigo, salida, errores = run_cli(tmp_path, "pricing-pull")
-    assert codigo == 2
-    assert "HTTP 404" in errores
+    code, output, errors = run_cli(tmp_path, "pricing-pull")
+    assert code == 2
+    assert "HTTP 404" in errors
     assert not (tmp_path / "pricing" / "2026-09-05.json").exists()
 
 
@@ -259,7 +259,7 @@ def test_off_peak_snapshot_is_a_valid_local_table_end_to_end(tmp_path, monkeypat
     pricing = write_table(tmp_path / "pricing", "2026-08-31", OLD_TABLE())
     wire_upstream(monkeypatch, upstream_doc())
     run_cli(tmp_path, "pricing-pull", "--pricing-dir", str(pricing))
-    tabla = PriceTable.load(pricing)
-    assert tabla.table_version == "2026-09-05"
+    table = PriceTable.load(pricing)
+    assert table.table_version == "2026-09-05"
     with pytest.raises(TableError):
-        tabla.rate("deepseek-v4-flash:0731")  # only the aliased id exists
+        table.rate("deepseek-v4-flash:0731")  # only the aliased id exists

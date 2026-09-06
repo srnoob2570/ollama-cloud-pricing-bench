@@ -25,8 +25,8 @@ def test_chat_streaming_delivers_chunks_and_done_with_usage(fake):
         client.stream("POST", "https://fake.ollama/api/chat", json=body, headers=auth) as r,
     ):
         assert r.status_code == 200
-        lineas = [l for l in r.iter_lines() if l.strip()]
-    chunks = [json.loads(l) for l in lineas]
+        lines = [l for l in r.iter_lines() if l.strip()]
+    chunks = [json.loads(l) for l in lines]
     assert chunks[-1]["done"] is True
     assert isinstance(chunks[-1]["prompt_eval_count"], int)
     assert isinstance(chunks[-1]["eval_count"], int)

@@ -7,7 +7,7 @@ and is run by the owner personally. The agent never fires a request.
 
 | File | What it is |
 |---|---|
-| `kimi_session_weekly_test.py` | The original non-cached bracket (unique ~400-word nonce per request) that produced the verified R = 6.22 bracket in `docs/research/pp-sesion-usd-2026-09-01.md` §8. |
+| `kimi_session_weekly_test.py` | The original non-cached bracket (unique ~400-word nonce per request) that produced the verified R = 6.22 bracket in `docs/research/pp-session-usd-2026-09-01.md` §8. |
 | `kimi-bracket-series.jsonl` | That bracket's raw meter/chat log. |
 | `kimi_paired_cache_probe.py` | The paired redo: arms A (fresh nonce per request, forced cache misses), B1 (fixed nonce, first firing), B2 (fixed nonce, warm refire). Same T2 `long_context` body and same nonce budget in every arm. |
 | `kimi-paired-cache-probe.jsonl` | The paired run's raw meter/chat log (2026-09-01). |

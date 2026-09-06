@@ -68,16 +68,16 @@ def test_status_flags_aborted_and_in_flight_batches(tmp_path, fake_cli):
     fake_cli.undercount_at = 10 + 5
     prepare(tmp_path)
     assert run_t1(tmp_path)[0] == 1
-    ruta = tmp_path / "runs" / "manifest-T1.json"
-    manifiesto = json.loads(ruta.read_text(encoding="utf-8"))
+    path = tmp_path / "runs" / "manifest-T1.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
     # ...and a crash mid-batch leaves a second one in_flight (operator simulation)
-    manifiesto["batches"]["crashed00000000"] = {
+    manifest["batches"]["crashed00000000"] = {
         "status": "in_flight",
         "at": 0.0,
         "workload": "calibration",
         "model": "glm-5.3-flash",
     }
-    ruta.write_text(json.dumps(manifiesto), encoding="utf-8")
+    path.write_text(json.dumps(manifest), encoding="utf-8")
 
     code, out, _err = run_cli(tmp_path, "status", "--level", "T1")
     assert code == 0
@@ -93,21 +93,21 @@ def test_status_json_carries_the_full_batch_map(tmp_path, fake_cli):
     prepare(tmp_path)
     assert run_t1(tmp_path)[0] == 0
     doc = json_doc(tmp_path, "status", "--level", "T1")
-    nivel = doc["levels"][0]
-    assert nivel["level"] == "T1" and nivel["run_id"].startswith("T1-")
-    assert nivel["planned"] == 3
-    assert nivel["counts"] == {"done": 3, "aborted": 0, "in_flight": 0, "pending": 0}
-    assert nivel["requests_ok"] == 24
+    level = doc["levels"][0]
+    assert level["level"] == "T1" and level["run_id"].startswith("T1-")
+    assert level["planned"] == 3
+    assert level["counts"] == {"done": 3, "aborted": 0, "in_flight": 0, "pending": 0}
+    assert level["requests_ok"] == 24
     # 24 ticks x 0.1 pp: the exact float of the brackets' delta chain, unrounded
-    assert nivel["quota"]["dpp_session"] == sum(
-        b["dpp_session"] for b in nivel["batches"] if b["dpp_session"] is not None
+    assert level["quota"]["dpp_session"] == sum(
+        b["dpp_session"] for b in level["batches"] if b["dpp_session"] is not None
     )
-    assert nivel["quota"]["dpp_weekly"] == sum(
-        b["dpp_weekly"] for b in nivel["batches"] if b["dpp_weekly"] is not None
+    assert level["quota"]["dpp_weekly"] == sum(
+        b["dpp_weekly"] for b in level["batches"] if b["dpp_weekly"] is not None
     )
-    assert [b["status"] for b in nivel["batches"]] == ["done", "done", "done"]
-    assert {b["workload"] for b in nivel["batches"]} == {"qa_short", "calibration", "throughput"}
-    assert all(b["batch_id"] and b["model"] == "glm-5.3-flash" for b in nivel["batches"])
+    assert [b["status"] for b in level["batches"]] == ["done", "done", "done"]
+    assert {b["workload"] for b in level["batches"]} == {"qa_short", "calibration", "throughput"}
+    assert all(b["batch_id"] and b["model"] == "glm-5.3-flash" for b in level["batches"])
 
 
 def test_status_without_level_lists_every_manifest(tmp_path, fake_cli):
@@ -147,11 +147,11 @@ def test_status_tolerates_structurally_corrupt_entries(tmp_path, fake_cli):
     """Hand-edited run state renders as corrupt/unknown instead of crashing."""
     prepare(tmp_path)
     assert run_t1(tmp_path)[0] == 0
-    ruta = tmp_path / "runs" / "manifest-T1.json"
-    manifiesto = json.loads(ruta.read_text(encoding="utf-8"))
-    manifiesto["batches"]["broken00000000"] = "not a dict"  # a structurally broken entry
-    manifiesto["planned"] = "many"  # ...and a corrupt planned
-    ruta.write_text(json.dumps(manifiesto), encoding="utf-8")
+    path = tmp_path / "runs" / "manifest-T1.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["batches"]["broken00000000"] = "not a dict"  # a structurally broken entry
+    manifest["planned"] = "many"  # ...and a corrupt planned
+    path.write_text(json.dumps(manifest), encoding="utf-8")
     code, out, err = run_cli(tmp_path, "status", "--level", "T1")
     assert code == 0 and "Traceback" not in err
     assert "4 planned | 3 done" in out  # planned falls back to the touched count
@@ -193,18 +193,18 @@ def test_status_quota_accumulates_each_window_independently(tmp_path, fake_cli):
     the quota totals always agree with the report's own per-batch rows."""
     prepare(tmp_path)
     assert run_t1(tmp_path)[0] == 0
-    ruta = tmp_path / "runs" / "manifest-T1.json"
-    manifiesto = json.loads(ruta.read_text(encoding="utf-8"))
-    victima = next(iter(manifiesto["batches"]))
-    manifiesto["batches"][victima]["dpp_weekly"] = None  # a session-only bracket
-    ruta.write_text(json.dumps(manifiesto), encoding="utf-8")
+    path = tmp_path / "runs" / "manifest-T1.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    victima = next(iter(manifest["batches"]))
+    manifest["batches"][victima]["dpp_weekly"] = None  # a session-only bracket
+    path.write_text(json.dumps(manifest), encoding="utf-8")
 
     doc = json_doc(tmp_path, "status", "--level", "T1")
-    nivel = doc["levels"][0]
-    sesiones = [b["dpp_session"] for b in nivel["batches"] if b["dpp_session"] is not None]
-    assert nivel["quota"]["dpp_session"] == sum(sesiones)
-    assert nivel["quota"]["dpp_weekly"] == sum(
-        b["dpp_weekly"] for b in nivel["batches"] if b["dpp_weekly"] is not None
+    level = doc["levels"][0]
+    sessions = [b["dpp_session"] for b in level["batches"] if b["dpp_session"] is not None]
+    assert level["quota"]["dpp_session"] == sum(sessions)
+    assert level["quota"]["dpp_weekly"] == sum(
+        b["dpp_weekly"] for b in level["batches"] if b["dpp_weekly"] is not None
     )
     # the bracket census still counts only the brackets both windows resolved
-    assert nivel["quota"]["batches_with_bracket"] == len(sesiones) - 1
+    assert level["quota"]["batches_with_bracket"] == len(sessions) - 1

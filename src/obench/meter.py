@@ -29,9 +29,9 @@ SESSION_R = 6.22
 DEFAULT_CREDIT_RATIO = 3.0
 
 
-def usd_per_pp(ancla: float) -> float:
+def usd_per_pp(anchor: float) -> float:
     """The anchor bridge: P_LEGADO amortized per week, divided by the 100 pp window."""
-    return (ancla / WEEKS_PER_MONTH) / 100.0
+    return (anchor / WEEKS_PER_MONTH) / 100.0
 
 
 def session_usd_per_pp(usd_weekly: float) -> float:

@@ -48,10 +48,10 @@ def test_batch_dpp_persists_the_exact_meter_delta(tmp_path, fake_cli):
     batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")
     assert batches
     for b in batches:
-        for ventana in ("session", "weekly"):
-            pre = b["medidor_pre"]["limits"][ventana]["usage"]
-            post = b["medidor_post"]["limits"][ventana]["usage"]
-            assert b[f"dpp_{ventana}"] == (post - pre) * 100, b["workload"]
+        for window in ("session", "weekly"):
+            pre = b["meter_pre"]["limits"][window]["usage"]
+            post = b["meter_post"]["limits"][window]["usage"]
+            assert b[f"dpp_{window}"] == (post - pre) * 100, b["workload"]
 
 
 def test_timestamps_persist_unrounded(tmp_path, fake_cli, monkeypatch):
@@ -59,16 +59,16 @@ def test_timestamps_persist_unrounded(tmp_path, fake_cli, monkeypatch):
     captured_at / dry_run_at, keep their exact stamps (ticket acceptance)."""
     monkeypatch.setattr(time, "time", lambda: TICK)
     prepare_t1(tmp_path)
-    marca = json.loads((tmp_path / "runs" / "gate-T1.json").read_text(encoding="utf-8"))
-    assert marca["dry_run_at"] == TICK  # the run consumes the mark: assert it first
+    mark = json.loads((tmp_path / "runs" / "gate-T1.json").read_text(encoding="utf-8"))
+    assert mark["dry_run_at"] == TICK  # the run consumes the mark: assert it first
     code, _out, err = run_t1(tmp_path, "--model", "glm-5.3-flash", "--rep", "1", "--reps", "1")
     assert code == 0, err
 
-    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
-    assert manifiesto["started_at"] == TICK
-    assert manifiesto["catalog"][-1]["captured_at"] == TICK
-    for entrada in manifiesto["batches"].values():
-        assert entrada["at"] == TICK
+    manifest = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    assert manifest["started_at"] == TICK
+    assert manifest["catalog"][-1]["captured_at"] == TICK
+    for input in manifest["batches"].values():
+        assert input["at"] == TICK
     for r in read_jsonl(tmp_path, "runs", "requests-*.jsonl"):
         assert r["t_start"] == TICK
         assert r["t_first_chunk"] == TICK
@@ -84,28 +84,28 @@ def test_dry_run_budget_persists_the_exact_cost(tmp_path):
         run_cli(tmp_path, "dry-run", "--level", "T1", "--reps", "1", "--pricing-dir", pricing)[0]
         == 0
     )
-    marca = json.loads((tmp_path / "runs" / "gate-T1.json").read_text(encoding="utf-8"))
-    tabla = PriceTable.load(tmp_path / "pricing")
+    mark = json.loads((tmp_path / "runs" / "gate-T1.json").read_text(encoding="utf-8"))
+    table = PriceTable.load(tmp_path / "pricing")
     from obench.lane import nonce_tokens_estimate
 
-    for fila in marca["estimado"]["rows"]:
-        carga = next(w for w in workloads.WORKLOADS_BY_LEVEL["T1"] if w.name == fila["workload"])
+    for row in mark["estimado"]["rows"]:
+        workload = next(w for w in workloads.WORKLOADS_BY_LEVEL["T1"] if w.name == row["workload"])
         # The estimate prices what will actually be sent: the workload's tokens
         # plus the cache-free lane's per-request nonce overhead (protocol v3).
-        nonce = nonce_tokens_estimate(carga.t_in)
-        t_in = (carga.t_in + nonce) * carga.requests
-        t_out = carga.t_out * carga.requests
-        esperado_s0 = esperado_s1 = 0.0
-        for modelo in workloads.slate("T1", tabla):
-            tarifa = tabla.rate(modelo)
-            esperado_s0 += new_task_cost(t_in, t_out, tarifa, s=0.0, per=tabla.per)
-            esperado_s1 += new_task_cost(t_in, t_out, tarifa, s=0.5, per=tabla.per)
-        assert fila["cost_s0"] == esperado_s0, fila["workload"]
-        assert fila["cost_s1"] == esperado_s1, fila["workload"]
+        nonce = nonce_tokens_estimate(workload.t_in)
+        t_in = (workload.t_in + nonce) * workload.requests
+        t_out = workload.t_out * workload.requests
+        expected_s0 = expected_s1 = 0.0
+        for model in workloads.slate("T1", table):
+            rate = table.rate(model)
+            expected_s0 += new_task_cost(t_in, t_out, rate, s=0.0, per=table.per)
+            expected_s1 += new_task_cost(t_in, t_out, rate, s=0.5, per=table.per)
+        assert row["cost_s0"] == expected_s0, row["workload"]
+        assert row["cost_s1"] == expected_s1, row["workload"]
         # The lane's overhead rides the row transparently: what was added to
         # tokens_in is exactly the row's nonce_tokens (models × reps × requests).
-        assert fila["nonce_tokens"] == nonce * carga.requests * 19
-        assert fila["tokens_in"] == (carga.t_in + nonce) * carga.requests * 19
+        assert row["nonce_tokens"] == nonce * workload.requests * 19
+        assert row["tokens_in"] == (workload.t_in + nonce) * workload.requests * 19
 
 
 def test_analyze_persists_full_precision_derivatives(tmp_path, monkeypatch):
@@ -128,8 +128,8 @@ def test_analyze_persists_full_precision_derivatives(tmp_path, monkeypatch):
     assert a["pp_per_1m"]["p25"] == 0.2 * 1e6 / 3000
     assert a["pp_per_1m"]["p95"] == 0.2 * 1e6 / 3000
     # new-plan extrapolation from the measured median tokens (1000 in / 500 out)
-    tarifa = PriceTable.load(tmp_path / "pricing").rate("alpha")
-    s0 = new_task_cost(1000, 500, tarifa, s=0.0, per=1_000_000)
+    rate = PriceTable.load(tmp_path / "pricing").rate("alpha")
+    s0 = new_task_cost(1000, 500, rate, s=0.0, per=1_000_000)
     assert a["new_cost_task_s0_usd"] == s0
     # the threshold compares paid dollars: the new side's credits divide by
     # the default credit_ratio (3)
@@ -143,19 +143,19 @@ def test_status_quota_sum_equals_the_raw_payloads_chain(tmp_path, fake_cli):
     assert run_t1(tmp_path, "--settle-s", "2", "--settle-poll-s", "0.01", "--reps", "1")[0] == 0
     batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")
     doc = json.loads(run_cli(tmp_path, "status", "--level", "T1", "--json")[1])
-    nivel = doc["levels"][0]
-    esperado_s = esperado_w = 0.0
+    level = doc["levels"][0]
+    expected_s = expected_w = 0.0
     for b in batches:
-        esperado_s += (
-            b["medidor_post"]["limits"]["session"]["usage"]
-            - b["medidor_pre"]["limits"]["session"]["usage"]
+        expected_s += (
+            b["meter_post"]["limits"]["session"]["usage"]
+            - b["meter_pre"]["limits"]["session"]["usage"]
         ) * 100
-        esperado_w += (
-            b["medidor_post"]["limits"]["weekly"]["usage"]
-            - b["medidor_pre"]["limits"]["weekly"]["usage"]
+        expected_w += (
+            b["meter_post"]["limits"]["weekly"]["usage"]
+            - b["meter_pre"]["limits"]["weekly"]["usage"]
         ) * 100
-    assert nivel["quota"]["dpp_session"] == esperado_s
-    assert nivel["quota"]["dpp_weekly"] == esperado_w
+    assert level["quota"]["dpp_session"] == expected_s
+    assert level["quota"]["dpp_weekly"] == expected_w
 
 
 def test_predict_report_persists_full_precision(tmp_path):
@@ -165,19 +165,19 @@ def test_predict_report_persists_full_precision(tmp_path):
     doc = report(tmp_path)
     # the expected side prices on the SAME table the study ran against (the
     # tmp pricing dir), never on whichever snapshot the repo holds today
-    tabla = PriceTable.load(tmp_path / "pricing")
+    table = PriceTable.load(tmp_path / "pricing")
 
     larga = next(
         c for c in doc["cells"] if c["workload"] == "long_context" and c["model"] == "glm-5.3-flash"
     )
-    real = new_task_cost(30_000, 300, tabla.rate("glm-5.3-flash"), s=0.0, per=tabla.per)
+    real = new_task_cost(30_000, 300, table.rate("glm-5.3-flash"), s=0.0, per=table.per)
     assert larga["real_new_s0_usd_per_run"] == real
     assert larga["blind"]["ape_new"] == abs(0.00558 - real) / real
 
     archivo = next(
         c for c in doc["cells"] if c["workload"] == "multi_file" and c["model"] == "kimi-k2.7-code"
     )
-    real_file = new_task_cost(150_000, 30_000, tabla.rate("kimi-k2.7-code"), s=0.0, per=tabla.per)
+    real_file = new_task_cost(150_000, 30_000, table.rate("kimi-k2.7-code"), s=0.0, per=table.per)
     assert archivo["real_new_s0_usd_per_run"] == real_file
     assert archivo["blind"]["ape_new"] == abs(0.28875 - real_file) / real_file
 
@@ -212,10 +212,10 @@ def test_calibration_persists_unrounded_evidence(tmp_path, fake_cli):
     )
     assert code == 0, err
     requests = read_jsonl(tmp_path, "runs", "requests-*.jsonl")
-    lectura = summary(tmp_path)["readings"][MODEL]
-    assert lectura["calibrated_at"] == max(r["t_total"] for r in requests)
+    reading = summary(tmp_path)["readings"][MODEL]
+    assert reading["calibrated_at"] == max(r["t_total"] for r in requests)
     frio = requests[0]  # the cold bracket's single request, first in the file
-    ev = lectura["signals"]["cache_cold"]["requests"][0]
+    ev = reading["signals"]["cache_cold"]["requests"][0]
     assert ev["ttft_s"] == frio["t_first_chunk"] - frio["t_start"]
 
 
@@ -225,15 +225,15 @@ def test_no_rounding_on_any_persisted_path():
     own 0.001 quantization (the real meter's resolution, mirrored) and the T3
     fixture bytes (seeded synthetic-repo data, hash-pinned). The dashboard's
     Math.round presentation never matches the word-boundary pattern."""
-    patron = re.compile(r"(?<![\w.])round\(")
+    pattern = re.compile(r"(?<![\w.])round\(")
     exentos = {"testing/fake.py", "fixtures_t3.py"}
-    raiz = pathlib.Path(__file__).resolve().parents[1] / "src" / "obench"
-    for ruta in sorted(raiz.rglob("*.py")):
-        relativo = ruta.relative_to(raiz).as_posix()
+    root = pathlib.Path(__file__).resolve().parents[1] / "src" / "obench"
+    for path in sorted(root.rglob("*.py")):
+        relativo = path.relative_to(root).as_posix()
         if relativo in exentos:
             continue
-        for numero, linea in enumerate(ruta.read_text(encoding="utf-8").splitlines(), 1):
-            assert not patron.search(linea), f"{relativo}:{numero}: {linea.strip()}"
+        for numero, linea in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            assert not pattern.search(linea), f"{relativo}:{numero}: {linea.strip()}"
 
 
 def test_probe_timestamps_persist_unrounded(tmp_path, fake_cli, monkeypatch):
@@ -256,10 +256,10 @@ def test_probe_timestamps_persist_unrounded(tmp_path, fake_cli, monkeypatch):
     for linea in read_jsonl(tmp_path, "runs", "probe-*.jsonl"):
         assert linea["t_start"] == TICK
         assert linea["t_total"] == TICK
-    manifiesto = json.loads(
+    manifest = json.loads(
         (tmp_path / "runs" / "manifest-T1-concurrency.json").read_text(encoding="utf-8")
     )
-    assert manifiesto["probe"]["at"] == TICK
+    assert manifest["probe"]["at"] == TICK
 
 
 def test_the_passive_detector_flags_only_a_collapse():
@@ -268,9 +268,9 @@ def test_the_passive_detector_flags_only_a_collapse():
     is recorded without a flag, and a sub-floor budget never flags."""
     from obench import runner
 
-    registro = [{"done": {"prompt_eval_count": 30_000, "eval_count": 0}}]
+    record = [{"done": {"prompt_eval_count": 30_000, "eval_count": 0}}]
     # Prefill body (in-share 1.0): 30K tokens x 2.6 pp/1M = 0.078 pp expected.
-    colapsado = runner._passive_detector(registro, 0.0)
+    colapsado = runner._passive_detector(record, 0.0)
     assert colapsado["collapsed"] is False  # 0.078 pp < the 3.5-tick (0.35 pp) floor
     # A 5-rep pool (150K tokens): 0.39 pp expected >= 3.5 ticks.
     grande = [{"done": {"prompt_eval_count": 30_000, "eval_count": 0}} for _ in range(5)]

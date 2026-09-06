@@ -1,7 +1,7 @@
 """Fake ollama.com — the harness's test seam.
 
 Reproduces the behavior MEASURED during the live meter verification
-(docs/research/medidor-vivo-2026-08-31.md): usage in 0.001 ticks with read lag,
+(docs/research/meter-vivo-2026-08-31.md): usage in 0.001 ticks with read lag,
 instant and exact per-model request_count, and scriptable errors. Injected as an
 httpx transport; never touches the network.
 
@@ -140,10 +140,10 @@ class FakeOllama:
             try:
                 cacheada = self._cache_lookup(body)
                 if self.chat_latency:
-                    latencia = self.chat_latency
+                    latency = self.chat_latency
                     if cacheada:
-                        latencia -= self.cache_ttft_benefit_s
-                    await asyncio.sleep(max(0.0, latencia))
+                        latency -= self.cache_ttft_benefit_s
+                    await asyncio.sleep(max(0.0, latency))
                 self._bill(body, cacheada)
                 if body.get("stream"):
                     return httpx.Response(200, content=self._chat_chunks(body, cacheada))
@@ -153,13 +153,13 @@ class FakeOllama:
         return httpx.Response(404, json={"error": "not found"})
 
     def _bill(self, body: dict, cacheada: int = 0) -> None:
-        modelo = body.get("model", "?")
-        self._last_billed = modelo
+        model = body.get("model", "?")
+        self._last_billed = model
         # A dropped bill (undercount_at): the request was accepted and billed
         # (its ticks land) but the meter's cumulative counter never sees it —
         # the signature the runner's post-burst count check exists to catch.
         if self.undercount_at is None or self._n_chat != self.undercount_at:
-            self._counts[modelo] = self._counts.get(modelo, 0) + 1
+            self._counts[model] = self._counts.get(model, 0) + 1
         ticks = self.cached_ticks if cacheada else self.ticks_per_request
         if ticks:
             self.program_consumption(ticks=ticks)
@@ -173,9 +173,9 @@ class FakeOllama:
         if self.cache_horizon_s is None:
             return 0
         ahora = asyncio.get_running_loop().time()
-        clave = (body.get("model", "?"), self._prompt_of(body))
-        servido = self._cache_last.get(clave)
-        self._cache_last[clave] = ahora
+        key = (body.get("model", "?"), self._prompt_of(body))
+        servido = self._cache_last.get(key)
+        self._cache_last[key] = ahora
         if servido is None or (ahora - servido) > self.cache_horizon_s:
             return 0
         completa, _ = self._token_counts(body)
@@ -196,13 +196,13 @@ class FakeOllama:
         return (body.get("messages") or [{}])[0].get("content") or ""
 
     def _chat_chunks(self, body: dict, cacheada: int = 0) -> bytes:
-        modelo = body.get("model", "glm-5.3-flash")
+        model = body.get("model", "glm-5.3-flash")
         llamadas = self.tool_calls_for(self._prompt_of(body)) if self.tool_calls_for else None
         if llamadas:
             # The scripted calls stream as one message frame, verbatim, before the done.
             parciales = [
                 {
-                    "model": modelo,
+                    "model": model,
                     "message": {"role": "assistant", "content": "", "tool_calls": llamadas},
                     "done": False,
                 },
@@ -211,17 +211,17 @@ class FakeOllama:
             if self.truncate_stream:
                 parciales = parciales[:-1]
             return b"".join((json.dumps(c) + "\n").encode() for c in parciales)
-        texto = self._reply_text(body)
-        mitad = -(-len(texto) // 2)  # ceil: "world" -> "wor" + "ld", as always scripted
+        text = self._reply_text(body)
+        mitad = -(-len(text) // 2)  # ceil: "world" -> "wor" + "ld", as always scripted
         parciales = [
             {
-                "model": modelo,
-                "message": {"role": "assistant", "content": texto[:mitad]},
+                "model": model,
+                "message": {"role": "assistant", "content": text[:mitad]},
                 "done": False,
             },
             {
-                "model": modelo,
-                "message": {"role": "assistant", "content": texto[mitad:]},
+                "model": model,
+                "message": {"role": "assistant", "content": text[mitad:]},
                 "done": False,
             },
             self._done(body, cacheada),
@@ -265,11 +265,11 @@ class FakeOllama:
             delta = round(self.drift_ticks_per_read * 0.001, 3)
             self._session_usage = round(self._session_usage + delta, 3)
             self._weekly_usage = round(self._weekly_usage + delta, 3)
-        modelos = [{"name": m, "request_count": c} for m, c in sorted(self._counts.items())]
+        models = [{"name": m, "request_count": c} for m, c in sorted(self._counts.items())]
         return {
             "activity": {"cost": "0.00000", "period": {"type": "last_4_weeks"}, "models": []},
             "limits": {
-                "session": {"usage": self._session_usage, "models": modelos},
-                "weekly": {"usage": self._weekly_usage, "models": [dict(m) for m in modelos]},
+                "session": {"usage": self._session_usage, "models": models},
+                "weekly": {"usage": self._weekly_usage, "models": [dict(m) for m in models]},
             },
         }

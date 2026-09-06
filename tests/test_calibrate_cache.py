@@ -109,8 +109,8 @@ def test_persistence_survives_a_replay_without_token_evidence():
     from obench import calibration
     from obench.pricing import PriceTable
 
-    tabla = PriceTable.load(pathlib.Path(__file__).resolve().parents[1] / "pricing")
-    lineas = {
+    table = PriceTable.load(pathlib.Path(__file__).resolve().parents[1] / "pricing")
+    lines = {
         "cache_cold": [
             {
                 "tok_in": 26,
@@ -165,9 +165,9 @@ def test_persistence_survives_a_replay_without_token_evidence():
         "cache_intra": {"batch_id": "b2", "dpp_weekly": 0.8},
         "cache_spaced": {"batch_id": "b3", "dpp_weekly": 0.6},
     }
-    lectura = calibration._analyze_model("glm-5.3-flash", brackets, lineas, tabla=tabla)
-    assert lectura["persistence"] is None  # a horizon needs evidence, not crashes
-    assert [r["hit"] for r in lectura["signals"]["cache_spaced"]["replays"]] == [None, False, False]
+    reading = calibration._analyze_model("glm-5.3-flash", brackets, lines, table=table)
+    assert reading["persistence"] is None  # a horizon needs evidence, not crashes
+    assert [r["hit"] for r in reading["signals"]["cache_spaced"]["replays"]] == [None, False, False]
 
 
 def test_zero_token_reports_are_broken_telemetry_never_perfect_hits():
@@ -176,8 +176,8 @@ def test_zero_token_reports_are_broken_telemetry_never_perfect_hits():
     from obench import calibration
     from obench.pricing import PriceTable
 
-    tabla = PriceTable.load(pathlib.Path(__file__).resolve().parents[1] / "pricing")
-    lineas = {
+    table = PriceTable.load(pathlib.Path(__file__).resolve().parents[1] / "pricing")
+    lines = {
         "cache_cold": [
             {
                 "tok_in": 26,
@@ -216,13 +216,13 @@ def test_zero_token_reports_are_broken_telemetry_never_perfect_hits():
         "cache_intra": {"batch_id": "b2", "dpp_weekly": 0.8},
         "cache_spaced": {"batch_id": "b3", "dpp_weekly": 0.6},
     }
-    lectura = calibration._analyze_model("glm-5.3-flash", brackets, lineas, tabla=tabla)
+    reading = calibration._analyze_model("glm-5.3-flash", brackets, lines, table=table)
     # the broken reports never became 1.0 samples: the working signal (the
     # meter's dp) carries the reading instead, through the dp proxy
-    assert lectura["hit_rate_basis"] == "dpp proxy"
-    assert lectura["rule"]["estimates"] == [0.8, 0.8]
-    assert abs(lectura["hit_rate"] - 0.8) < 1e-9 and lectura["conclusive"] is True
-    assert all(r["hit"] is None for r in lectura["signals"]["cache_spaced"]["replays"])
+    assert reading["hit_rate_basis"] == "dpp proxy"
+    assert reading["rule"]["estimates"] == [0.8, 0.8]
+    assert abs(reading["hit_rate"] - 0.8) < 1e-9 and reading["conclusive"] is True
+    assert all(r["hit"] is None for r in reading["signals"]["cache_spaced"]["replays"])
 
 
 def test_calibration_prefix_is_shared_with_long_context():
@@ -231,23 +231,23 @@ def test_calibration_prefix_is_shared_with_long_context():
 
     replay = fixtures.build("T2", "cache_cold", 1)[0].prompt
     larga = fixtures.build("T2", "long_context", 1)[0].prompt
-    lineas_replay, lineas_larga = replay.splitlines(), larga.splitlines()
-    assert lineas_replay[0].startswith("Cache calibration replay")  # its own header
-    assert lineas_replay[-1] == "Reply with the single word: OK."
-    prefijo = lineas_replay[2:552]
+    replay_lines, long_lines = replay.splitlines(), larga.splitlines()
+    assert replay_lines[0].startswith("Cache calibration replay")  # its own header
+    assert replay_lines[-1] == "Reply with the single word: OK."
+    prefijo = replay_lines[2:552]
     assert len(prefijo) == 550
-    assert prefijo == lineas_larga[2:552]  # byte-identical provenance
+    assert prefijo == long_lines[2:552]  # byte-identical provenance
     assert len(" ".join(prefijo).split()) >= 14_000  # ~20K tokens of document
-    for carga, n in (("cache_cold", 1), ("cache_intra", 4), ("cache_spaced", 3)):
-        specs = fixtures.build("T2", carga, n)
+    for workload, n in (("cache_cold", 1), ("cache_intra", 4), ("cache_spaced", 3)):
+        specs = fixtures.build("T2", workload, n)
         assert len(specs) == n and all(s.prompt == replay for s in specs)
-    for carga, n in (("cache_cold", 2), ("cache_intra", 3), ("cache_x", 1)):
+    for workload, n in (("cache_cold", 2), ("cache_intra", 3), ("cache_x", 1)):
         try:
-            fixtures.build("T2", carga, n)
+            fixtures.build("T2", workload, n)
         except ValueError:
             pass
         else:
-            raise AssertionError(f"fixture guard missing for {carga}/{n}")
+            raise AssertionError(f"fixture guard missing for {workload}/{n}")
 
 
 def test_refuses_without_a_t2_dry_run_mark(tmp_path, fake_cli):
@@ -309,15 +309,22 @@ def test_spaced_gaps_are_validated(tmp_path, fake_cli):
     assert fake_cli.calls == []
 
 
-def test_settle_s_is_validated_and_ancla_is_refused(tmp_path, fake_cli):
+def test_settle_s_is_validated_and_anchor_is_refused(tmp_path, fake_cli):
     """--settle-s nan/inf/negative never reaches the runner (a nan would strand
-    the bracket in_flight); --ancla is not the calibration's knob — no silent no-op."""
+    the bracket in_flight); --anchor is not the calibration's knob — no silent no-op."""
     prepare(tmp_path)
     for malo in ("nan", "inf", "-1"):
         code, _out, err = run_cli(tmp_path, "calibrate-cache", "--settle-s", malo)
         assert code == 2 and "settle-s" in err, malo
     code, _out, err = run_cli(
-        tmp_path, "calibrate-cache", "--settle-s", "2", "--settle-poll-s", "0.01", "--ancla", "1000"
+        tmp_path,
+        "calibrate-cache",
+        "--settle-s",
+        "2",
+        "--settle-poll-s",
+        "0.01",
+        "--anchor",
+        "1000",
     )
     assert code == 2 and "unrecognized" in err
     assert fake_cli.calls == []  # refused before any request
@@ -338,49 +345,56 @@ def test_conclusive_cache_measurement_end_to_end(tmp_path, fake_cli):
     assert code == 0, out or err
     requests = read_jsonl(tmp_path, "runs", "requests-*.jsonl")
     assert len(requests) == 8  # 1 cold + 4 intra + 3 spaced
-    por_carga: dict[str, list[dict]] = {}
+    per_workload: dict[str, list[dict]] = {}
     for r in requests:
         assert r["level"] == "T2" and r["model"] == MODEL and r["k"] == 1
         assert r["checker"] == "pass"  # the replay's one-word contract
-        por_carga.setdefault(r["workload"], []).append(r)
-    assert sorted(por_carga) == ["cache_cold", "cache_intra", "cache_spaced"]
-    fria = por_carga["cache_cold"][0]
+        per_workload.setdefault(r["workload"], []).append(r)
+    assert sorted(per_workload) == ["cache_cold", "cache_intra", "cache_spaced"]
+    fria = per_workload["cache_cold"][0]
     assert fria["tok_in"] == 26 and fria["tok_cached"] == 0  # the cold send
     # the intra primer hits too (the cold bracket primed the prefix seconds ago)
-    assert all(r["tok_in"] == 6 and r["tok_cached"] == 20 for r in por_carga["cache_intra"])
-    assert all(r["tok_in"] == 6 and r["tok_cached"] == 20 for r in por_carga["cache_spaced"])
+    assert all(r["tok_in"] == 6 and r["tok_cached"] == 20 for r in per_workload["cache_intra"])
+    assert all(r["tok_in"] == 6 and r["tok_cached"] == 20 for r in per_workload["cache_spaced"])
     assert len({r["fixture_hash"] for r in requests}) == 3  # one hash per bracket
 
     batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")
-    por_carga_b = {b["workload"]: b for b in batches}
-    assert set(por_carga_b) == {"cache_cold", "cache_intra", "cache_spaced"}
-    assert [por_carga_b[w]["n"] for w in ("cache_cold", "cache_intra", "cache_spaced")] == [1, 4, 3]
+    per_workload_b = {b["workload"]: b for b in batches}
+    assert set(per_workload_b) == {"cache_cold", "cache_intra", "cache_spaced"}
+    assert [per_workload_b[w]["n"] for w in ("cache_cold", "cache_intra", "cache_spaced")] == [
+        1,
+        4,
+        3,
+    ]
     # 10 ticks cold; the intra bracket bills 4 hits x 2; the spaced replays only hits
-    assert abs(por_carga_b["cache_cold"]["dpp_session"] - 1.0) <= 0.1
-    assert abs(por_carga_b["cache_intra"]["dpp_session"] - 0.8) <= 0.1
-    assert abs(por_carga_b["cache_spaced"]["dpp_session"] - 0.6) <= 0.1
-    assert "spaced replays" in por_carga_b["cache_spaced"]["notes"]
+    assert abs(per_workload_b["cache_cold"]["dpp_session"] - 1.0) <= 0.1
+    assert abs(per_workload_b["cache_intra"]["dpp_session"] - 0.8) <= 0.1
+    assert abs(per_workload_b["cache_spaced"]["dpp_session"] - 0.6) <= 0.1
+    assert "spaced replays" in per_workload_b["cache_spaced"]["notes"]
 
     doc = summary(tmp_path)
     assert doc["kind"] == "cache-calibration" and doc["level"] == "T2-cache"
     assert doc["models"] == [MODEL]
-    lectura = doc["readings"][MODEL]
-    assert lectura["cache_exists"] == "yes" and lectura["conclusive"] is True
-    assert abs(lectura["hit_rate"] - 20 / 26) < 1e-3  # 6 of 26 tokens re-evaluated
-    assert lectura["hit_rate_basis"] == "reported cache-hit tokens"
+    reading = doc["readings"][MODEL]
+    assert reading["cache_exists"] == "yes" and reading["conclusive"] is True
+    assert abs(reading["hit_rate"] - 20 / 26) < 1e-3  # 6 of 26 tokens re-evaluated
+    assert reading["hit_rate_basis"] == "reported cache-hit tokens"
     # (1.0 - 0.8/4) / 0.1, recomputed from the persisted raw brackets: the
     # signal carries the meter deltas' exact float, last-bit noise included
     assert (
-        lectura["rule"]["dp_signal_ticks"]
-        == (por_carga_b["cache_cold"]["dpp_weekly"] - por_carga_b["cache_intra"]["dpp_weekly"] / 4)
+        reading["rule"]["dp_signal_ticks"]
+        == (
+            per_workload_b["cache_cold"]["dpp_weekly"]
+            - per_workload_b["cache_intra"]["dpp_weekly"] / 4
+        )
         / 0.1
     )
-    assert lectura["rule"]["iqr"][0] > 0  # the estimates agree above zero
-    assert lectura["persistence"].startswith(">= ")  # every spaced replay hit
-    assert float(lectura["persistence"][len(">= ") : -len(" s")]) < 1.0
-    assert lectura["paper_discount"] == {"declared": True, "materialized": True}
+    assert reading["rule"]["iqr"][0] > 0  # the estimates agree above zero
+    assert reading["persistence"].startswith(">= ")  # every spaced replay hit
+    assert float(reading["persistence"][len(">= ") : -len(" s")]) < 1.0
+    assert reading["paper_discount"] == {"declared": True, "materialized": True}
     assert doc["unmaterialized_paper_discounts"] == []
-    assert all(r["hit"] is True for r in lectura["signals"]["cache_spaced"]["replays"])
+    assert all(r["hit"] is True for r in reading["signals"]["cache_spaced"]["replays"])
     # 3 brackets x (pre + count check + 2 registration polls) under lag_reads = 2
     assert len(reads(fake_cli)) == 12
 
@@ -396,27 +410,26 @@ def test_no_cache_measurement_lands_at_the_s0_floor(tmp_path, fake_cli):
     code, out, err = calibrate_cli(tmp_path, "--model", MODEL)
     assert code == 0, out or err
     doc = summary(tmp_path)
-    lectura = doc["readings"][MODEL]
-    assert lectura["cache_exists"] == "no" and lectura["conclusive"] is True
-    assert lectura["hit_rate"] == 0.0
-    assert lectura["persistence"] == "none observed"
+    reading = doc["readings"][MODEL]
+    assert reading["cache_exists"] == "no" and reading["conclusive"] is True
+    assert reading["hit_rate"] == 0.0
+    assert reading["persistence"] == "none observed"
     # every request bills the same: the signal is the raw deltas' exact float,
     # its residue (the fake's last-bit chain) far under the 2-tick floor
     batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")
-    por_ventana_b = {b["workload"]: b for b in batches}
+    per_window_b = {b["workload"]: b for b in batches}
     assert (
-        lectura["rule"]["dp_signal_ticks"]
+        reading["rule"]["dp_signal_ticks"]
         == (
-            por_ventana_b["cache_cold"]["dpp_weekly"]
-            - por_ventana_b["cache_intra"]["dpp_weekly"] / 4
+            per_window_b["cache_cold"]["dpp_weekly"] - per_window_b["cache_intra"]["dpp_weekly"] / 4
         )
         / 0.1
     )
-    assert lectura["rule"]["dp_signal_ticks"] <= 2.0
+    assert reading["rule"]["dp_signal_ticks"] <= 2.0
     assert doc["unmaterialized_paper_discounts"] == [MODEL]
-    resueltos = resolve_s(doc, doc["models"], default_s=0.5)
-    assert resueltos[MODEL].s == 0.0 and resueltos[MODEL].source == "measured"
-    assert "S0 floor" in resueltos[MODEL].note
+    resolved = resolve_s(doc, doc["models"], default_s=0.5)
+    assert resolved[MODEL].s == 0.0 and resolved[MODEL].source == "measured"
+    assert "S0 floor" in resolved[MODEL].note
 
 
 def test_horizon_expiry_shows_the_persistence_bucket(tmp_path, fake_cli):
@@ -435,11 +448,11 @@ def test_horizon_expiry_shows_the_persistence_bucket(tmp_path, fake_cli):
     espaciadas = [r for r in requests if r["workload"] == "cache_spaced"]
     assert [r["tok_cached"] > 0 for r in espaciadas] == [True, True, False]
     doc = summary(tmp_path)
-    lectura = doc["readings"][MODEL]
-    assert lectura["persistence"].startswith("between ") and lectura["persistence"].endswith(" s")
-    primera, ultima = lectura["persistence"][len("between ") : -len(" s")].split(" and ")
+    reading = doc["readings"][MODEL]
+    assert reading["persistence"].startswith("between ") and reading["persistence"].endswith(" s")
+    primera, ultima = reading["persistence"][len("between ") : -len(" s")].split(" and ")
     assert float(primera) < float(ultima)
-    assert lectura["conclusive"] is True and lectura["cache_exists"] == "yes"
+    assert reading["conclusive"] is True and reading["cache_exists"] == "yes"
 
 
 def test_inconclusive_when_the_meter_cannot_resolve_the_discount(tmp_path, fake_cli):
@@ -455,14 +468,14 @@ def test_inconclusive_when_the_meter_cannot_resolve_the_discount(tmp_path, fake_
     code, out, err = calibrate_cli(tmp_path, "--model", MODEL)
     assert code == 0, out or err
     doc = summary(tmp_path)
-    lectura = doc["readings"][MODEL]
-    assert lectura["cache_exists"] == "yes"  # token evidence exists
-    assert lectura["conclusive"] is False and lectura["hit_rate"] is None
-    assert lectura["rule"]["dp_signal_ticks"] <= 2.0
-    resueltos = resolve_s(doc, doc["models"], default_s=0.5)
-    assert resueltos[MODEL].s == 0.5 and resueltos[MODEL].source == "assumed"
-    assert resueltos[MODEL].conclusive is False
-    assert "inconclusive" in resueltos[MODEL].note and "marked" in resueltos[MODEL].note
+    reading = doc["readings"][MODEL]
+    assert reading["cache_exists"] == "yes"  # token evidence exists
+    assert reading["conclusive"] is False and reading["hit_rate"] is None
+    assert reading["rule"]["dp_signal_ticks"] <= 2.0
+    resolved = resolve_s(doc, doc["models"], default_s=0.5)
+    assert resolved[MODEL].s == 0.5 and resolved[MODEL].source == "assumed"
+    assert resolved[MODEL].conclusive is False
+    assert "inconclusive" in resolved[MODEL].note and "marked" in resolved[MODEL].note
 
 
 def test_no_hit_field_world_reads_the_prompt_eval_drop(tmp_path, fake_cli):
@@ -482,10 +495,10 @@ def test_no_hit_field_world_reads_the_prompt_eval_drop(tmp_path, fake_cli):
     tibias = [r for r in requests if r["workload"] != "cache_cold"]
     assert all(r["tok_in"] == 6 for r in tibias) and all(r["tok_cached"] is None for r in tibias)
     doc = summary(tmp_path)
-    lectura = doc["readings"][MODEL]
-    assert lectura["cache_exists"] == "yes" and lectura["conclusive"] is True
-    assert abs(lectura["hit_rate"] - 20 / 26) < 1e-3  # 1 - 6/26, from the drop alone
-    assert lectura["hit_rate_basis"] == "prompt-eval drop"
+    reading = doc["readings"][MODEL]
+    assert reading["cache_exists"] == "yes" and reading["conclusive"] is True
+    assert abs(reading["hit_rate"] - 20 / 26) < 1e-3  # 1 - 6/26, from the drop alone
+    assert reading["hit_rate_basis"] == "prompt-eval drop"
 
 
 def test_resolve_s_keeps_the_assumption_for_a_model_never_calibrated(tmp_path, fake_cli):
@@ -493,11 +506,11 @@ def test_resolve_s_keeps_the_assumption_for_a_model_never_calibrated(tmp_path, f
     prepare(tmp_path)
     assert calibrate_cli(tmp_path, "--model", MODEL)[0] == 0
     doc = summary(tmp_path)
-    resueltos = resolve_s(doc, [MODEL, "kimi-k3"], default_s=0.5)
-    assert resueltos[MODEL].source == "measured"
-    assert resueltos["kimi-k3"].s == 0.5 and resueltos["kimi-k3"].source == "assumed"
-    assert "no calibration data" in resueltos["kimi-k3"].note
-    assert resueltos["kimi-k3"].conclusive is False
+    resolved = resolve_s(doc, [MODEL, "kimi-k3"], default_s=0.5)
+    assert resolved[MODEL].source == "measured"
+    assert resolved["kimi-k3"].s == 0.5 and resolved["kimi-k3"].source == "assumed"
+    assert "no calibration data" in resolved["kimi-k3"].note
+    assert resolved["kimi-k3"].conclusive is False
 
 
 def test_second_invocation_extends_the_doc_and_skips_calibrated_models(tmp_path, fake_cli):
@@ -526,12 +539,12 @@ def test_unscripted_world_is_unknown_never_a_false_no(tmp_path, fake_cli):
     code, out, err = calibrate_cli(tmp_path, "--model", MODEL)
     assert code == 0, out or err
     doc = summary(tmp_path)
-    lectura = doc["readings"][MODEL]
-    assert lectura["cache_exists"] == "unknown" and lectura["conclusive"] is False
-    assert lectura["hit_rate"] is None and lectura["persistence"] is None
+    reading = doc["readings"][MODEL]
+    assert reading["cache_exists"] == "unknown" and reading["conclusive"] is False
+    assert reading["hit_rate"] is None and reading["persistence"] is None
     assert doc["unmaterialized_paper_discounts"] == []  # unknown is not "no"
-    resueltos = resolve_s(doc, doc["models"], default_s=0.5)
-    assert resueltos[MODEL].s == 0.5 and resueltos[MODEL].source == "assumed"
+    resolved = resolve_s(doc, doc["models"], default_s=0.5)
+    assert resolved[MODEL].s == 0.5 and resolved[MODEL].source == "assumed"
 
 
 def test_resume_skips_an_in_flight_bracket_never_retries(tmp_path, fake_cli):
@@ -539,11 +552,11 @@ def test_resume_skips_an_in_flight_bracket_never_retries(tmp_path, fake_cli):
     prepare(tmp_path)
     assert calibrate_cli(tmp_path, "--model", MODEL)[0] == 0
     antes = len(chats(fake_cli))
-    ruta = pathlib.Path(tmp_path, "runs", "manifest-T2-cache.json")
-    manifiesto = json.loads(ruta.read_text(encoding="utf-8"))
-    victima = next(iter(manifiesto["batches"]))
-    manifiesto["batches"][victima]["status"] = "in_flight"  # a crash mid-bracket
-    ruta.write_text(json.dumps(manifiesto), encoding="utf-8")
+    path = pathlib.Path(tmp_path, "runs", "manifest-T2-cache.json")
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    victima = next(iter(manifest["batches"]))
+    manifest["batches"][victima]["status"] = "in_flight"  # a crash mid-bracket
+    path.write_text(json.dumps(manifest), encoding="utf-8")
     fresh_mark(tmp_path)
     code, out, err = calibrate_cli(tmp_path, "--model", MODEL)
     assert code == 0, out or err
@@ -554,10 +567,10 @@ def test_resume_skips_an_in_flight_bracket_never_retries(tmp_path, fake_cli):
 def test_gap_plan_drift_is_refused(tmp_path, fake_cli):
     prepare(tmp_path)
     assert calibrate_cli(tmp_path, "--model", MODEL)[0] == 0
-    ruta = pathlib.Path(tmp_path, "runs", "manifest-T2-cache.json")
-    manifiesto = json.loads(ruta.read_text(encoding="utf-8"))
-    manifiesto["gap_plan"] = {"targets": [1.0, 2.0, 3.0], "repeats": 4}  # as if changed
-    ruta.write_text(json.dumps(manifiesto), encoding="utf-8")
+    path = pathlib.Path(tmp_path, "runs", "manifest-T2-cache.json")
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["gap_plan"] = {"targets": [1.0, 2.0, 3.0], "repeats": 4}  # as if changed
+    path.write_text(json.dumps(manifest), encoding="utf-8")
     fresh_mark(tmp_path)
     antes = len(chats(fake_cli))
     code, _out, err = calibrate_cli(tmp_path, "--model", MODEL)
@@ -575,9 +588,9 @@ def test_raw_lines_honor_the_schemas_and_leak_no_key(tmp_path, fake_cli):
         validate_batch_line(b)
     doc = summary(tmp_path)
     assert doc["protocol_version"] and doc["table_version"] == "2026-08-31"
-    for carpeta in ("runs", "batches"):
-        for ruta in pathlib.Path(tmp_path, carpeta).iterdir():
-            assert "test-key" not in ruta.read_text(encoding="utf-8"), ruta.name
+    for folder in ("runs", "batches"):
+        for path in pathlib.Path(tmp_path, folder).iterdir():
+            assert "test-key" not in path.read_text(encoding="utf-8"), path.name
 
 
 def test_status_shows_the_calibration_run(tmp_path, fake_cli):
@@ -605,10 +618,10 @@ def test_meter_failure_mid_calibration_keeps_the_billed_evidence(tmp_path, fake_
     assert len(requests) == 5  # the cold + intra brackets' billed evidence, kept
     batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")
     assert [b["workload"] for b in batches] == ["cache_cold", "cache_intra"]
-    manifiesto = json.loads(
+    manifest = json.loads(
         pathlib.Path(tmp_path, "runs", "manifest-T2-cache.json").read_text(encoding="utf-8")
     )
-    assert [e["status"] for e in manifiesto["batches"].values()].count("done") == 2
+    assert [e["status"] for e in manifest["batches"].values()].count("done") == 2
 
 
 def test_human_report_renders_an_incomplete_reading(tmp_path, fake_cli):
@@ -627,10 +640,10 @@ def test_human_report_renders_an_incomplete_reading(tmp_path, fake_cli):
     assert code == 0, out or err
     assert "persistence unknown" in out and "76.9%" in out
     doc = summary(tmp_path)
-    lectura = doc["readings"][MODEL]
-    assert lectura["cache_exists"] == "yes" and lectura["conclusive"] is True
-    assert lectura["persistence"] is None  # the missing bracket loses only the horizon
-    assert "cache_spaced bracket never closed" in lectura["notes"]
+    reading = doc["readings"][MODEL]
+    assert reading["cache_exists"] == "yes" and reading["conclusive"] is True
+    assert reading["persistence"] is None  # the missing bracket loses only the horizon
+    assert "cache_spaced bracket never closed" in reading["notes"]
 
 
 def test_the_calibration_is_exempt_from_the_cache_free_lane(tmp_path, fake_cli):
@@ -644,11 +657,11 @@ def test_the_calibration_is_exempt_from_the_cache_free_lane(tmp_path, fake_cli):
     assert all(r["nonce_sha256"] is None for r in requests)  # the replays stay plain
     assert all(r["prompt_sha256"] for r in requests)  # what was billed is still pinned
     assert not list((tmp_path / "runs").glob("canary-*.jsonl"))  # no canary: not a measured run
-    manifiesto = json.loads(
+    manifest = json.loads(
         pathlib.Path(tmp_path, "runs", "manifest-T2-cache.json").read_text(encoding="utf-8")
     )
-    assert "lane" not in manifiesto  # the workstream's manifest carries no lane spec
-    assert "canary" not in manifiesto
+    assert "lane" not in manifest  # the workstream's manifest carries no lane spec
+    assert "canary" not in manifest
     # The registration settle is stamped on the calibration's brackets too.
     batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")
     assert all(b["settle_mode"] == "registration" and b["settle_exit"] == "stable" for b in batches)

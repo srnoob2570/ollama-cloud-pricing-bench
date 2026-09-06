@@ -60,25 +60,25 @@ def fetch_document(
         raise PullError(f"pricing fetch for {url} returned invalid JSON: {e}") from None
 
 
-def _rate(nombre: str, t, contexto: str) -> None:
+def _rate(name: str, t, contexto: str) -> None:
     """Validates one rate entry: numbers only, non-negative, no inverted cache."""
     if not isinstance(t, dict):
-        raise PullError(f"{contexto}: rate for {nombre!r} is not an object")
-    for campo in ("input", "output"):
-        if not isinstance(t.get(campo), (int, float)) or isinstance(t.get(campo), bool):
-            raise PullError(f"{contexto}: rate for {nombre!r} is missing numeric {campo!r}")
-        if t[campo] < 0:
-            raise PullError(f"{contexto}: negative {campo!r} for {nombre!r}")
+        raise PullError(f"{contexto}: rate for {name!r} is not an object")
+    for field in ("input", "output"):
+        if not isinstance(t.get(field), (int, float)) or isinstance(t.get(field), bool):
+            raise PullError(f"{contexto}: rate for {name!r} is missing numeric {field!r}")
+        if t[field] < 0:
+            raise PullError(f"{contexto}: negative {field!r} for {name!r}")
     cacheada = t.get("cache_read")
     if cacheada is None:
         return  # no published cache discount; the snapshot prices cached_input = input
     if not isinstance(cacheada, (int, float)) or isinstance(cacheada, bool):
-        raise PullError(f"{contexto}: non-numeric cache_read for {nombre!r}")
+        raise PullError(f"{contexto}: non-numeric cache_read for {name!r}")
     if cacheada < 0:
-        raise PullError(f"{contexto}: negative cache_read for {nombre!r}")
+        raise PullError(f"{contexto}: negative cache_read for {name!r}")
     if cacheada > t["input"]:
         raise PullError(
-            f"{contexto}: {nombre!r} prices cache_read ({cacheada}) "
+            f"{contexto}: {name!r} prices cache_read ({cacheada}) "
             f"ABOVE input ({t['input']}) - a data error, not a discount"
         )
 
@@ -90,17 +90,17 @@ def validate_document(doc) -> None:
     for key in ("generated_at", "models", "source"):
         if key not in doc:
             raise PullError(f"upstream pricing is missing {key!r}")
-    modelos = doc["models"]
-    if not isinstance(modelos, dict) or not modelos:
+    models = doc["models"]
+    if not isinstance(models, dict) or not models:
         raise PullError("upstream pricing has an empty or invalid `models`")
-    for nombre, t in modelos.items():
-        _rate(nombre, t, contexto="models")
+    for name, t in models.items():
+        _rate(name, t, contexto="models")
     pico = doc.get("x_ollama")
     if isinstance(pico, dict) and "models" in pico:
         if not isinstance(pico.get("peak_window"), str):
             raise PullError("x_ollama.peak_window is missing or not a string")
-        for nombre, t in pico["models"].items():
-            _rate(nombre, t, contexto="x_ollama.models")
+        for name, t in pico["models"].items():
+            _rate(name, t, contexto="x_ollama.models")
 
 
 def table_version(doc: dict) -> str:
@@ -119,25 +119,25 @@ def map_models(doc: dict) -> tuple[dict[str, dict[str, float]], list[str]]:
     at input (the same shape the 2026-08-31 snapshot carries for those
     models), surfaced as a note so the diff shows it, never hides it.
     """
-    modelos: dict[str, dict[str, float]] = {}
-    notas: list[str] = []
+    models: dict[str, dict[str, float]] = {}
+    notes: list[str] = []
     for catalogo_id, t in doc["models"].items():
-        modelo = ALIASES[catalogo_id] if catalogo_id in ALIASES else catalogo_id
-        if modelo in modelos:
+        model = ALIASES[catalogo_id] if catalogo_id in ALIASES else catalogo_id
+        if model in models:
             raise PullError(
-                f"alias collapse: {catalogo_id!r} renames onto {modelo!r}, already present"
+                f"alias collapse: {catalogo_id!r} renames onto {model!r}, already present"
             )
-        entrada = float(t["input"])
+        input = float(t["input"])
         cacheada = t.get("cache_read")
         if cacheada is None:
-            cacheada = entrada
-            notas.append(f"{modelo}: no cache_read upstream; cached_input = input (no discount)")
-        modelos[modelo] = {
-            "input": entrada,
+            cacheada = input
+            notes.append(f"{model}: no cache_read upstream; cached_input = input (no discount)")
+        models[model] = {
+            "input": input,
             "cached_input": float(cacheada),
             "output": float(t["output"]),
         }
-    return modelos, notas
+    return models, notes
 
 
 def peak_block(doc: dict) -> dict | None:
@@ -152,8 +152,8 @@ def peak_block(doc: dict) -> dict | None:
         return None
     tasas = {}
     for catalogo_id, t in pico["models"].items():
-        modelo = ALIASES[catalogo_id] if catalogo_id in ALIASES else catalogo_id
-        tasas[modelo] = {
+        model = ALIASES[catalogo_id] if catalogo_id in ALIASES else catalogo_id
+        tasas[model] = {
             "input": float(t["input"]),
             "cached_input": float(t.get("cache_read", t["input"])),
             "output": float(t["output"]),
@@ -164,35 +164,33 @@ def peak_block(doc: dict) -> dict | None:
 def build_snapshot(doc: dict, url: str) -> tuple[dict, list[str]]:
     """The local table document: the upstream rates in the harness's shape."""
     version = table_version(doc)
-    modelos, notas = map_models(doc)
+    models, notes = map_models(doc)
     snapshot = {
         "table_version": version,
         "captured": datetime.datetime.now(datetime.timezone.utc).date().isoformat(),
         "source": f"{url} (upstream {doc['source']})",
         "per": 1_000_000,
         "currency": "USD",
-        "models": modelos,
+        "models": models,
     }
     pico = peak_block(doc)
     if pico:
         snapshot["peak"] = pico
-    return snapshot, notas
+    return snapshot, notes
 
 
 def diff(viejos: dict | None, nuevos: dict) -> dict:
     """The rate-by-rate change the owner reviews: added / removed / updated."""
     viejos = viejos or {}
     cambios: dict = {"added": [], "removed": [], "updated": []}
-    for modelo in sorted(nuevos):
-        if modelo not in viejos:
-            cambios["added"].append(modelo)
-        elif viejos[modelo] != nuevos[modelo]:
-            cambios["updated"].append(
-                {"model": modelo, "old": viejos[modelo], "new": nuevos[modelo]}
-            )
-    for modelo in sorted(viejos):
-        if modelo not in nuevos:
-            cambios["removed"].append(modelo)
+    for model in sorted(nuevos):
+        if model not in viejos:
+            cambios["added"].append(model)
+        elif viejos[model] != nuevos[model]:
+            cambios["updated"].append({"model": model, "old": viejos[model], "new": nuevos[model]})
+    for model in sorted(viejos):
+        if model not in nuevos:
+            cambios["removed"].append(model)
     return cambios
 
 
@@ -210,14 +208,14 @@ def pull(
     actually move. A target file that exists with different content is
     refused: tables are immutable once landed.
     """
-    directorio = pathlib.Path(pricing_dir)
+    directory = pathlib.Path(pricing_dir)
     doc = fetch_document(url, transport=transport)
     validate_document(doc)
-    snapshot, notas = build_snapshot(doc, url)
+    snapshot, notes = build_snapshot(doc, url)
     version = snapshot["table_version"]
-    objetivo = directorio / f"{version}.json"
+    objetivo = directory / f"{version}.json"
 
-    existentes = sorted(directorio.glob("*.json")) if directorio.exists() else []
+    existentes = sorted(directory.glob("*.json")) if directory.exists() else []
     previos: dict | None = None
     if existentes:
         previos = json.loads(existentes[-1].read_text(encoding="utf-8")).get("models") or {}
@@ -228,7 +226,7 @@ def pull(
         "generated_at": doc["generated_at"],
         "source_url": url,
         "models": len(snapshot["models"]),
-        "notes": notas,
+        "notes": notes,
         "latest": existentes[-1].name if existentes else None,
         "changes": cambios,
     }
@@ -243,7 +241,7 @@ def pull(
     if check:
         informe.update(up_to_date=False, wrote=False, path=None)
         return informe
-    directorio.mkdir(parents=True, exist_ok=True)
+    directory.mkdir(parents=True, exist_ok=True)
     objetivo.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     informe.update(up_to_date=False, wrote=True, path=str(objetivo))
     return informe

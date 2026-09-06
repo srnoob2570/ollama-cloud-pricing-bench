@@ -47,8 +47,8 @@ def _base(args: argparse.Namespace) -> pathlib.Path:
 
 def _pricing_dir(args: argparse.Namespace) -> pathlib.Path:
     """`--pricing-dir` resolves against `--base` when relative."""
-    ruta = pathlib.Path(args.pricing_dir)
-    return ruta if ruta.is_absolute() else _base(args) / ruta
+    path = pathlib.Path(args.pricing_dir)
+    return path if path.is_absolute() else _base(args) / path
 
 
 def _emit(msg: str) -> None:
@@ -93,21 +93,19 @@ def _model_list(args: argparse.Namespace) -> list[str] | None:
     return list(dict.fromkeys(args.model))
 
 
-def _slate_error(args: argparse.Namespace, tabla: PriceTable) -> str | None:
+def _slate_error(args: argparse.Namespace, table: PriceTable) -> str | None:
     """Every requested --model must be in the level's slate (the list replaces the
     slate, never adds outside it); error message or None."""
     if not args.model:
         return None
-    modelos = workloads.slate(args.level, tabla)
-    fuera = [m for m in dict.fromkeys(args.model) if m not in modelos]
+    models = workloads.slate(args.level, table)
+    fuera = [m for m in dict.fromkeys(args.model) if m not in models]
     if fuera:
-        return (
-            f"--model {', '.join(fuera)} is not in the {args.level} slate ({len(modelos)} models)"
-        )
+        return f"--model {', '.join(fuera)} is not in the {args.level} slate ({len(models)} models)"
     return None
 
 
-def _validate_run(args: argparse.Namespace, tabla: PriceTable) -> str | None:
+def _validate_run(args: argparse.Namespace, table: PriceTable) -> str | None:
     """Validates the run's parameters against the level's slate; error message or None."""
     if args.k < 1:
         return f"--k must be >= 1; got {args.k!r}"
@@ -127,7 +125,7 @@ def _validate_run(args: argparse.Namespace, tabla: PriceTable) -> str | None:
             "every rep of a cell into one bracket (the strong four per-cell, the weak "
             "trio pooled per model) - run the full density (drop --rep)"
         )
-    return _slate_error(args, tabla)
+    return _slate_error(args, table)
 
 
 def cmd_dry_run(args: argparse.Namespace) -> int:
@@ -139,41 +137,41 @@ def cmd_dry_run(args: argparse.Namespace) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 2
     try:
-        tabla = PriceTable.load(_pricing_dir(args), args.table_version)
+        table = PriceTable.load(_pricing_dir(args), args.table_version)
     except TableError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
-    error = _slate_error(args, tabla)
+    error = _slate_error(args, table)
     if error:
         print(f"error: {error}", file=sys.stderr)
         return 2
-    modelos = _model_list(args)
+    models = _model_list(args)
     try:
-        filas = cost.budget(args.level, tabla, reps=args.reps, s=args.s, models=modelos)
+        rows = cost.budget(args.level, table, reps=args.reps, s=args.s, models=models)
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     estimado = {
-        "table_version": tabla.table_version,
+        "table_version": table.table_version,
         "level": args.level,
         "reps": args.reps,
         "s": args.s,
         # The resolved approved set (the gate's subset check compares against
         # it): a narrowed request recorded as the full slate would authorize
         # models the operator never priced.
-        "models": modelos if modelos is not None else workloads.slate(args.level, tabla),
-        "rows": [dataclasses.asdict(f) for f in filas],
+        "models": models if models is not None else workloads.slate(args.level, table),
+        "rows": [dataclasses.asdict(f) for f in rows],
         "canary": cost.canary_estimate(),
     }
     if args.json:
         print(json.dumps(estimado, ensure_ascii=False, indent=2))
     else:
-        print(f"table_version={tabla.table_version} level={args.level} S1 hit-rate={args.s}")
+        print(f"table_version={table.table_version} level={args.level} S1 hit-rate={args.s}")
         print(
             f"{'workload':<20}{'models':>8}{'reps':>6}{'requests':>10}"
             f"{'tok_in':>11}{'tok_out':>9}{'nonce':>8}{'$ S0':>9}{'$ S1':>9}{'pp':>9}"
         )
-        for f in filas:
+        for f in rows:
             pp = "unmeasured" if f.pp_expected is None else f"{f.pp_expected:.4f}"
             print(
                 f"{f.workload:<20}{f.models:>8}{f.reps:>8}{f.requests:>10,}"
@@ -182,15 +180,15 @@ def cmd_dry_run(args: argparse.Namespace) -> int:
             )
         print(
             f"{'TOTAL ' + args.level:<20}{'':>8}{'':>8}"
-            f"{sum(f.requests for f in filas):>10,}"
-            f"{sum(f.tokens_in for f in filas):>10,}{sum(f.tokens_out for f in filas):>9,}"
-            f"{sum(f.nonce_tokens for f in filas):>8,}"
-            f"{sum(f.cost_s0 for f in filas):>10.4f}{sum(f.cost_s1 for f in filas):>9.4f}"
+            f"{sum(f.requests for f in rows):>10,}"
+            f"{sum(f.tokens_in for f in rows):>10,}{sum(f.tokens_out for f in rows):>9,}"
+            f"{sum(f.nonce_tokens for f in rows):>8,}"
+            f"{sum(f.cost_s0 for f in rows):>10.4f}{sum(f.cost_s1 for f in rows):>9.4f}"
         )
-        canario = estimado["canary"]
+        canary = estimado["canary"]
         print(
-            f"billing canary (once per run): ~{canario['requests']} requests, "
-            f"~{canario['tokens_estimate']:,} tokens - the cache-free lane's gate check"
+            f"billing canary (once per run): ~{canary['requests']} requests, "
+            f"~{canary['tokens_estimate']:,} tokens - the cache-free lane's gate check"
         )
     gate.mark_dry_run(_base(args), args.level, estimado)
     return 0
@@ -221,12 +219,12 @@ def _catalog_kwargs(catalogo: preflight.CatalogReport) -> dict:
 
 
 def _spend_command(
-    args: argparse.Namespace, *, nivel: str, slate_ids: list[str], tabla: PriceTable, run
+    args: argparse.Namespace, *, level: str, slate_ids: list[str], table: PriceTable, run
 ) -> tuple[int, dict]:
     """The skeleton of the three quota-spending commands: consume the dry-run
     mark (require already passed), preflight the slate against the live
     catalog, run the workstream, and print the parseable JSON tail on success.
-    Returns (exit_code, resumen) — resumen is {} on failure; the caller renders
+    Returns (exit_code, summary) — summary is {} on failure; the caller renders
     its own human report.
 
     The mark is consumed before preflight on purpose: the require->consume
@@ -234,21 +232,21 @@ def _spend_command(
     double the approved spend), and an aborted preflight only costs a fresh
     (free) dry-run.
     """
-    gate.consume(_base(args), nivel)  # one dry-run enables exactly one invocation
+    gate.consume(_base(args), level)  # one dry-run enables exactly one invocation
     try:
-        catalogo = preflight.verify(slate_ids=slate_ids, table_models=tabla.models)
+        catalogo = preflight.verify(slate_ids=slate_ids, table_models=table.models)
     except preflight.PreflightError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1, {}
     _emit(_preflight_line(catalogo))
     try:
-        resumen = run(catalogo)
+        summary = run(catalogo)
     except RunnerError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1, {}
     if args.json:
-        print(json.dumps(resumen, ensure_ascii=False, indent=2))
-    return 0, resumen
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return 0, summary
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -256,16 +254,16 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"error: {args.comando} requires --level", file=sys.stderr)
         return 2
     try:
-        tabla = PriceTable.load(_pricing_dir(args), args.table_version)
-        modelos = _model_list(args) or workloads.slate(args.level, tabla)
+        table = PriceTable.load(_pricing_dir(args), args.table_version)
+        models = _model_list(args) or workloads.slate(args.level, table)
         gate.require_dry_run(
             _base(args),
             args.level,
-            table_version=tabla.table_version,
+            table_version=table.table_version,
             reps=args.reps,
-            models=modelos,
+            models=models,
         )
-        error = _validate_run(args, tabla)
+        error = _validate_run(args, table)
         if error:
             print(f"error: {error}", file=sys.stderr)
             return 2
@@ -277,42 +275,42 @@ def cmd_run(args: argparse.Namespace) -> int:
     # The preflight check covers the models THIS run will bill: --model
     # narrowed the slate, so drift in a model the run never touches must not
     # abort it.
-    codigo, resumen = _spend_command(
+    code, summary = _spend_command(
         args,
-        nivel=args.level,
-        slate_ids=modelos,
-        tabla=tabla,
+        level=args.level,
+        slate_ids=models,
+        table=table,
         run=lambda catalogo: run_level(
             _base(args),
             level=args.level,
             workloads=workloads.WORKLOADS_BY_LEVEL[args.level],
-            models=modelos,
+            models=models,
             reps=args.reps,
             rep_filter=args.rep,
             k=args.k,
             settle_s=args.settle_s,
             settle_poll_s=args.settle_poll_s,
-            table_version=tabla.table_version,
+            table_version=table.table_version,
             **_catalog_kwargs(catalogo),
             emit=_emit,
         ),
     )
-    if codigo:
-        return codigo
+    if code:
+        return code
     if not args.json:
         print(
-            f"{args.comando} {resumen['run_id']}: {resumen['batches_done']}/{resumen['batches_planned']} "
-            f"batches done, {resumen['batches_skipped_done']} skipped, "
-            f"{resumen['batches_in_flight_skipped']} in_flight skipped, "
-            f"{resumen['batches_aborted_skipped']} aborted skipped, "
-            f"{resumen['requests_written']} requests written"
+            f"{args.comando} {summary['run_id']}: {summary['batches_done']}/{summary['batches_planned']} "
+            f"batches done, {summary['batches_skipped_done']} skipped, "
+            f"{summary['batches_in_flight_skipped']} in_flight skipped, "
+            f"{summary['batches_aborted_skipped']} aborted skipped, "
+            f"{summary['requests_written']} requests written"
         )
     return 0
 
 
-def _stub(nombre: str):
+def _stub(name: str):
     def _cmd(args: argparse.Namespace) -> int:
-        print(f"`bench {nombre}` not implemented yet", file=sys.stderr)
+        print(f"`bench {name}` not implemented yet", file=sys.stderr)
         return 3
 
     return _cmd
@@ -350,13 +348,13 @@ def _print_status(doc: dict) -> None:
         for b in doc["batches"]:
             if b["status"] in ("done",):
                 continue
-            carga = b["workload"]
-            if not carga:
+            workload = b["workload"]
+            if not workload:
                 if isinstance(b.get("pool"), list):
-                    carga = "pool[" + "+".join(b["pool"]) + "]"
+                    workload = "pool[" + "+".join(b["pool"]) + "]"
                 else:
-                    carga = "?"
-            coordenada = f"{carga}/{b['model'] or '?'}"
+                    workload = "?"
+            coordenada = f"{workload}/{b['model'] or '?'}"
             if b.get("rep"):
                 coordenada += f" rep{b['rep']}"
             print(f"    {b['status']}: {coordenada} [{str(b['batch_id'])[:12]}]")
@@ -383,19 +381,19 @@ def cmd_pricing_pull(args: argparse.Namespace) -> int:
         print(f"  diff vs {informe['latest']}:")
     else:
         print("  no local table yet; every model is new:")
-    for modelo in informe["changes"]["added"]:
-        print(f"    + {modelo}")
-    for modelo in informe["changes"]["removed"]:
-        print(f"    - {modelo}")
+    for model in informe["changes"]["added"]:
+        print(f"    + {model}")
+    for model in informe["changes"]["removed"]:
+        print(f"    - {model}")
     for cambio in informe["changes"]["updated"]:
-        viejo, nuevo = cambio["old"], cambio["new"]
+        viejo, newCost = cambio["old"], cambio["new"]
         print(
-            f"    ~ {cambio['model']}: input {viejo['input']}->{nuevo['input']}, "
-            f"cached_input {viejo['cached_input']}->{nuevo['cached_input']}, "
-            f"output {viejo['output']}->{nuevo['output']}"
+            f"    ~ {cambio['model']}: input {viejo['input']}->{newCost['input']}, "
+            f"cached_input {viejo['cached_input']}->{newCost['cached_input']}, "
+            f"output {viejo['output']}->{newCost['output']}"
         )
-    for nota in informe["notes"]:
-        print(f"  note: {nota}")
+    for note in informe["notes"]:
+        print(f"  note: {note}")
     if informe["up_to_date"]:
         print(f"up to date: {informe['latest']} already carries these rates")
         return 0
@@ -410,34 +408,34 @@ def cmd_status(args: argparse.Namespace) -> int:
     """Progress + consumed quota per level, read from the manifests alone."""
     runs_dir = _base(args) / "runs"
     if args.level is not None:
-        niveles = [args.level]
+        levels = [args.level]
     else:
-        niveles = (
+        levels = (
             sorted(
-                ruta.name[len("manifest-") : -len(".json")]
-                for ruta in runs_dir.glob("manifest-*.json")
+                path.name[len("manifest-") : -len(".json")]
+                for path in runs_dir.glob("manifest-*.json")
             )
             if runs_dir.exists()
             else []
         )
-    if not niveles:
+    if not levels:
         print("no run manifests: nothing has run yet", file=sys.stderr)
-    resumen = []
-    for nivel in niveles:
+    summary = []
+    for level in levels:
         try:
-            manifiesto = Manifest.load(runs_dir / f"manifest-{nivel}.json")
+            manifest = Manifest.load(runs_dir / f"manifest-{level}.json")
         except RunnerError as e:
             print(f"error: {e}", file=sys.stderr)
             return 1
-        if manifiesto is None:
+        if manifest is None:
             # stderr: stdout carries only the report, so --json stays parseable
-            print(f"{nivel}: no run manifest - nothing has run for this level", file=sys.stderr)
+            print(f"{level}: no run manifest - nothing has run for this level", file=sys.stderr)
             continue
-        resumen.append(status_doc(nivel, manifiesto))
+        summary.append(status_doc(level, manifest))
     if args.json:
-        print(json.dumps({"levels": resumen}, ensure_ascii=False, indent=2))
+        print(json.dumps({"levels": summary}, ensure_ascii=False, indent=2))
     else:
-        for i, doc in enumerate(resumen):
+        for i, doc in enumerate(summary):
             if i:
                 print()
             _print_status(doc)
@@ -456,14 +454,14 @@ def _require_api_key() -> bool:
     return False
 
 
-def _fmt_cost(valor: float | None) -> str:
+def _fmt_cost(value: float | None) -> str:
     """A per-task cost for the human report; the metric is null when unmeasurable."""
-    return "n/a" if valor is None else f"${valor:.6f}"
+    return "n/a" if value is None else f"${value:.6f}"
 
 
-def _fmt(valor: float | None, sufijo: str = "") -> str:
+def _fmt(value: float | None, sufijo: str = "") -> str:
     """A nullable metric for the human report (dpp, wall-clock)."""
-    return "n/a" if valor is None else f"{valor:g}{sufijo}"
+    return "n/a" if value is None else f"{value:g}{sufijo}"
 
 
 def cmd_probe_concurrency(args: argparse.Namespace) -> int:
@@ -487,7 +485,7 @@ def cmd_probe_concurrency(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    modelo = args.model[0]
+    model = args.model[0]
     if not concurrency.PROBE_K_FROM <= args.k_max <= concurrency.PROBE_K_CEILING:
         print(
             f"error: --k-max must be in [{concurrency.PROBE_K_FROM}, "
@@ -500,73 +498,73 @@ def cmd_probe_concurrency(args: argparse.Namespace) -> int:
     if error_settle:
         print(f"error: {error_settle}", file=sys.stderr)
         return 2
-    if not math.isfinite(args.ancla) or args.ancla <= 0:
-        print(f"error: --ancla must be a finite number > 0; got {args.ancla!r}", file=sys.stderr)
+    if not math.isfinite(args.anchor) or args.anchor <= 0:
+        print(f"error: --anchor must be a finite number > 0; got {args.anchor!r}", file=sys.stderr)
         return 2
     try:
-        tabla = PriceTable.load(_pricing_dir(args), args.table_version)
-        if modelo not in tabla.models:
+        table = PriceTable.load(_pricing_dir(args), args.table_version)
+        if model not in table.models:
             print(
-                f"error: --model {modelo!r} is not in the price table "
-                f"{tabla.table_version!r} ({len(tabla.models)} models)",
+                f"error: --model {model!r} is not in the price table "
+                f"{table.table_version!r} ({len(table.models)} models)",
                 file=sys.stderr,
             )
             return 2
-        gate.require_dry_run(_base(args), "T1", table_version=tabla.table_version, models=[modelo])
+        gate.require_dry_run(_base(args), "T1", table_version=table.table_version, models=[model])
     except (TableError, gate.GateClosed) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     if not _require_api_key():
         return 2
 
-    codigo, resumen = _spend_command(
+    code, summary = _spend_command(
         args,
-        nivel="T1",
-        slate_ids=[modelo],
-        tabla=tabla,
+        level="T1",
+        slate_ids=[model],
+        table=table,
         run=lambda catalogo: concurrency.run_probe(
             _base(args),
-            model=modelo,
+            model=model,
             k_max=args.k_max,
             settle_s=args.settle_s,
             settle_poll_s=args.settle_poll_s,
-            ancla=args.ancla,
-            table_version=tabla.table_version,
+            anchor=args.anchor,
+            table_version=table.table_version,
             **_catalog_kwargs(catalogo),
             emit=_emit,
         ),
     )
-    if codigo:
-        return codigo
+    if code:
+        return code
     if args.json:
         return 0
-    corte = resumen["probe"]["cut_off"]
+    corte = summary["probe"]["cut_off"]
     corte_txt = "below the probe floor" if corte is None else str(corte)
     print(
-        f"concurrency run {resumen['run_id']} - models {', '.join(resumen['models']) or '(none)'}, "
-        f"anchor ${resumen['ancla']:g}/mo ({resumen['usd_per_pp']:.6f} USD/pp)"
+        f"concurrency run {summary['run_id']} - models {', '.join(summary['models']) or '(none)'}, "
+        f"anchor ${summary['anchor']:g}/mo ({summary['usd_per_pp']:.6f} USD/pp)"
     )
-    print(f"  cut-off: {corte_txt} - {resumen['probe']['cut_off_note']}")
-    modelo_actual = None
-    for celda in resumen["cells"]:
-        if celda["model"] != modelo_actual:  # the doc covers every model of the run
-            modelo_actual = celda["model"]
-            print(f"  model {modelo_actual}:")
+    print(f"  cut-off: {corte_txt} - {summary['probe']['cut_off_note']}")
+    current_model = None
+    for cell in summary["cells"]:
+        if cell["model"] != current_model:  # the doc covers every model of the run
+            current_model = cell["model"]
+            print(f"  model {current_model}:")
         print(
-            f"    k={celda['k']}"
-            + (" (re-anchored)" if celda["re_anchored"] else "")
-            + f": {celda['completed']}/{celda['n']} completed, "
-            f"dpp_weekly={_fmt(celda['dpp_weekly'], ' pp')}, "
-            f"wall={_fmt(celda['wall_clock_s'], 's')}, "
-            f"{_fmt_cost(celda['cost_per_attempted_task_usd'])}/task attempted"
+            f"    k={cell['k']}"
+            + (" (re-anchored)" if cell["re_anchored"] else "")
+            + f": {cell['completed']}/{cell['n']} completed, "
+            f"dpp_weekly={_fmt(cell['dpp_weekly'], ' pp')}, "
+            f"wall={_fmt(cell['wall_clock_s'], 's')}, "
+            f"{_fmt_cost(cell['cost_per_attempted_task_usd'])}/task attempted"
             + (
-                f", {_fmt_cost(celda['cost_per_completed_task_usd'])}/task completed"
-                if celda["cost_per_completed_task_usd"] is not None
+                f", {_fmt_cost(cell['cost_per_completed_task_usd'])}/task completed"
+                if cell["cost_per_completed_task_usd"] is not None
                 else ""
             )
         )
-        if celda["notes"]:
-            print(f"        {celda['notes']}")
+        if cell["notes"]:
+            print(f"        {cell['notes']}")
     return 0
 
 
@@ -597,76 +595,76 @@ def cmd_calibrate_cache(args: argparse.Namespace) -> int:
         print(f"error: {error_settle}", file=sys.stderr)
         return 2
     try:
-        tabla = PriceTable.load(_pricing_dir(args), args.table_version)
-        slate = workloads.slate("T2", tabla)
-        modelos = _model_list(args) or list(slate)
-        fuera = [m for m in modelos if m not in slate]
+        table = PriceTable.load(_pricing_dir(args), args.table_version)
+        slate = workloads.slate("T2", table)
+        models = _model_list(args) or list(slate)
+        fuera = [m for m in models if m not in slate]
         if fuera:
             print(
                 f"error: --model {', '.join(fuera)} is not in the T2 slate ({len(slate)} models)",
                 file=sys.stderr,
             )
             return 2
-        gate.require_dry_run(_base(args), "T2", table_version=tabla.table_version, models=modelos)
+        gate.require_dry_run(_base(args), "T2", table_version=table.table_version, models=models)
     except (TableError, gate.GateClosed) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     if not _require_api_key():
         return 2
 
-    codigo, resumen = _spend_command(
+    code, summary = _spend_command(
         args,
-        nivel="T2",
-        slate_ids=modelos,
-        tabla=tabla,
+        level="T2",
+        slate_ids=models,
+        table=table,
         run=lambda catalogo: calibration.run_calibration(
             _base(args),
-            models=modelos,
+            models=models,
             spaced_ages=edades,
             settle_s=args.settle_s,
             settle_poll_s=args.settle_poll_s,
-            table_version=tabla.table_version,
-            tabla=tabla,
+            table_version=table.table_version,
+            table=table,
             **_catalog_kwargs(catalogo),
             emit=_emit,
         ),
     )
-    if codigo:
-        return codigo
+    if code:
+        return code
     if args.json:
         return 0
-    lecturas = resumen["readings"]
+    readings = summary["readings"]
     print(
-        f"cache calibration {resumen['run_id']} - models "
-        f"{', '.join(resumen['models']) or '(none)'}, table {resumen['table_version']}"
+        f"cache calibration {summary['run_id']} - models "
+        f"{', '.join(summary['models']) or '(none)'}, table {summary['table_version']}"
     )
-    for modelo in resumen["models"]:
-        a = lecturas[modelo]
+    for model in summary["models"]:
+        a = readings[model]
         tasa = "n/a" if a["hit_rate"] is None else f"{a['hit_rate'] * 100:.1f}%"
         base_est = f" ({a['hit_rate_basis']})" if a["hit_rate_basis"] else ""
         descuento = a["paper_discount"]
         declarado = "declared" if descuento["declared"] else "none in the table"
         if descuento["materialized"] is None:
-            materializado = "unknown"
+            materialized = "unknown"
         else:
-            materializado = "materialized" if descuento["materialized"] else "NOT materialized"
+            materialized = "materialized" if descuento["materialized"] else "NOT materialized"
         print(
-            f"  {modelo}: cache {a['cache_exists']}, persistence "
+            f"  {model}: cache {a['cache_exists']}, persistence "
             f"{a['persistence'] or 'unknown'}, hit rate {tasa}{base_est}, "
             f"{'conclusive' if a['conclusive'] else 'inconclusive'} - "
-            f"paper discount {declarado}, {materializado}"
+            f"paper discount {declarado}, {materialized}"
         )
-    if resumen["unmaterialized_paper_discounts"]:
+    if summary["unmaterialized_paper_discounts"]:
         print(
             "  unmaterialized paper discounts: "
-            + ", ".join(resumen["unmaterialized_paper_discounts"])
+            + ", ".join(summary["unmaterialized_paper_discounts"])
         )
     return 0
 
 
-def _pct(valor: float | None) -> str:
+def _pct(value: float | None) -> str:
     """A MAPE for the human report (a ratio rendered as a percentage)."""
-    return "n/a" if valor is None else f"{valor * 100:.1f}%"
+    return "n/a" if value is None else f"{value * 100:.1f}%"
 
 
 def _ci_pct(ci: list | None) -> str:
@@ -675,7 +673,7 @@ def _ci_pct(ci: list | None) -> str:
     return f"[{_pct(ci[0])} - {_pct(ci[1])}]"
 
 
-def _print_predict_report(doc: dict, ruta: pathlib.Path) -> int:
+def _print_predict_report(doc: dict, path: pathlib.Path) -> int:
     """The report's human summary: the two phases' comparative verdicts + findings."""
     print(
         f"predictability report (table {doc['table_version']}): "
@@ -686,13 +684,13 @@ def _print_predict_report(doc: dict, ruta: pathlib.Path) -> int:
         if agregado is None:
             print(f"  {fase}: no estimates recorded")
             continue
-        legado, nuevo = agregado["mape_legacy"], agregado["mape_new"]
+        legado, newCost = agregado["mape_legacy"], agregado["mape_new"]
         print(
             f"  {fase}: MAPE legacy {_pct(legado['mape'] if legado else None)} "
             f"{_ci_pct(legado['ci'] if legado else None)} | "
-            f"MAPE new {_pct(nuevo['mape'] if nuevo else None)} "
-            f"{_ci_pct(nuevo['ci'] if nuevo else None)} "
-            f"({nuevo['cells'] if nuevo else 0} cells)"
+            f"MAPE new {_pct(newCost['mape'] if newCost else None)} "
+            f"{_ci_pct(newCost['ci'] if newCost else None)} "
+            f"({newCost['cells'] if newCost else 0} cells)"
         )
         print(
             f"    paired delta (legacy - new): {_pct(agregado['delta_mape'])} "
@@ -720,36 +718,36 @@ def _print_predict_report(doc: dict, ruta: pathlib.Path) -> int:
             "  estimates outside the current grid (retired scope, counted nowhere): "
             + "; ".join(hallazgos["off_grid_estimates"])
         )
-    print(f"  report: {ruta}")
+    print(f"  report: {path}")
     return 0
 
 
-def _predict_report(args: argparse.Namespace, tabla: PriceTable) -> int:
+def _predict_report(args: argparse.Namespace, table: PriceTable) -> int:
     try:
-        doc = predict.build_report(_base(args), tabla=tabla)
+        doc = predict.build_report(_base(args), table=table)
     except (predict.PredictError, analyze.AnalyzeError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
-    ruta = pathlib.Path(_base(args)) / predict.PREDICT_DIR / "report.json"
-    ruta.parent.mkdir(parents=True, exist_ok=True)
-    ruta.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    path = pathlib.Path(_base(args)) / predict.PREDICT_DIR / "report.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
     if args.json:
         print(json.dumps(doc, ensure_ascii=False, indent=2))
         return 0
-    return _print_predict_report(doc, ruta)
+    return _print_predict_report(doc, path)
 
 
-def _predict_record(args: argparse.Namespace, tabla: PriceTable, modelo: str) -> int:
+def _predict_record(args: argparse.Namespace, table: PriceTable, model: str) -> int:
     try:
         linea = predict.record_estimate(
             _base(args),
             phase=args.phase,
             workload=args.workload,
-            model=modelo,
+            model=model,
             estimated_pp=args.pp,
             estimated_usd=args.usd,
             notes=args.notes,
-            tabla=tabla,
+            table=table,
         )
     except predict.PredictError as e:
         print(f"error: {e}", file=sys.stderr)
@@ -758,17 +756,17 @@ def _predict_record(args: argparse.Namespace, tabla: PriceTable, modelo: str) ->
         print(json.dumps(linea, ensure_ascii=False, indent=2))
         return 0
     print(
-        f"locked: {linea['phase']} estimate for {args.workload}/{modelo} - "
+        f"locked: {linea['phase']} estimate for {args.workload}/{model} - "
         f"{linea['estimated_pp']:g} pp weekly, ${linea['estimated_usd']:g} credits "
         f"(table {linea['table_version']}, hash {str(linea['hash'])[:12]})"
     )
     return 0
 
 
-def _predict_walkthrough(args: argparse.Namespace, tabla: PriceTable) -> int:
+def _predict_walkthrough(args: argparse.Namespace, table: PriceTable) -> int:
     # The walk-through: the grid's state plus the pending cells' public brief.
     try:
-        doc = predict.plan_doc(_base(args), tabla)
+        doc = predict.plan_doc(_base(args), table)
     except (predict.PredictError, TableError) as e:
         # a table that no longer prices a grid model: clean refusal
         print(f"error: {e}", file=sys.stderr)
@@ -788,11 +786,11 @@ def _predict_walkthrough(args: argparse.Namespace, tabla: PriceTable) -> int:
             "report flags them in findings.off_grid_estimates",
             file=sys.stderr,
         )
-    for fila in doc["cells"]:
-        etiqueta = f"{fila['workload']}/{fila['model']} [{fila['level']}]"
-        if fila["blind"] is None:
-            b = fila["brief"]
-            print(f"  {etiqueta} - PENDING blind: {b['description']}")
+    for row in doc["cells"]:
+        label = f"{row['workload']}/{row['model']} [{row['level']}]"
+        if row["blind"] is None:
+            b = row["brief"]
+            print(f"  {label} - PENDING blind: {b['description']}")
             print(
                 f"      {b['requests_per_run']} requests/run, ~{b['tokens_in_per_request']:,} in / "
                 f"~{b['tokens_out_per_request']:,} out per request"
@@ -803,20 +801,20 @@ def _predict_walkthrough(args: argparse.Namespace, tabla: PriceTable) -> int:
                 + (" (cache discount)" if b["cache_discount"] else " (cached=input)")
             )
             print(
-                f"      estimate: bench predict --phase blind --workload {fila['workload']} "
-                f"--model {fila['model']} --pp <weekly pp> --usd <credits $>"
+                f"      estimate: bench predict --phase blind --workload {row['workload']} "
+                f"--model {row['model']} --pp <weekly pp> --usd <credits $>"
             )
-        elif fila["informed"] is None:
-            c = fila["blind"]
+        elif row["informed"] is None:
+            c = row["blind"]
             print(
-                f"  {etiqueta} - blind locked ({c['estimated_pp']:g} pp, ${c['estimated_usd']:g}); "
+                f"  {label} - blind locked ({c['estimated_pp']:g} pp, ${c['estimated_usd']:g}); "
                 "PENDING informed"
             )
         else:
-            c = fila["informed"]
+            c = row["informed"]
             print(
-                f"  {etiqueta} - done (blind {fila['blind']['estimated_pp']:g} pp / "
-                f"${fila['blind']['estimated_usd']:g}, informed {c['estimated_pp']:g} pp / "
+                f"  {label} - done (blind {row['blind']['estimated_pp']:g} pp / "
+                f"${row['blind']['estimated_usd']:g}, informed {c['estimated_pp']:g} pp / "
                 f"${c['estimated_usd']:g})"
             )
     return 0
@@ -839,12 +837,12 @@ def cmd_predict(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    modelo = args.model[0] if args.model else None
+    model = args.model[0] if args.model else None
     grabando = args.phase is not None
     if args.report and grabando:
         print("error: give either --report or --phase, not both", file=sys.stderr)
         return 2
-    grabadoras = (args.workload, modelo, args.pp, args.usd, args.notes)
+    grabadoras = (args.workload, model, args.pp, args.usd, args.notes)
     if not (args.report or grabando) and any(v not in (None, "") for v in grabadoras):
         print(
             "error: --workload/--model/--pp/--usd/--notes record an estimate; "
@@ -859,7 +857,7 @@ def cmd_predict(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    if grabando and (args.workload is None or modelo is None):
+    if grabando and (args.workload is None or model is None):
         print(
             "error: recording an estimate needs both --workload and --model (the cell)",
             file=sys.stderr,
@@ -873,23 +871,23 @@ def cmd_predict(args: argparse.Namespace) -> int:
         )
         return 2
     try:
-        tabla = PriceTable.load(_pricing_dir(args), args.table_version)
+        table = PriceTable.load(_pricing_dir(args), args.table_version)
     except TableError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     if args.report:
-        return _predict_report(args, tabla)
-    if grabando and modelo is not None:
-        return _predict_record(args, tabla, modelo)
-    return _predict_walkthrough(args, tabla)
+        return _predict_report(args, table)
+    if grabando and model is not None:
+        return _predict_record(args, table, model)
+    return _predict_walkthrough(args, table)
 
 
-def _print_analyze(doc: dict, carpeta: pathlib.Path, etiqueta: str | None = None) -> None:
+def _print_analyze(doc: dict, folder: pathlib.Path, label: str | None = None) -> None:
     """The analyze human report: the baseline params, the verdict census, the bundle."""
     bp = doc["base_params"]
-    encabezado = "analysis" + (f" - {etiqueta}" if etiqueta else "")
+    encabezado = "analysis" + (f" - {label}" if label else "")
     print(
-        f"{encabezado}: table={bp['table_version']} ancla={bp['ancla']:g} "
+        f"{encabezado}: table={bp['table_version']} anchor={bp['anchor']:g} "
         f"({bp['usd_per_pp']:.6f} USD/pp) s={bp['s']} | raw: "
         f"{doc['raw']['request_lines']} requests, {doc['raw']['batch_lines']} batches"
     )
@@ -902,10 +900,10 @@ def _print_analyze(doc: dict, carpeta: pathlib.Path, etiqueta: str | None = None
     )
     if doc["paper_discounts"]:
         print("  unmaterialized paper discounts: " + ", ".join(doc["paper_discounts"]))
-    print(f"  bundle: {carpeta} (analysis.json, dashboard.html, calculator.html)")
+    print(f"  bundle: {folder} (analysis.json, dashboard.html, calculator.html)")
 
 
-def _analyze_release(args: argparse.Namespace, modelo: str | None) -> int:
+def _analyze_release(args: argparse.Namespace, model: str | None) -> int:
     """`analyze --release <tag>`: fetch the dataset release, verify it against
     its metadata's sha256 map, and analyze it with the release's OWN table —
     the raw<->code<->table pairing, consumed. Still offline against the API:
@@ -925,20 +923,20 @@ def _analyze_release(args: argparse.Namespace, modelo: str | None) -> int:
             repo=repo,
             table_version=args.table_version,
             level=args.level,
-            model=modelo,
+            model=model,
         )
-        tabla = releases.release_table(stage)
+        table = releases.release_table(stage)
     except (releases.ReleaseError, TableError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     try:
         doc = analyze.build(
             stage,
-            tabla=tabla,
-            ancla=args.ancla,
+            table=table,
+            anchor=args.anchor,
             s=args.s,
             level=args.level,
-            model=modelo,
+            model=model,
             protocol_version=meta.get("protocol_version"),
             credit_ratio=args.credit_ratio,
         )
@@ -946,14 +944,14 @@ def _analyze_release(args: argparse.Namespace, modelo: str | None) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
     try:
-        carpeta = analyze.write_bundle(stage, doc, tabla=tabla)
+        folder = analyze.write_bundle(stage, doc, table=table)
     except analyze.AnalyzeError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     if args.json:
         print(json.dumps(doc, ensure_ascii=False, indent=2))
         return 0
-    _print_analyze(doc, carpeta, etiqueta=f"release {args.release}")
+    _print_analyze(doc, folder, label=f"release {args.release}")
     return 0
 
 
@@ -975,9 +973,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    modelo = args.model[0] if args.model else None
-    if not math.isfinite(args.ancla) or args.ancla <= 0:
-        print(f"error: --ancla must be a finite number > 0; got {args.ancla!r}", file=sys.stderr)
+    model = args.model[0] if args.model else None
+    if not math.isfinite(args.anchor) or args.anchor <= 0:
+        print(f"error: --anchor must be a finite number > 0; got {args.anchor!r}", file=sys.stderr)
         return 2
     if not math.isfinite(args.credit_ratio) or args.credit_ratio < 1:
         print(
@@ -987,34 +985,34 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         )
         return 2
     if args.release is not None:
-        return _analyze_release(args, modelo)
+        return _analyze_release(args, model)
     try:
-        tabla = PriceTable.load(_pricing_dir(args), args.table_version)
+        table = PriceTable.load(_pricing_dir(args), args.table_version)
     except TableError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     try:
         doc = analyze.build(
             _base(args),
-            tabla=tabla,
-            ancla=args.ancla,
+            table=table,
+            anchor=args.anchor,
             s=args.s,
             level=args.level,
-            model=modelo,
+            model=model,
             credit_ratio=args.credit_ratio,
         )
     except analyze.AnalyzeError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     try:
-        carpeta = analyze.write_bundle(_base(args), doc, tabla=tabla)
+        folder = analyze.write_bundle(_base(args), doc, table=table)
     except analyze.AnalyzeError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     if args.json:
         print(json.dumps(doc, ensure_ascii=False, indent=2))
         return 0
-    _print_analyze(doc, carpeta)
+    _print_analyze(doc, folder)
     return 0
 
 
@@ -1070,7 +1068,7 @@ def cmd_dataset(args: argparse.Namespace) -> int:
     try:
         repo = args.repo or releases.infer_repo(base)
         stage, meta = releases.fetch(base, tag=args.release, repo=repo)
-        destino = (
+        dest = (
             pathlib.Path(args.out).resolve()
             if args.out
             else base / releases.RELEASES_DIR / f"export-{meta['run_id']}"
@@ -1083,7 +1081,7 @@ def cmd_dataset(args: argparse.Namespace) -> int:
             "protocol_version": meta.get("protocol_version"),
             "table_version": meta.get("table_version"),
         }
-        escritos = dataset_export.export_dataset(destino, archivos, header=encabezado)
+        escritos = dataset_export.export_dataset(dest, archivos, header=encabezado)
     except (releases.ReleaseError, TableError, dataset_export.ExportError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -1093,7 +1091,7 @@ def cmd_dataset(args: argparse.Namespace) -> int:
                 {
                     "tag": args.release,
                     "repo": repo,
-                    "out": str(destino),
+                    "out": str(dest),
                     "files": [str(p) for _, p in escritos],
                 },
                 ensure_ascii=False,
@@ -1101,9 +1099,9 @@ def cmd_dataset(args: argparse.Namespace) -> int:
             )
         )
         return 0
-    print(f"dataset {args.release} -> {destino}")
-    for _, ruta in escritos:
-        print(f"  {ruta}")
+    print(f"dataset {args.release} -> {dest}")
+    for _, path in escritos:
+        print(f"  {path}")
     return 0
 
 
@@ -1129,20 +1127,20 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="bench", description="Cost benchmark harness for Ollama Cloud")
     p.add_argument("--base", default=".", help="working directory (pricing/, runs/)")
     sub = p.add_subparsers(dest="comando", required=True)
-    for nombre in SUBCOMMANDS:
+    for name in SUBCOMMANDS:
         # allow_abbrev off for the probe: `--k 8` would otherwise prefix-match
         # --k-max and silently raise the probe's spend ceiling instead of erroring
-        parser = sub.add_parser(nombre, allow_abbrev=(nombre != "probe-concurrency"))
-        if nombre == "status":
+        parser = sub.add_parser(name, allow_abbrev=(name != "probe-concurrency"))
+        if name == "status":
             # status also reports the workstreams' manifests (e.g. T1-concurrency):
             # free-form, filtered by manifest file name
             parser.add_argument("--level", default=None)
-        elif nombre == "release":
+        elif name == "release":
             parser.add_argument("--run", required=True, help="the run_id to package and publish")
             parser.add_argument(
                 "--repo", default=None, help="owner/name (default: git remote origin)"
             )
-        elif nombre == "dataset":
+        elif name == "dataset":
             # dataset never tunes a spend or an assumption: it reads a verified
             # release and re-flattens its raw evidence. Knobs: --release, --repo,
             # --out only.
@@ -1160,7 +1158,7 @@ def build_parser() -> argparse.ArgumentParser:
                 default=None,
                 help="output directory (default: releases/export-<run_id> under --base)",
             )
-        elif nombre == "pricing-pull":
+        elif name == "pricing-pull":
             # The pull never tunes a spend or an assumption either: it fetches
             # the published rate card and lands a new snapshot. Knobs: --url
             # (the artifact source) and --check (diff only, nothing written).
@@ -1176,22 +1174,22 @@ def build_parser() -> argparse.ArgumentParser:
             )
         else:
             parser.add_argument("--level", choices=["T1", "T2", "T3"], default=None)
-        if nombre not in ("release", "dataset", "pricing-pull"):  # none touches a model
+        if name not in ("release", "dataset", "pricing-pull"):  # none touches a model
             # 1..N models after the flag (`--model m1 m2 m3`): the list replaces
             # the level's slate, never adds outside it; single consumers keep
             # their exactly-one guard (probe-concurrency, predict, analyze).
             parser.add_argument("--model", nargs="+", default=None)
-        if nombre != "dataset":  # a release pairs its dataset with its own table
+        if name != "dataset":  # a release pairs its dataset with its own table
             parser.add_argument(
                 "--pricing-dir", default="pricing", help="tables directory (relative to --base)"
             )
-        if nombre not in ("release", "dataset", "pricing-pull"):  # the manifest binds the table;
+        if name not in ("release", "dataset", "pricing-pull"):  # the manifest binds the table;
             # a pull derives its own version from the upstream generated_at, never an override
             parser.add_argument("--table-version", default=None)
-        if nombre == "probe-concurrency":
+        if name == "probe-concurrency":
             # The probe reads none of --s/--reps/--rep/--k: a silent no-op flag
             # would read as a tuned cell (--k) or an approved density (--reps)
-            # it ignores. Its knobs are --model, --k-max and --ancla (the anchor
+            # it ignores. Its knobs are --model, --k-max and --anchor (the anchor
             # its cost-per-task verdict divides by); the cell ks are the
             # workstream's own (1, 4, 8), re-anchored to the measured cut-off.
             parser.add_argument(
@@ -1203,9 +1201,9 @@ def build_parser() -> argparse.ArgumentParser:
                     f"hard ceiling {concurrency.PROBE_K_CEILING})"
                 ),
             )
-            parser.add_argument("--ancla", type=float, default=100.0, help="P_LEGADO USD/month")
-        elif nombre == "calibrate-cache":
-            # The calibration reads none of --s/--reps/--rep/--k/--ancla either:
+            parser.add_argument("--anchor", type=float, default=100.0, help="P_LEGADO USD/month")
+        elif name == "calibrate-cache":
+            # The calibration reads none of --s/--reps/--rep/--k/--anchor either:
             # a silent no-op flag would read as a tuned assumption. Its knobs
             # are --model and --spaced-gaps (the replays' offsets), with
             # --settle-s governing the brackets' settle as everywhere else.
@@ -1220,14 +1218,14 @@ def build_parser() -> argparse.ArgumentParser:
                     "(default 5 30 90; the ladder sits above the bracket's settle)"
                 ),
             )
-        elif nombre == "analyze":
-            # analyze's own knobs: --ancla (the anchor its legacy dollars
+        elif name == "analyze":
+            # analyze's own knobs: --anchor (the anchor its legacy dollars
             # divide by), --s (the S1 assumption it extrapolates with) and
             # --credit-ratio (the new plan's per-tier credit multiplier its
             # verdicts re-denominate by). No --reps/--rep/--k: those tune
             # SPENDING, and a silent no-op here would read as a re-measured
             # density instead of a re-priced bundle.
-            parser.add_argument("--ancla", type=float, default=100.0, help="P_LEGADO USD/month")
+            parser.add_argument("--anchor", type=float, default=100.0, help="P_LEGADO USD/month")
             parser.add_argument(
                 "--credit-ratio",
                 type=float,
@@ -1258,10 +1256,10 @@ def build_parser() -> argparse.ArgumentParser:
             parser.add_argument(
                 "--repo", default=None, help="owner/name for --release (default: git remote origin)"
             )
-        elif nombre == "predict":
+        elif name == "predict":
             # predict's own knobs: --phase (the flow's mode), the cell's
             # --workload, the estimate's native units (--pp weekly pp,
-            # --usd credits) and --report. No --ancla: the MAPEs are
+            # --usd credits) and --report. No --anchor: the MAPEs are
             # native-unit by decision, so the anchor never enters them; no
             # --reps/--rep/--k: predict never spends anything.
             parser.add_argument(
@@ -1278,7 +1276,7 @@ def build_parser() -> argparse.ArgumentParser:
             # No --s: the estimates and the comparative MAPE stay anchored to the
             # persisted S0/S1 pair (methodology v1.2) - a custom S(x) never
             # re-anchors them; it enters only through analyze's stamped re-runs.
-        elif nombre in ("dry-run", "run", "resume", "status"):
+        elif name in ("dry-run", "run", "resume", "status"):
             # status reads none of these but accepted them before Harness 10;
             # dropping them would break every script or habit mirroring `run`'s
             # invocation shape (a silent interface change, not a cleanup).
@@ -1293,7 +1291,7 @@ def build_parser() -> argparse.ArgumentParser:
             parser.add_argument("--k", type=int, default=1, help="concurrency of the burst")
         # release takes none of the above: it never tunes a spend or an
         # assumption. Its knobs are --run and --repo only.
-        if nombre not in ("release", "dataset", "pricing-pull"):  # neither reads a settle
+        if name not in ("release", "dataset", "pricing-pull"):  # neither reads a settle
             # (neither brackets, and the pull never registers anything)
             parser.add_argument(
                 "--settle-s",
@@ -1312,7 +1310,7 @@ def build_parser() -> argparse.ArgumentParser:
                 help="the registration loop's poll interval (s)",
             )
         parser.add_argument("--json", action="store_true")
-        parser.set_defaults(func=DESPACHO.get(nombre, _stub(nombre)))
+        parser.set_defaults(func=DESPACHO.get(name, _stub(name)))
     return p
 
 

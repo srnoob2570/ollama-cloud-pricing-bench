@@ -49,10 +49,10 @@ SLATE_T2 = ("glm-5.3-flash", "gpt-oss:20b", "deepseek-v4-flash", "minimax-m3", "
 SLATE_T3 = ("kimi-k2.7-code", "glm-5.3-flash", "deepseek-v4-pro")
 
 
-def slate(level: str, tabla: PriceTable) -> list[str]:
+def slate(level: str, table: PriceTable) -> list[str]:
     """Models carrying the level: T1 = every model in the table; T2/T3 = fixed slates."""
     if level == "T1":
-        return sorted(tabla.models)
+        return sorted(table.models)
     if level == "T2":
         return list(SLATE_T2)
     if level == "T3":

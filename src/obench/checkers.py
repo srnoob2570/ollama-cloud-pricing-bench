@@ -78,18 +78,18 @@ class CheckersError(Exception):
     """A checker could not be applied (fixture drift or an unimplemented workload)."""
 
 
-def _tokens(texto: str) -> list[str]:
+def _tokens(text: str) -> list[str]:
     """Normalized word tokens: casefolded, punctuation stripped, unicode kept
     (Português stays one token instead of mangling into `portugu` + `s`)."""
-    return [t for t in re.split(r"[^\w]+", texto.casefold()) if t]
+    return [t for t in re.split(r"[^\w]+", text.casefold()) if t]
 
 
-def _match_end(secuencia: list[str], patron: list[str], inicio: int) -> int | None:
+def _match_end(secuencia: list[str], pattern: list[str], inicio: int) -> int | None:
     """Index of the LAST token of the first in-order match starting at `inicio`."""
     fin = inicio
-    for esperado in patron[1:]:
+    for expected in pattern[1:]:
         try:
-            fin += 1 + secuencia[fin + 1 :].index(esperado)
+            fin += 1 + secuencia[fin + 1 :].index(expected)
         except ValueError:
             return None
     return fin
@@ -107,12 +107,12 @@ def _negated_around(secuencia: list[str], inicio: int, fin: int) -> bool:
     return any(t in _NEGATIONS for t in antes) or any(t in _NEGATIONS for t in despues)
 
 
-def _match_clean(secuencia: list[str], patron: list[str]) -> bool:
-    """Whether `patron` appears in order somewhere, un-negated at some match."""
+def _match_clean(secuencia: list[str], pattern: list[str]) -> bool:
+    """Whether `pattern` appears in order somewhere, un-negated at some match."""
     for i, token in enumerate(secuencia):
-        if token != patron[0]:
+        if token != pattern[0]:
             continue
-        fin = _match_end(secuencia, patron, i)
+        fin = _match_end(secuencia, pattern, i)
         if fin is not None and not _negated_around(secuencia, i, fin):
             return True
     return False
@@ -129,40 +129,38 @@ def _exact_word_ok(rec: dict) -> bool:
     return _tokens(rec["content"]) == ["ok"]
 
 
-def _band_violation(valor: int, mediana: float) -> bool:
+def _band_violation(value: int, mediana: float) -> bool:
     """The shared 2 % token band: a token report off its siblings' median."""
-    return abs(valor - mediana) > CALIBRATION_BAND * mediana
+    return abs(value - mediana) > CALIBRATION_BAND * mediana
 
 
-def _judge_calibration(_prompt: str, rec: dict, registros: list[dict]) -> bool:
+def _judge_calibration(_prompt: str, rec: dict, records: list[dict]) -> bool:
     if not _exact_word_ok(rec):
         return False
     medianas = {}
-    for done_campo in ("prompt_eval_count", "eval_count"):
-        valores = [
-            r["done"][done_campo]
-            for r in registros
-            if r["done"] and isinstance(r["done"].get(done_campo), int)
+    for done_field in ("prompt_eval_count", "eval_count"):
+        values = [
+            r["done"][done_field]
+            for r in records
+            if r["done"] and isinstance(r["done"].get(done_field), int)
         ]
         # The 2 % band is reproducibility EVIDENCE: with any sibling missing its
         # token report (truncated, failed), the survivor's median is itself and
         # the band is a tautology — the cell has no reproducibility to show.
-        medianas[done_campo] = (
-            statistics.median(valores) if len(valores) == len(registros) else None
-        )
+        medianas[done_field] = statistics.median(values) if len(values) == len(records) else None
     done = rec["done"]
-    for done_campo in ("prompt_eval_count", "eval_count"):
-        valor = done.get(done_campo)
-        mediana = medianas[done_campo]
+    for done_field in ("prompt_eval_count", "eval_count"):
+        value = done.get(done_field)
+        mediana = medianas[done_field]
         # Zero (or missing) token reports grade as broken, never as the reference.
-        if not isinstance(valor, int) or not mediana:
+        if not isinstance(value, int) or not mediana:
             return False
-        if _band_violation(valor, mediana):
+        if _band_violation(value, mediana):
             return False
     return True
 
 
-def _judge_concurrency(_prompt: str, rec: dict, registros: list[dict]) -> bool:
+def _judge_concurrency(_prompt: str, rec: dict, records: list[dict]) -> bool:
     """The concurrency cell's contract: the exact word, plus the token band over
     the siblings that DID report.
 
@@ -175,45 +173,45 @@ def _judge_concurrency(_prompt: str, rec: dict, registros: list[dict]) -> bool:
     """
     if not _exact_word_ok(rec):
         return False
-    for done_campo in ("prompt_eval_count", "eval_count"):
-        valor = rec["done"].get(done_campo) if rec["done"] else None
-        if not isinstance(valor, int) or valor <= 0:
+    for done_field in ("prompt_eval_count", "eval_count"):
+        value = rec["done"].get(done_field) if rec["done"] else None
+        if not isinstance(value, int) or value <= 0:
             return False
         hermanos = [
-            r["done"][done_campo]
-            for r in registros
+            r["done"][done_field]
+            for r in records
             if r is not rec
             and r["done"]
-            and isinstance(r["done"].get(done_campo), int)
-            and r["done"][done_campo] > 0
+            and isinstance(r["done"].get(done_field), int)
+            and r["done"][done_field] > 0
         ]
         if len(hermanos) >= 2:
             mediana = statistics.median(hermanos)
-            if _band_violation(valor, mediana):
+            if _band_violation(value, mediana):
                 return False
     return True
 
 
-def _integers_bounded(contenido: str, digits: int) -> list[int]:
+def _integers_bounded(content: str, digits: int) -> list[int]:
     """The reply's digit runs as ints; runs longer than `digits` are structure
     violations (a degenerate blob cannot carry the contracted list) — never a
     ValueError from Python's int-parsing cap."""
-    return [int(x) for x in re.findall(rf"\d{{1,{digits}}}", contenido)]
+    return [int(x) for x in re.findall(rf"\d{{1,{digits}}}", content)]
 
 
 def _judge_throughput(_prompt: str, rec: dict, _registros: list[dict]) -> bool:
-    contenido = rec["content"]
-    enteros = _integers_bounded(contenido, digits=4)
+    content = rec["content"]
+    enteros = _integers_bounded(content, digits=4)
     # The ordered list must appear complete and contiguous; digits in surrounding
     # prose ("Here are the numbers from 1 to 150:") do not break the structure.
     n = len(_THROUGHPUT_SEQUENCE)
     if not any(enteros[i : i + n] == _THROUGHPUT_SEQUENCE for i in range(len(enteros) - n + 1)):
         return False
-    tokens = _tokens(contenido)
+    tokens = _tokens(content)
     return bool(tokens) and tokens[-1] == "done"
 
 
-def _datum_presente(prompt: str, label: str, campo: str, rec: dict) -> bool:
+def _datum_presente(prompt: str, label: str, field: str, rec: dict) -> bool:
     """Whether the reply attaches the labeled datum to ITS unit.
 
     The value must appear in a sentence that also names the unit: a reply that
@@ -222,136 +220,136 @@ def _datum_presente(prompt: str, label: str, campo: str, rec: dict) -> bool:
     datums = fixtures_t2.register_datums(prompt)  # ValueError -> CheckersError (judge wraps)
     if label not in datums:
         raise CheckersError(f"register task asks about unknown unit [R-{label}]")
-    esperado = datums[label][campo]
-    contenido = rec["content"].casefold()
-    etiqueta = f"r-{label}"
-    for oracion in re.split(r"[.\n]", contenido):
-        if etiqueta in oracion and _match_clean(_tokens(oracion), _tokens(esperado)):
+    expected = datums[label][field]
+    content = rec["content"].casefold()
+    tagged = f"r-{label}"
+    for sentence in re.split(r"[.\n]", content):
+        if tagged in sentence and _match_clean(_tokens(sentence), _tokens(expected)):
             return True
     return False
 
 
 def _judge_register(prompt: str, rec: dict, _registros: list[dict]) -> bool:
     """long_context / ratio_in: every asked datum present, anchored to the prompt."""
-    for label, campo in fixtures_t2.register_asks(prompt):
-        if not _datum_presente(prompt, label, campo, rec):
+    for label, field in fixtures_t2.register_asks(prompt):
+        if not _datum_presente(prompt, label, field, rec):
             return False
     return True
 
 
 def _judge_multi_turn(prompt: str, rec: dict, _registros: list[dict]) -> bool:
-    esperado = fixtures_t2.multi_turn_expected(prompt)  # the code the FINAL turn asks about
-    return _match_clean(_tokens(rec["content"]), _tokens(esperado))
+    expected = fixtures_t2.multi_turn_expected(prompt)  # the code the FINAL turn asks about
+    return _match_clean(_tokens(rec["content"]), _tokens(expected))
 
 
-def _valor_del_tipo(valor, tipo: str) -> bool:
+def _value_of_kind(value, kind: str) -> bool:
     """Type conformance for the scalar JSON types (bool is never a number)."""
-    if tipo == "string":
-        return isinstance(valor, str)
-    if tipo == "boolean":
-        return isinstance(valor, bool)
-    if tipo == "integer":
-        return isinstance(valor, int) and not isinstance(valor, bool)
-    if tipo == "number":
-        return isinstance(valor, (int, float)) and not isinstance(valor, bool)
+    if kind == "string":
+        return isinstance(value, str)
+    if kind == "boolean":
+        return isinstance(value, bool)
+    if kind == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if kind == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
     return False
 
 
-def _args_validos(valor, esquema) -> bool:
+def _args_validos(value, schema) -> bool:
     """JSON-Schema subset: type, enum, required, properties, items, numeric bounds.
 
     Extra (undeclared) keys are tolerated; a required key that is missing or
     null is a violation; a declared-but-unknown type is treated as drift.
     """
-    if not isinstance(esquema, dict) or not esquema:
+    if not isinstance(schema, dict) or not schema:
         return True  # unconstrained
-    tipo = esquema.get("type")
-    if "enum" in esquema:
-        if tipo is not None and not _valor_del_tipo(valor, tipo):
+    kind = schema.get("type")
+    if "enum" in schema:
+        if kind is not None and not _value_of_kind(value, kind):
             return False  # an enum member of the wrong Python type is a violation too
-        return valor in esquema["enum"]
-    if tipo == "object":
-        if not isinstance(valor, dict):
+        return value in schema["enum"]
+    if kind == "object":
+        if not isinstance(value, dict):
             return False
-        for requerido in esquema.get("required", ()):
-            if requerido not in valor or valor[requerido] is None:
+        for requerido in schema.get("required", ()):
+            if requerido not in value or value[requerido] is None:
                 return False
-        for clave, sub in (esquema.get("properties") or {}).items():
-            if clave in valor and not _args_validos(valor[clave], sub):
+        for key, sub in (schema.get("properties") or {}).items():
+            if key in value and not _args_validos(value[key], sub):
                 return False
         return True
-    if tipo == "array":
-        if not isinstance(valor, list):
+    if kind == "array":
+        if not isinstance(value, list):
             return False
-        return all(_args_validos(item, esquema.get("items") or {}) for item in valor)
-    if tipo in ("string", "boolean", "integer", "number"):
-        if not _valor_del_tipo(valor, tipo):
+        return all(_args_validos(item, schema.get("items") or {}) for item in value)
+    if kind in ("string", "boolean", "integer", "number"):
+        if not _value_of_kind(value, kind):
             return False
-        if "minimum" in esquema and valor < esquema["minimum"]:
+        if "minimum" in schema and value < schema["minimum"]:
             return False
-        return not ("maximum" in esquema and valor > esquema["maximum"])
-    return tipo is None  # no declared type: the value is unconstrained
+        return not ("maximum" in schema and value > schema["maximum"])
+    return kind is None  # no declared type: the value is unconstrained
 
 
 def _judge_tool_calling(prompt: str, rec: dict, _registros: list[dict]) -> bool:
-    escenario = fixtures_t2.tool_scenario(prompt)  # ValueError -> CheckersError (judge)
-    esperados = list(escenario["sequence"])
+    scenario = fixtures_t2.tool_scenario(prompt)  # ValueError -> CheckersError (judge)
+    esperados = list(scenario["sequence"])
     llamadas = rec.get("tool_calls") or []
-    nombres = [str(((tc or {}).get("function") or {}).get("name")) for tc in llamadas]
-    if nombres != esperados:
+    names = [str(((tc or {}).get("function") or {}).get("name")) for tc in llamadas]
+    if names != esperados:
         return False  # wrong order, a missing call, an extra call, or prose instead
-    esquemas = {t["function"]["name"]: t["function"]["parameters"] for t in escenario["tools"]}
+    schemas = {t["function"]["name"]: t["function"]["parameters"] for t in scenario["tools"]}
     for tc in llamadas:
-        funcion = (tc or {}).get("function") or {}
-        if not isinstance(funcion.get("arguments"), dict):
+        function = (tc or {}).get("function") or {}
+        if not isinstance(function.get("arguments"), dict):
             return False  # Ollama parses arguments into an object; a string is malformed
-        if not _args_validos(funcion["arguments"], esquemas[funcion["name"]]):
+        if not _args_validos(function["arguments"], schemas[function["name"]]):
             return False
     return True
 
 
 def _judge_long_generation(prompt: str, rec: dict, _registros: list[dict]) -> bool:
     """The complete structure: sections 1..N in order, K items each, contracted tail."""
-    contenido = rec["content"].casefold()
-    seccion = 0
+    content = rec["content"].casefold()
+    section = 0
     items = 0
     # Section/item numbers never exceed two digits: a longer digit run is prose
     # noise (and would overflow Python's int parsing at ~4300 digits).
-    for m in re.finditer(r"section (\d{1,3}):|item (\d{1,3}):", contenido):
+    for m in re.finditer(r"section (\d{1,3}):|item (\d{1,3}):", content):
         if m.group(1) is not None:
-            if seccion and items != fixtures_t2.LONG_GENERATION_ITEMS:
+            if section and items != fixtures_t2.LONG_GENERATION_ITEMS:
                 return False  # the previous section was incomplete
-            if int(m.group(1)) != seccion + 1:
+            if int(m.group(1)) != section + 1:
                 return False
-            seccion, items = int(m.group(1)), 0
+            section, items = int(m.group(1)), 0
         else:
-            if seccion == 0:
+            if section == 0:
                 return False  # items before the first section header
             items += 1
             if int(m.group(2)) != items or items > fixtures_t2.LONG_GENERATION_ITEMS:
                 return False
     if (
-        seccion != fixtures_t2.LONG_GENERATION_SECTIONS
+        section != fixtures_t2.LONG_GENERATION_SECTIONS
         or items != fixtures_t2.LONG_GENERATION_ITEMS
     ):
         return False
-    tokens = _tokens(contenido)
+    tokens = _tokens(content)
     return bool(tokens) and list(tokens[-3:]) == list(fixtures_t2.LONG_GENERATION_TAIL)
 
 
 def _judge_reasoning(prompt: str, rec: dict, _registros: list[dict]) -> bool:
-    esperado = fixtures_t2.reasoning_expected(prompt)  # derived from the prompt's own rules
+    expected = fixtures_t2.reasoning_expected(prompt)  # derived from the prompt's own rules
     tokens = _tokens(rec["content"])
-    return "answer" in tokens and _match_clean(tokens, [str(esperado)])
+    return "answer" in tokens and _match_clean(tokens, [str(expected)])
 
 
 def _judge_ratio_out(_prompt: str, rec: dict, _registros: list[dict]) -> bool:
-    contenido = rec["content"].casefold()
-    notas = [int(x) for x in re.findall(r"note (\d{1,3})", contenido)]  # 1..10 only
+    content = rec["content"].casefold()
+    notes = [int(x) for x in re.findall(r"note (\d{1,3})", content)]  # 1..10 only
     n = fixtures_t2.RATIO_OUT_NOTES
-    if not any(notas[i : i + n] == list(range(1, n + 1)) for i in range(len(notas) - n + 1)):
+    if not any(notes[i : i + n] == list(range(1, n + 1)) for i in range(len(notes) - n + 1)):
         return False
-    tokens = _tokens(contenido)
+    tokens = _tokens(content)
     return bool(tokens) and tokens[-1] == fixtures_t2.RATIO_OUT_TAIL
 
 
@@ -412,32 +410,32 @@ _JUDGES = {
 }
 
 
-def judge(workload: str, textos: list[str], registros: list[dict]) -> list[str | None]:
-    """One verdict per request of the batch, aligned with `textos`/`registros`."""
+def judge(workload: str, textos: list[str], records: list[dict]) -> list[str | None]:
+    """One verdict per request of the batch, aligned with `textos`/`records`."""
     juez = _JUDGES.get(workload)
     if juez is None:
         raise CheckersError(f"no checker implemented for workload {workload!r}")
-    if len(textos) != len(registros):
+    if len(textos) != len(records):
         raise CheckersError(
-            f"checker for {workload!r}: {len(textos)} prompts vs {len(registros)} responses"
+            f"checker for {workload!r}: {len(textos)} prompts vs {len(records)} responses"
         )
-    veredictos: list[str | None] = []
-    for texto, rec in zip(textos, registros):
+    verdicts: list[str | None] = []
+    for text, rec in zip(textos, records):
         if workload in fixtures_t3.WORKLOADS:
             # A T3 task is graded on the working copy the loop leaves behind:
             # any accepted exchange (a step with HTTP 200) means there is a repo
             # state to grade, even when the loop died mid-way. No accepted
             # exchange at all means the model never engaged -> null, like T1/T2.
             if not any(p.get("http") == 200 for p in rec.get("steps") or ()):
-                veredictos.append(None)
+                verdicts.append(None)
                 continue
         elif rec["done"] is None:
             # No completed response: a transport/HTTP failure stays null (the request
             # is a failed attempt, not a graded outcome); a truncated 200 fails.
-            veredictos.append(None if not rec["content"] and rec["http"] != 200 else "fail")
+            verdicts.append(None if not rec["content"] and rec["http"] != 200 else "fail")
             continue
         try:
-            veredicto = juez(texto, rec, registros)
+            verdict = juez(text, rec, records)
         except CheckersError:
             raise
         except Exception as e:  # noqa: BLE001 - fixture drift keeps the billed evidence
@@ -446,5 +444,5 @@ def judge(workload: str, textos: list[str], registros: list[dict]) -> list[str |
             # the runner turns any CheckersError into null verdicts + an aborted
             # batch, so the billed requests stay in the dataset.
             raise CheckersError(f"checker for {workload!r}: {type(e).__name__}: {e}") from None
-        veredictos.append("pass" if veredicto else "fail")
-    return veredictos
+        verdicts.append("pass" if verdict else "fail")
+    return verdicts

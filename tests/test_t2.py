@@ -72,7 +72,7 @@ def schema_args(parameters: dict) -> dict:
     return args
 
 
-def cuerpo(prompt: str) -> str:
+def body(prompt: str) -> str:
     """The fixture body the test-side scripting parses: the wire prompt carries
     the lane's nonce as one line above the fixture."""
     return prompt.split("\n\n", 1)[1]
@@ -80,30 +80,28 @@ def cuerpo(prompt: str) -> str:
 
 def declared_calls(prompt: str) -> list[dict] | None:
     """The scenario's expected calls, in order, with schema-valid arguments."""
-    prompt = cuerpo(prompt)
+    prompt = body(prompt)
     if fixtures_t2.workload_of(prompt) != "tool_calling":
         return None  # fall through to the text reply
-    escenario = fixtures_t2.tool_scenario(prompt)
+    scenario = fixtures_t2.tool_scenario(prompt)
     llamadas = []
-    for nombre in escenario["sequence"]:
+    for name in scenario["sequence"]:
         parameters = next(
-            t["function"]["parameters"]
-            for t in escenario["tools"]
-            if t["function"]["name"] == nombre
+            t["function"]["parameters"] for t in scenario["tools"] if t["function"]["name"] == name
         )
-        llamadas.append({"function": {"name": nombre, "arguments": schema_args(parameters)}})
+        llamadas.append({"function": {"name": name, "arguments": schema_args(parameters)}})
     return llamadas
 
 
 def correct_transcript(prompt: str) -> str:
     """Every workload answers exactly as its fixture's contract prescribes."""
-    prompt = cuerpo(prompt)
+    prompt = body(prompt)
     workload = fixtures_t2.workload_of(prompt)
     if workload in ("long_context", "ratio_in"):
         datums = fixtures_t2.register_datums(prompt)
         frases = []
-        for label, campo in fixtures_t2.register_asks(prompt):
-            if campo == "code":
+        for label, field in fixtures_t2.register_asks(prompt):
+            if field == "code":
                 frases.append(
                     f"The access code of the unit tagged [R-{label}] is {datums[label]['code']}."
                 )
@@ -114,19 +112,19 @@ def correct_transcript(prompt: str) -> str:
         return " ".join(frases)
     if workload == "multi_turn":
         preguntada = re.findall(r"access code of the (\w+) line\?", prompt)[-1]
-        codigo = fixtures_t2.multi_turn_expected(prompt)
-        return f"The access code of the {preguntada} line is {codigo}."
+        code = fixtures_t2.multi_turn_expected(prompt)
+        return f"The access code of the {preguntada} line is {code}."
     if workload == "long_generation":
-        lineas = []
+        lines = []
         for s in range(1, fixtures_t2.LONG_GENERATION_SECTIONS + 1):
-            lineas.append(f"Section {s}: subsystem {s} overview")
-            lineas += [
+            lines.append(f"Section {s}: subsystem {s} overview")
+            lines += [
                 f"item {k}: part {k} of subsystem {s}, torqued and logged" for k in range(1, 21)
             ]
-        return "\n".join(lineas) + "\nEND OF GENERATION"
+        return "\n".join(lines) + "\nEND OF GENERATION"
     if workload == "reasoning":
-        esperado = fixtures_t2.reasoning_expected(prompt)
-        return f"The bay access number is {esperado}.\nANSWER: {esperado}"
+        expected = fixtures_t2.reasoning_expected(prompt)
+        return f"The bay access number is {expected}.\nANSWER: {expected}"
     if workload == "ratio_out":
         return (
             "\n".join(
@@ -142,7 +140,7 @@ def correct_transcript(prompt: str) -> str:
 
 def broken_reply(prompt: str) -> str:
     """Each workload breaks in its own characteristic way (every checker fails)."""
-    prompt = cuerpo(prompt)
+    prompt = body(prompt)
     workload = fixtures_t2.workload_of(prompt)
     if workload == "long_context":
         datums = fixtures_t2.register_datums(prompt)
@@ -153,18 +151,18 @@ def broken_reply(prompt: str) -> str:
         return "The access code of the unit tagged [R-1500] is QQ-0000-ZZ."
     if workload == "multi_turn":
         # A real-but-different code when the transcript offers one, else a wrong one.
-        esperado = fixtures_t2.multi_turn_expected(prompt)
-        otros = sorted(set(re.findall(r"[A-Z]{2}-\d{4}-[A-Z]{2}", prompt)) - {esperado})
+        expected = fixtures_t2.multi_turn_expected(prompt)
+        otros = sorted(set(re.findall(r"[A-Z]{2}-\d{4}-[A-Z]{2}", prompt)) - {expected})
         return f"The access code of that line is {otros[0] if otros else 'QQ-0000-ZZ'}."
     if workload == "reasoning":
         mal = fixtures_t2.reasoning_expected(prompt) + 1
         return f"The bay access number is {mal}.\nANSWER: {mal}"
     if workload == "long_generation":
-        lineas = []
+        lines = []
         for s in range(1, fixtures_t2.LONG_GENERATION_SECTIONS):  # 24 of 25 sections
-            lineas.append(f"Section {s}: subsystem {s} overview")
-            lineas += [f"item {k}: part {k} of subsystem {s}" for k in range(1, 21)]
-        return "\n".join(lineas) + "\nEND OF GENERATION"
+            lines.append(f"Section {s}: subsystem {s} overview")
+            lines += [f"item {k}: part {k} of subsystem {s}" for k in range(1, 21)]
+        return "\n".join(lines) + "\nEND OF GENERATION"
     if workload == "ratio_out":
         return (
             "\n".join(
@@ -183,7 +181,7 @@ def mutated_calls(prompt: str) -> list[dict] | None:
     llamadas = declared_calls(prompt)  # declared_calls strips the lane's nonce
     if not llamadas:
         return None
-    tid = fixtures_t2.tool_scenario(cuerpo(prompt))["id"]
+    tid = fixtures_t2.tool_scenario(body(prompt))["id"]
     if tid == "TR-2":
         llamadas.reverse()  # wrong call order
     elif tid == "TR-3":
@@ -212,9 +210,9 @@ def test_full_t2_slate_produces_the_structural_dataset(tmp_path, fake_cli):
     batches = read_batches(tmp_path)
     # The hybrid composition (methodology v1.1 §5): 24 per-cell brackets (the
     # strong four x 6 models) + 6 pooled (the weak trio, one per model).
-    per_celda = [b for b in batches if b["workload"] is not None]
-    agrupados = [b for b in batches if b["workload"] is None]
-    assert len(per_celda) == 24 and len(agrupados) == 6 and len(requests) == 6 * 38
+    per_cell = [b for b in batches if b["workload"] is not None]
+    grouped = [b for b in batches if b["workload"] is None]
+    assert len(per_cell) == 24 and len(grouped) == 6 and len(requests) == 6 * 38
     por_workload: dict[str, set] = {}
     for r in requests:
         validate_request_line(r)
@@ -232,23 +230,23 @@ def test_full_t2_slate_produces_the_structural_dataset(tmp_path, fake_cli):
             "ratio_out",
         }
     )
-    assert all(veredictos == {"pass"} for veredictos in por_workload.values())
+    assert all(verdicts == {"pass"} for verdicts in por_workload.values())
     # Seed-regenerable fixtures, unchanged by the composition: the per-cell
     # brackets hash their workload's one-run fixture; the pooled brackets hash
     # the pool's one-rep sequence (the trio's fixtures, in pool order).
-    peticiones_de = {w.name: w.requests for w in T2_WORKLOADS}
+    requests_of = {w.name: w.requests for w in T2_WORKLOADS}
     for b in batches:
         validate_batch_line(b)
         if b["workload"] is not None:
-            esperado = fixture_hash(build("T2", b["workload"], peticiones_de[b["workload"]]))
+            expected = fixture_hash(build("T2", b["workload"], requests_of[b["workload"]]))
         else:
-            esperado = fixture_hash(
-                tuple(s for w in b["pool"]["workloads"] for s in build("T2", w, peticiones_de[w]))
+            expected = fixture_hash(
+                tuple(s for w in b["pool"]["workloads"] for s in build("T2", w, requests_of[w]))
             )
-        assert b["fixture_hash"] == esperado, b["batch_id"]
+        assert b["fixture_hash"] == expected, b["batch_id"]
     for w in T2_NAMES:
         hashes = {r["fixture_hash"] for r in requests if r["workload"] == w}
-        assert hashes == {fixture_hash(build("T2", w, peticiones_de[w]))}
+        assert hashes == {fixture_hash(build("T2", w, requests_of[w]))}
     # No warmup, no retry: the fake saw exactly the planned chats and meter reads.
     chats = [c for c in fake_cli.calls if c["path"] == "/api/chat"]
     reads = [c for c in fake_cli.calls if c["path"] == "/api/usage"]
@@ -265,14 +263,14 @@ def test_t2_default_reps_build_the_full_grid(tmp_path, fake_cli):
     assert run_cli(tmp_path, "dry-run", "--level", "T2", "--pricing-dir", pricing)[0] == 0
     assert run_t2(tmp_path, "--model", "glm-5.3-flash")[0] == 0
     batches = read_batches(tmp_path)
-    per_celda = [b for b in batches if b["workload"] is not None]
-    agrupados = [b for b in batches if b["workload"] is None]
-    assert len(per_celda) == 4 and len(agrupados) == 1
+    per_cell = [b for b in batches if b["workload"] is not None]
+    grouped = [b for b in batches if b["workload"] is None]
+    assert len(per_cell) == 4 and len(grouped) == 1
     assert len({b["batch_id"] for b in batches}) == 5  # deterministic and unique
-    for b in per_celda:
+    for b in per_cell:
         assert b["reps"] == 5 and b["pool"] is None
-    assert agrupados[0]["reps"] == 5
-    assert agrupados[0]["pool"] == {
+    assert grouped[0]["reps"] == 5
+    assert grouped[0]["pool"] == {
         "workloads": ["multi_turn", "tool_calling", "reasoning"],
         "reps": 5,
     }
@@ -292,17 +290,17 @@ def test_t2_full_slate_plans_24_per_cell_plus_6_pooled_at_n5(tmp_path, fake_cli)
     assert run_cli(tmp_path, "dry-run", "--level", "T2", "--pricing-dir", pricing)[0] == 0
     assert run_t2(tmp_path)[0] == 0
     batches = read_batches(tmp_path)
-    per_celda = [b for b in batches if b["workload"] is not None]
-    agrupados = [b for b in batches if b["workload"] is None]
-    assert len(per_celda) == 24 and len(agrupados) == 6
-    peticiones_de = {w.name: w.requests for w in T2_WORKLOADS}
-    for b in per_celda:
+    per_cell = [b for b in batches if b["workload"] is not None]
+    grouped = [b for b in batches if b["workload"] is None]
+    assert len(per_cell) == 24 and len(grouped) == 6
+    requests_of = {w.name: w.requests for w in T2_WORKLOADS}
+    for b in per_cell:
         assert b["reps"] == 5
-        assert b["n"] == peticiones_de[b["workload"]] * 5
-    for b in agrupados:
+        assert b["n"] == requests_of[b["workload"]] * 5
+    for b in grouped:
         assert b["workload"] is None
         assert b["pool"]["reps"] == 5
-        assert b["n"] == sum(peticiones_de[w] for w in b["pool"]["workloads"]) * 5
+        assert b["n"] == sum(requests_of[w] for w in b["pool"]["workloads"]) * 5
     requests = read_requests(tmp_path)
     assert len(requests) == 6 * 38 * 5  # the reps live in the request rows
     assert len({b["batch_id"] for b in batches}) == 30
@@ -320,31 +318,31 @@ def test_pooled_requests_carry_their_own_workload_evidence(tmp_path, fake_cli):
     from obench import lane
 
     batches = read_batches(tmp_path)
-    agrupados = [b for b in batches if b["workload"] is None]
-    assert len(agrupados) == 1
-    pool_id = agrupados[0]["batch_id"]
-    lineas = [r for r in read_requests(tmp_path) if r["batch_id"] == pool_id]
-    assert {r["workload"] for r in lineas} == {"multi_turn", "tool_calling", "reasoning"}
+    grouped = [b for b in batches if b["workload"] is None]
+    assert len(grouped) == 1
+    pool_id = grouped[0]["batch_id"]
+    lines = [r for r in read_requests(tmp_path) if r["batch_id"] == pool_id]
+    assert {r["workload"] for r in lines} == {"multi_turn", "tool_calling", "reasoning"}
     vistos: dict[tuple[str, int], int] = {}
     por_workload: dict[str, set] = {}
-    for r in lineas:
+    for r in lines:
         por_workload.setdefault(r["workload"], set()).add(r["rep"])
     assert por_workload == {"multi_turn": {1}, "tool_calling": {1}, "reasoning": {1}}
-    for r in lineas:
+    for r in lines:
         # The lines are written in send order, so each request's position within
         # its (workload, rep) unit is the index the coordinates key on.
-        clave = (r["workload"], r["rep"])
-        indice = vistos.get(clave, 0)
-        vistos[clave] = indice + 1
-        palabras = lane.nonce_words(lane.expected_tin("T2", r["workload"]))
+        key = (r["workload"], r["rep"])
+        index = vistos.get(key, 0)
+        vistos[key] = index + 1
+        words = lane.nonce_words(lane.expected_tin("T2", r["workload"]))
         nonce = lane.nonce_text(
-            lane.nonce_seed(agrupados[0]["run_id"]),
-            lane.nonce_index("T2", r["workload"], "glm-5.3-flash", r["rep"], 1, indice),
-            palabras,
+            lane.nonce_seed(grouped[0]["run_id"]),
+            lane.nonce_index("T2", r["workload"], "glm-5.3-flash", r["rep"], 1, index),
+            words,
         )
         assert r["nonce_sha256"] == lane.nonce_sha256(nonce), r["req_id"]
         # The seed is the same derivation the per-rep brackets use.
-        assert r["seed"] == fixtures.seed(r["workload"], "glm-5.3-flash", r["rep"], indice)
+        assert r["seed"] == fixtures.seed(r["workload"], "glm-5.3-flash", r["rep"], index)
 
 
 def test_fixture_hashes_are_composition_independent(tmp_path, fake_cli):
@@ -394,9 +392,9 @@ def test_fixture_hashes_are_composition_independent(tmp_path, fake_cli):
             b = json.loads(l)
             if b["workload"] is not None:
                 hashes.setdefault(b["workload"], set()).add(b["fixture_hash"])
-    peticiones_de = {w.name: w.requests for w in T2_WORKLOADS}
-    for w, valores in hashes.items():
-        assert valores == {fixture_hash(build("T2", w, peticiones_de[w]))}
+    requests_of = {w.name: w.requests for w in T2_WORKLOADS}
+    for w, values in hashes.items():
+        assert values == {fixture_hash(build("T2", w, requests_of[w]))}
 
 
 def test_tool_calling_grades_the_call_sequence_and_the_arguments(tmp_path, fake_cli):
@@ -405,19 +403,19 @@ def test_tool_calling_grades_the_call_sequence_and_the_arguments(tmp_path, fake_
     fake_cli.tool_calls_for = mutated_calls
     prepare(tmp_path)
     assert run_t2(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")[0] == 0
-    lineas = [r for r in read_requests(tmp_path) if r["workload"] == "tool_calling"]
-    assert len(lineas) == 6
+    lines = [r for r in read_requests(tmp_path) if r["workload"] == "tool_calling"]
+    assert len(lines) == 6
     # tool_calling now lives in the pooled bracket: its requests appear in send
     # order, which within the rep's unit IS the fixture order.
     scenarios = fixtures_t2.specs("tool_calling", 6)  # prompt i == request index i
     for i, (prompt, _tools) in enumerate(scenarios):
-        linea = lineas[i]
-        nombres = [tc["function"]["name"] for tc in linea["tool_calls"]]
+        linea = lines[i]
+        names = [tc["function"]["name"] for tc in linea["tool_calls"]]
         esperados = list(fixtures_t2.tool_scenario(prompt)["sequence"])
         if fixtures_t2.tool_scenario(prompt)["id"] == "TR-1":
-            assert linea["checker"] == "pass" and nombres == esperados  # the control
+            assert linea["checker"] == "pass" and names == esperados  # the control
         elif fixtures_t2.tool_scenario(prompt)["id"] == "TR-2":
-            assert nombres == list(reversed(esperados)) and linea["checker"] == "fail"
+            assert names == list(reversed(esperados)) and linea["checker"] == "fail"
         else:
             assert linea["checker"] == "fail"  # missing arg / bad enum / bad type / extra call
 
@@ -432,23 +430,23 @@ def test_tool_schemas_reach_the_api_verbatim(tmp_path, fake_cli):
     assert len(tool_chats) == 6
     for c in tool_chats:
         prompt = c["body"]["messages"][0]["content"]
-        escenario = fixtures_t2.tool_scenario(prompt)
+        scenario = fixtures_t2.tool_scenario(prompt)
         enviadas = c["body"]["tools"]
         # The FULL schemas travel on the wire — names, parameters, required —
         # not just the names (a payload that dropped the schemas must fail here).
         enviadas_json = {json.dumps(t, sort_keys=True) for t in enviadas}
-        esperadas_json = {json.dumps(t, sort_keys=True) for t in escenario["tools"]}
+        esperadas_json = {json.dumps(t, sort_keys=True) for t in scenario["tools"]}
         assert enviadas_json == esperadas_json  # verbatim, order-independent
-        assert [t["function"]["name"] for t in enviadas] == list(escenario["sequence"])
+        assert [t["function"]["name"] for t in enviadas] == list(scenario["sequence"])
 
 
 def test_prose_instead_of_tool_calls_fails(tmp_path, fake_cli):
     fake_cli.reply_for = correct_transcript  # the fake answers in prose, no tool frames
     prepare(tmp_path)
     assert run_t2(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")[0] == 0
-    lineas = [r for r in read_requests(tmp_path) if r["workload"] == "tool_calling"]
-    assert len(lineas) == 6
-    assert all(r["tool_calls"] == [] and r["checker"] == "fail" for r in lineas)
+    lines = [r for r in read_requests(tmp_path) if r["workload"] == "tool_calling"]
+    assert len(lines) == 6
+    assert all(r["tool_calls"] == [] and r["checker"] == "fail" for r in lines)
 
 
 def test_multi_turn_accumulates_context_turn_by_turn(tmp_path, fake_cli):
@@ -473,7 +471,7 @@ def test_structural_checkers_fail_on_broken_output(tmp_path, fake_cli):
     for r in requests:
         por_workload.setdefault(r["workload"], set()).add(r["checker"])
     assert set(por_workload) == set(T2_NAMES)
-    assert all(veredictos == {"fail"} for veredictos in por_workload.values())
+    assert all(verdicts == {"fail"} for verdicts in por_workload.values())
     assert all(r["http"] == 200 for r in requests)  # billed attempts, graded as failures
 
 
@@ -481,7 +479,7 @@ def test_register_grading_binds_values_to_their_units(tmp_path, fake_cli):
     """Right values attached to the wrong units fail: the binding is per-sentence."""
     fake_cli.reply_for = lambda prompt: (
         _wrong_unit_transcript(prompt)
-        if fixtures_t2.workload_of(cuerpo(prompt)) == "long_context"
+        if fixtures_t2.workload_of(body(prompt)) == "long_context"
         else correct_transcript(prompt)
     )
     fake_cli.tool_calls_for = declared_calls
@@ -497,16 +495,16 @@ def test_register_grading_binds_values_to_their_units(tmp_path, fake_cli):
 
 def _wrong_unit_transcript(prompt: str) -> str:
     """Every ask answered with a right-looking value attached to the WRONG unit."""
-    prompt = cuerpo(prompt)
+    prompt = body(prompt)
     datums = fixtures_t2.register_datums(prompt)
     asks = fixtures_t2.register_asks(prompt)
     labels = [l for l, _ in asks]
     frases = []
-    for i, (label, campo) in enumerate(asks):
+    for i, (label, field) in enumerate(asks):
         otro = labels[(i + 1) % len(labels)]  # rotate: right shape, wrong unit
         frases.append(
             f"The access code of the unit tagged [R-{label}] is {datums[otro]['code']}."
-            if campo == "code"
+            if field == "code"
             else f"The unit tagged [R-{label}] is inspected every {datums[otro]['days']} days."
         )
     return " ".join(frases)
@@ -518,7 +516,7 @@ def test_pooled_batch_lines_validate_their_pool_shape():
     the counts are positive ints."""
     from obench.schema import SchemaError, validate_batch_line
 
-    def lote(**cambios):
+    def batch(**cambios):
         base = {
             "batch_id": "b" * 16,
             "run_id": "run",
@@ -538,8 +536,8 @@ def test_pooled_batch_lines_validate_their_pool_shape():
             "settle_exit": "stable",
             "count_check_s": 0.5,
             "wall_clock_s": 10.0,
-            "medidor_pre": {"limits": {"session": {"usage": 0.5}, "weekly": {"usage": 0.5}}},
-            "medidor_post": {"limits": {"session": {"usage": 0.5}, "weekly": {"usage": 0.6}}},
+            "meter_pre": {"limits": {"session": {"usage": 0.5}, "weekly": {"usage": 0.5}}},
+            "meter_post": {"limits": {"session": {"usage": 0.5}, "weekly": {"usage": 0.6}}},
             "dpp_session": 0.1,
             "dpp_weekly": 0.1,
             "request_counts": {"pre": {}, "count_check": {}, "post": {}},
@@ -550,20 +548,20 @@ def test_pooled_batch_lines_validate_their_pool_shape():
         base.update(cambios)
         return base
 
-    validate_batch_line(lote())  # the pooled shape is valid
-    validate_batch_line(lote(workload="qa_short", pool=None, reps=1))  # per-cell is too
+    validate_batch_line(batch())  # the pooled shape is valid
+    validate_batch_line(batch(workload="qa_short", pool=None, reps=1))  # per-cell is too
 
-    mala = lote(workload="multi_turn")  # a pooled bracket names no workload
+    mala = batch(workload="multi_turn")  # a pooled bracket names no workload
     with pytest.raises(SchemaError, match="workload"):
         validate_batch_line(mala)
     with pytest.raises(SchemaError):  # a bracket without a workload must name its pool
-        validate_batch_line(lote(pool=None))
+        validate_batch_line(batch(pool=None))
     with pytest.raises(SchemaError):  # an empty pool names nothing
-        validate_batch_line(lote(pool={"workloads": [], "reps": 2}))
+        validate_batch_line(batch(pool={"workloads": [], "reps": 2}))
     with pytest.raises(SchemaError):  # the pool's reps are positive
-        validate_batch_line(lote(pool={"workloads": ["multi_turn"], "reps": 0}))
+        validate_batch_line(batch(pool={"workloads": ["multi_turn"], "reps": 0}))
     with pytest.raises(SchemaError):  # so are the bracket's
-        validate_batch_line(lote(reps=0))
+        validate_batch_line(batch(reps=0))
 
 
 def test_t2_refuses_rep_narrowing_and_reps_drift(tmp_path, fake_cli):

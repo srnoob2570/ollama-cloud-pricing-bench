@@ -15,7 +15,7 @@ from .fixtures_t3 import MAX_STEPS
 from .pricing import Rate
 
 
-def new_task_cost(t_in: float, t_out: float, tarifa: Rate, *, s: float, per: int) -> float:
+def new_task_cost(t_in: float, t_out: float, rate: Rate, *, s: float, per: int) -> float:
     """The new-plan cost of one task under hit-rate `s` (S0 == s=0).
 
     The cost model's single pricing formula, shared by the gate's budget and
@@ -23,11 +23,11 @@ def new_task_cost(t_in: float, t_out: float, tarifa: Rate, *, s: float, per: int
     honored (1M is not assumed), and a model without a cache discount
     (cached_input == input) is identical under every hit rate.
     """
-    if tarifa.has_cache_discount:
+    if rate.has_cache_discount:
         return (
-            t_in * (1 - s) * tarifa.input + t_in * s * tarifa.cached_input + t_out * tarifa.output
+            t_in * (1 - s) * rate.input + t_in * s * rate.cached_input + t_out * rate.output
         ) / per
-    return (t_in * tarifa.input + t_out * tarifa.output) / per
+    return (t_in * rate.input + t_out * rate.output) / per
 
 
 @dataclasses.dataclass
@@ -46,7 +46,7 @@ class BudgetLine:
 
 
 def budget(
-    level: str, tabla, *, reps: int = 5, s: float = 0.5, models: list[str] | None = None
+    level: str, table, *, reps: int = 5, s: float = 0.5, models: list[str] | None = None
 ) -> list[BudgetLine]:
     """Estimates the cost of a full level, per workload, under the S0 and S1 scenarios.
 
@@ -57,8 +57,8 @@ def budget(
     """
     if level not in workloads.WORKLOADS_BY_LEVEL:
         raise ValueError(f"unknown level: {level!r}")
-    modelos = list(models) if models is not None else workloads.slate(level, tabla)
-    filas: list[BudgetLine] = []
+    models = list(models) if models is not None else workloads.slate(level, table)
+    rows: list[BudgetLine] = []
     for w in workloads.WORKLOADS_BY_LEVEL[level]:
         t_in_total = 0
         t_out_total = 0
@@ -67,35 +67,35 @@ def budget(
         # The cache-free lane's per-request overhead (protocol v3): the same
         # nonce size for every model of the workload (it keys on the workload's
         # expected input, not on the model), so it adds once per request.
-        nonce_por_request = lane.nonce_tokens_estimate(w.t_in)
+        nonce_per_request = lane.nonce_tokens_estimate(w.t_in)
         # A T3 task is an agent loop, not one request: up to MAX_STEPS billed
         # consultations per task, each re-sending the task plus the transcript
         # grown so far (every prior step's output rides along), each with its
         # own nonce. The gate approves the WORST case - a run may never bill
         # more than the dry-run approved.
-        pasos = MAX_STEPS if level == "T3" else 1
-        nonce_total = nonce_por_request * w.requests * reps * pasos * len(modelos)
-        for modelo in modelos:
-            tarifa = tabla.rate(modelo)
+        steps = MAX_STEPS if level == "T3" else 1
+        nonce_total = nonce_per_request * w.requests * reps * steps * len(models)
+        for model in models:
+            rate = table.rate(model)
             t_in = (
                 w.requests
                 * reps
-                * sum(w.t_in + nonce_por_request + paso * w.t_out for paso in range(pasos))
+                * sum(w.t_in + nonce_per_request + step * w.t_out for step in range(steps))
             )
-            t_out = w.t_out * w.requests * reps * pasos
+            t_out = w.t_out * w.requests * reps * steps
             t_in_total += t_in
             t_out_total += t_out
-            s0 = new_task_cost(t_in, t_out, tarifa, s=0.0, per=tabla.per)
+            s0 = new_task_cost(t_in, t_out, rate, s=0.0, per=table.per)
             s0_total += s0
             # no cache discount: new_task_cost already makes S1 equal S0
-            s1_total += new_task_cost(t_in, t_out, tarifa, s=s, per=tabla.per)
-        filas.append(
+            s1_total += new_task_cost(t_in, t_out, rate, s=s, per=table.per)
+        rows.append(
             BudgetLine(
                 workload=w.name,
                 level=level,
-                models=len(modelos),
+                models=len(models),
                 reps=reps,
-                requests=len(modelos) * reps * w.requests * pasos,
+                requests=len(models) * reps * w.requests * steps,
                 tokens_in=t_in_total,
                 tokens_out=t_out_total,
                 nonce_tokens=nonce_total,
@@ -104,7 +104,7 @@ def budget(
                 pp_expected=None,
             )
         )
-    return filas
+    return rows
 
 
 def canary_estimate() -> dict:
@@ -112,13 +112,13 @@ def canary_estimate() -> dict:
     5 identical-prefix replays of one T2-size body. The run always bills it
     before the first bracket, so the gate's estimate carries it — un-budgeted
     spend is how guardrails die quietly."""
-    carga = next(w for w in workloads.T2 if w.name == "long_context")
-    nonce_por_request = lane.nonce_tokens_estimate(carga.t_in)
+    workload = next(w for w in workloads.T2 if w.name == "long_context")
+    nonce_per_request = lane.nonce_tokens_estimate(workload.t_in)
     requests = 5 + 5
     return {
         "requests": requests,
         "model": lane.CANARY_MODEL,
-        "tokens_estimate": requests * (carga.t_in + nonce_por_request + carga.t_out),
+        "tokens_estimate": requests * (workload.t_in + nonce_per_request + workload.t_out),
         "note": (
             "once per run, before the first bracket, on kimi-k3 (the paired probe's "
             "reference model - a cheaper measured model's replay can fall below the "

@@ -66,15 +66,15 @@ def run_checker(task_dir: pathlib.Path, fixture_files) -> dict:
     if graded.exists():
         shutil.rmtree(graded)  # a re-grade of the same task starts from the seed
     graded.mkdir(parents=True)
-    for rel, contenido in fixture_files:
-        _write(graded, rel, contenido)
-    for ruta in sorted(task_dir.rglob("*")):
-        if not ruta.is_file():
+    for rel, content in fixture_files:
+        _write(graded, rel, content)
+    for path in sorted(task_dir.rglob("*")):
+        if not path.is_file():
             continue
-        rel = ruta.relative_to(task_dir).as_posix()
+        rel = path.relative_to(task_dir).as_posix()
         if _is_pytest_config(rel):
             continue  # the suite and pytest's config are the fixture's, never the model's
-        _copy(graded, rel, ruta)
+        _copy(graded, rel, path)
     return run_pytest(graded)
 
 
@@ -86,18 +86,18 @@ def run_pytest(task_dir: pathlib.Path) -> dict:
     hermetic to inifiles and conftests above it. The hard ceiling is
     SANDBOX_TIMEOUT_S.
     """
-    destino = pathlib.Path(task_dir)
+    dest = pathlib.Path(task_dir)
     # The config file names its task: concurrent in-loop run_tests actions of
     # one batch (a k>1 cell) must never share one ini path.
-    config = destino.parent / f".obench-pytest-{destino.name}.ini"
+    config = dest.parent / f".obench-pytest-{dest.name}.ini"
     config.write_text("[pytest]\n", encoding="utf-8")
-    env = _subprocess_env(destino)
+    env = _subprocess_env(dest)
     argv = [sys.executable, "-m", "obench.sandbox_runner", "-c", str(config)]
     limite = SANDBOX_TIMEOUT_S
     t0 = time.monotonic()
     proc = subprocess.Popen(
         argv,
-        cwd=destino,
+        cwd=dest,
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -105,7 +105,7 @@ def run_pytest(task_dir: pathlib.Path) -> dict:
     )
     timed_out = False
     try:
-        salida, _ = proc.communicate(timeout=limite)
+        output, _ = proc.communicate(timeout=limite)
     except subprocess.TimeoutExpired:
         timed_out = True
         try:
@@ -113,46 +113,46 @@ def run_pytest(task_dir: pathlib.Path) -> dict:
         except ProcessLookupError:  # the subprocess exited inside the race window
             pass
         try:
-            salida, _ = proc.communicate(timeout=POST_KILL_READ_S)
+            output, _ = proc.communicate(timeout=POST_KILL_READ_S)
         except subprocess.TimeoutExpired:
             # A descendant outside the process group still holds the pipe: the
             # hard timeout must not turn into a hang. Drop the pipe; whatever
             # was already captured is the record.
-            salida = b""
+            output = b""
             if proc.stdout is not None:
                 proc.stdout.close()
-    texto = salida.decode("utf-8", errors="replace")
+    text = output.decode("utf-8", errors="replace")
     return {
         "argv": argv,
-        "cwd": str(destino),
+        "cwd": str(dest),
         "env_keys": sorted(env),
         "returncode": proc.returncode,
         "timed_out": timed_out,
         # The handshake prints only after pytest imported: its absence means the
         # sandbox never graded anything (a harness misconfiguration, exit 90).
-        "sandbox_ok": SANDBOX_READY in texto,
+        "sandbox_ok": SANDBOX_READY in text,
         "duration_s": time.monotonic() - t0,
-        "output_sha256": hashlib.sha256(texto.encode("utf-8")).hexdigest(),
-        "tail": texto[-OUTPUT_TAIL:],
+        "output_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "tail": text[-OUTPUT_TAIL:],
     }
 
 
 def _is_pytest_config(rel: str) -> bool:
     """Whether a working-copy path is pytest's config surface (never carried)."""
-    nombre = pathlib.PurePosixPath(rel).name
-    return nombre in _PYTEST_CONFIG_NAMES or rel.startswith("tests/")
+    name = pathlib.PurePosixPath(rel).name
+    return name in _PYTEST_CONFIG_NAMES or rel.startswith("tests/")
 
 
-def _write(destino: pathlib.Path, rel: str, contenido: str) -> None:
-    ruta = destino / rel
-    ruta.parent.mkdir(parents=True, exist_ok=True)
-    ruta.write_text(contenido, encoding="utf-8")
+def _write(dest: pathlib.Path, rel: str, content: str) -> None:
+    path = dest / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
 
 
-def _copy(destino: pathlib.Path, rel: str, fuente: pathlib.Path) -> None:
-    ruta = destino / rel
-    ruta.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(fuente, ruta)
+def _copy(dest: pathlib.Path, rel: str, font: pathlib.Path) -> None:
+    path = dest / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(font, path)
 
 
 def _subprocess_env(task_dir: pathlib.Path) -> dict:

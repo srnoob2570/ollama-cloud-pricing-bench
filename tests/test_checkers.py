@@ -50,7 +50,7 @@ def read_requests(tmp_path) -> list[dict]:
     return [json.loads(l) for l in files[0].read_text(encoding="utf-8").splitlines() if l.strip()]
 
 
-def cuerpo(prompt: str) -> str:
+def body(prompt: str) -> str:
     """The fixture body the reply scripts match: under the cache-free lane the
     sent prompt carries the run's nonce as one line above the fixture."""
     if prompt.startswith((PRIMERA_PREGUNTA, CALIBRATION_PROMPT, THROUGHPUT_PROMPT)):
@@ -67,7 +67,7 @@ def qa_reply(prompt: str) -> str:
 
 def correct_transcript(prompt: str) -> str:
     """Every workload answers exactly as its fixture asks."""
-    prompt = cuerpo(prompt)
+    prompt = body(prompt)
     if prompt == CALIBRATION_PROMPT:
         return "OK"
     if prompt == THROUGHPUT_PROMPT:
@@ -94,7 +94,7 @@ def test_scripted_correct_transcripts_pass_all_three_checkers(tmp_path, fake_cli
 def test_qa_short_fails_on_a_wrong_answer_and_passes_the_rest(tmp_path, fake_cli):
     fake_cli.reply_for = lambda prompt: (
         "The capital of France is Berlin."
-        if cuerpo(prompt).startswith(PRIMERA_PREGUNTA)
+        if body(prompt).startswith(PRIMERA_PREGUNTA)
         else correct_transcript(prompt)
     )
     prepare(tmp_path)
@@ -109,7 +109,7 @@ def test_qa_short_fails_on_a_wrong_answer_and_passes_the_rest(tmp_path, fake_cli
 
 def test_calibration_fails_when_reported_tokens_drift_beyond_2pct(tmp_path, fake_cli):
     """The 3 identical calibration requests must report reproducible tokens (2 % band)."""
-    fake_cli.reply_for = lambda prompt: "OK" if cuerpo(prompt) == CALIBRATION_PROMPT else "world"
+    fake_cli.reply_for = lambda prompt: "OK" if body(prompt) == CALIBRATION_PROMPT else "world"
     drift = seed("calibration", "glm-5.3-flash", 1, 1)
     fake_cli.counts_for = lambda _prompt, s: (26, 13) if s == drift else (26, 12)
     prepare(tmp_path)
@@ -117,8 +117,8 @@ def test_calibration_fails_when_reported_tokens_drift_beyond_2pct(tmp_path, fake
     assert code == 0, out or err
     calibraciones = [r for r in read_requests(tmp_path) if r["workload"] == "calibration"]
     assert len(calibraciones) == 3
-    veredictos = {r["tok_out"]: r["checker"] for r in calibraciones}
-    assert veredictos == {12: "pass", 13: "fail"}  # 13 vs the 12 median = 8.3 % off
+    verdicts = {r["tok_out"]: r["checker"] for r in calibraciones}
+    assert verdicts == {12: "pass", 13: "fail"}  # 13 vs the 12 median = 8.3 % off
 
 
 def test_truncated_stream_fails_the_checker_even_with_looking_correct_content(tmp_path, fake_cli):
@@ -137,7 +137,7 @@ def test_truncated_stream_fails_the_checker_even_with_looking_correct_content(tm
 def test_throughput_fails_when_the_number_sequence_is_incomplete(tmp_path, fake_cli):
     fake_cli.reply_for = lambda prompt: (
         "1, 2, 3 and so on up to 150, DONE"
-        if cuerpo(prompt) == THROUGHPUT_PROMPT
+        if body(prompt) == THROUGHPUT_PROMPT
         else correct_transcript(prompt)
     )
     prepare(tmp_path)
@@ -169,7 +169,7 @@ def test_throughput_passes_with_prose_around_the_complete_list(tmp_path, fake_cl
         "Sure! Here are the numbers from 1 to 150:\n"
         + ", ".join(str(i) for i in range(1, 151))
         + "\nDONE"
-        if cuerpo(prompt) == THROUGHPUT_PROMPT
+        if body(prompt) == THROUGHPUT_PROMPT
         else correct_transcript(prompt)
     )
     prepare(tmp_path)
@@ -184,7 +184,7 @@ def test_qa_short_accepts_natural_phrasing_between_answer_tokens(tmp_path, fake_
     pregunta = "How many days are there in a leap year?"
     fake_cli.reply_for = lambda prompt: (
         "There are three hundred and sixty-six days in a leap year."
-        if cuerpo(prompt).startswith(pregunta)
+        if body(prompt).startswith(pregunta)
         else correct_transcript(prompt)
     )
     prepare(tmp_path)
@@ -200,7 +200,7 @@ def test_qa_short_accepts_a_unicode_reply(tmp_path, fake_cli):
     pregunta = "What is the official language of Brazil?"
     fake_cli.reply_for = lambda prompt: (
         "A língua oficial do Brasil é o Português."
-        if cuerpo(prompt).startswith(pregunta)
+        if body(prompt).startswith(pregunta)
         else correct_transcript(prompt)
     )
     prepare(tmp_path)
@@ -214,9 +214,9 @@ def test_qa_short_rejects_negated_answers(tmp_path, fake_cli):
     """'is not Paris' is a wrong answer, however much it contains the right token."""
     fake_cli.reply_for = lambda prompt: (
         "The capital of France is not Paris, it is a myth."
-        if cuerpo(prompt).startswith("What is the capital of France?")
+        if body(prompt).startswith("What is the capital of France?")
         else "It is definitely not 56."
-        if cuerpo(prompt).startswith("What is 7 times 8?")
+        if body(prompt).startswith("What is 7 times 8?")
         else correct_transcript(prompt)
     )
     prepare(tmp_path)
@@ -229,7 +229,7 @@ def test_qa_short_rejects_negated_answers(tmp_path, fake_cli):
 
 def test_calibration_rejects_zero_token_reports(tmp_path, fake_cli):
     """A zero-token report is not a measurement: it can never be the median reference."""
-    fake_cli.reply_for = lambda prompt: "OK" if cuerpo(prompt) == CALIBRATION_PROMPT else "world"
+    fake_cli.reply_for = lambda prompt: "OK" if body(prompt) == CALIBRATION_PROMPT else "world"
     # Zero-token reports for the calibration cells only: the canary's T2-size
     # chats keep real counts, or its replays could never register a hit.
     fake_cli.counts_for = lambda prompt, _seed: (0, 0) if len(prompt) < 10_000 else (26, 12)
@@ -245,7 +245,7 @@ def test_qa_short_fails_when_a_negation_follows_the_answer(tmp_path, fake_cli):
     """A negation AFTER the answer flips it too ("Paris is not the capital")."""
     fake_cli.reply_for = lambda prompt: (
         "Paris is not the capital of France."
-        if cuerpo(prompt).startswith(PRIMERA_PREGUNTA)
+        if body(prompt).startswith(PRIMERA_PREGUNTA)
         else correct_transcript(prompt)
     )
     prepare(tmp_path)
@@ -260,7 +260,7 @@ def test_qa_short_fails_when_a_negation_follows_the_answer(tmp_path, fake_cli):
 def test_calibration_fails_without_full_sibling_evidence(tmp_path, fake_cli):
     """2 of 3 identical requests truncated: the survivor has no reproducibility
     evidence (its median would be itself) and must not grade pass."""
-    fake_cli.reply_for = lambda prompt: "OK" if cuerpo(prompt) == CALIBRATION_PROMPT else "world"
+    fake_cli.reply_for = lambda prompt: "OK" if body(prompt) == CALIBRATION_PROMPT else "world"
     # requests 21-23 are the calibration burst; #22 (its second request) gets a 500
     fake_cli.fails_on = 10 + 22  # the canary's 10 chats shift the ordinal
     prepare(tmp_path)
@@ -268,16 +268,16 @@ def test_calibration_fails_without_full_sibling_evidence(tmp_path, fake_cli):
     assert code == 0, out or err
     calibraciones = [r for r in read_requests(tmp_path) if r["workload"] == "calibration"]
     assert len(calibraciones) == 3
-    veredictos = [r["checker"] for r in calibraciones]
-    assert None in veredictos  # the failed request is a null attempt
-    assert "pass" not in veredictos  # the lone survivor cannot vouch for itself
+    verdicts = [r["checker"] for r in calibraciones]
+    assert None in verdicts  # the failed request is a null attempt
+    assert "pass" not in verdicts  # the lone survivor cannot vouch for itself
 
 
 def test_throughput_blob_of_digits_is_graded_never_a_harness_error(tmp_path, fake_cli):
     """A degenerate digit run must not crash int-parsing: it grades, never aborts."""
     fake_cli.reply_for = lambda prompt: (
         ", ".join(str(i) for i in range(1, 151)) + "\n" + "9" * 5000 + "\nDONE"
-        if cuerpo(prompt) == THROUGHPUT_PROMPT
+        if body(prompt) == THROUGHPUT_PROMPT
         else correct_transcript(prompt)
     )
     prepare(tmp_path)

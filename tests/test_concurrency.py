@@ -135,13 +135,13 @@ def test_errored_volley_is_never_a_cut_off_conclusion(tmp_path, fake_cli):
     assert "errored" in err and "Traceback" not in err
     volleys = probe_lines(tmp_path)
     assert len(volleys) == 1 and volleys[0]["errored"] == 4  # the raw evidence stays
-    manifiesto = json.loads(
+    manifest = json.loads(
         (pathlib.Path(tmp_path) / "runs" / "manifest-T1-concurrency.json").read_text(
             encoding="utf-8"
         )
     )
-    assert manifiesto["probe"]["status"] == "in_flight"  # no cut_off was persisted
-    assert "cell_plan" not in manifiesto and manifiesto["batches"] == {}
+    assert manifest["probe"]["status"] == "in_flight"  # no cut_off was persisted
+    assert "cell_plan" not in manifest and manifest["batches"] == {}
     # the endpoint recovers: the resume re-probes (a new attempt) and runs the cells
     fake_cli.chat_raise = None
     from test_dry_run import run_cli
@@ -240,20 +240,20 @@ def test_cells_carry_the_same_total_tokens_and_their_own_k(tmp_path, fake_cli):
     requests = read_jsonl(tmp_path, "runs", "requests-*.jsonl")
     batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")
     assert len(requests) == 24 and len(batches) == 3
-    por_celda: dict[int, list[dict]] = {}
+    per_cell: dict[int, list[dict]] = {}
     for r in requests:
         assert r["workload"] == "concurrency" and r["level"] == "T1"
-        por_celda.setdefault(r["k"], []).append(r)
-    assert sorted(por_celda) == [1, 4, 8]
+        per_cell.setdefault(r["k"], []).append(r)
+    assert sorted(per_cell) == [1, 4, 8]
     hashes = set()
-    for k, lineas in sorted(por_celda.items()):
-        assert len(lineas) == 8
-        assert all(r["k"] == k for r in lineas)  # the dataset carries the k field
-        assert {r["seed"] for r in lineas} == {r["seed"] for r in por_celda[1]}
-        assert {r["fixture_hash"] for r in lineas} == {
-            r["fixture_hash"] for r in por_celda[1]
+    for k, lines in sorted(per_cell.items()):
+        assert len(lines) == 8
+        assert all(r["k"] == k for r in lines)  # the dataset carries the k field
+        assert {r["seed"] for r in lines} == {r["seed"] for r in per_cell[1]}
+        assert {r["fixture_hash"] for r in lines} == {
+            r["fixture_hash"] for r in per_cell[1]
         }  # the same fixture: the same total tokens per cell
-        assert all(r["tok_in"] == 26 and r["tok_out"] == 12 for r in lineas)
+        assert all(r["tok_in"] == 26 and r["tok_out"] == 12 for r in lines)
         hashes |= {r["fixture_hash"]}
     assert len(hashes) == 1
     # dp vs k: identical billed load, so the cell deltas agree within a tick
@@ -275,18 +275,18 @@ def test_wall_clock_records_serialization_vs_parallelism(tmp_path, fake_cli):
 def test_verdict_computes_effective_cost_per_task_from_raw_with_the_anchor(tmp_path, fake_cli):
     fake_cli.reply_for = lambda prompt: "OK"  # the calibration contract: every task completes
     prepare(tmp_path)
-    assert probe_cli(tmp_path, "--model", MODEL, "--ancla", "100")[0] == 0
+    assert probe_cli(tmp_path, "--model", MODEL, "--anchor", "100")[0] == 0
     doc = summary(tmp_path)
-    assert doc["ancla"] == 100.0
+    assert doc["anchor"] == 100.0
     assert abs(doc["usd_per_pp"] - usd_per_pp(100)) < 1e-12
     batches = {b["k"]: b for b in read_jsonl(tmp_path, "batches", "batches-*.jsonl")}
-    for celda in doc["cells"]:
-        b = batches[celda["k"]]
-        esperado = b["dpp_weekly"] * usd_per_pp(100) / celda["n"]
-        assert abs(celda["cost_per_attempted_task_usd"] - esperado) < 1e-9
+    for cell in doc["cells"]:
+        b = batches[cell["k"]]
+        expected = b["dpp_weekly"] * usd_per_pp(100) / cell["n"]
+        assert abs(cell["cost_per_attempted_task_usd"] - expected) < 1e-9
         # the fake replies OK, so every task completes: the primary unit matches
-        assert celda["completed"] == 8
-        assert abs(celda["cost_per_completed_task_usd"] - esperado) < 1e-9
+        assert cell["completed"] == 8
+        assert abs(cell["cost_per_completed_task_usd"] - expected) < 1e-9
     assert doc["cells"][0]["cost_per_attempted_task_usd"] > 0
 
 
@@ -329,9 +329,9 @@ def test_raw_lines_honor_the_schemas_and_leak_no_key(tmp_path, fake_cli):
         validate_batch_line(b)
     doc = summary(tmp_path)
     assert doc["protocol_version"] and doc["table_version"] == "2026-08-31"
-    for carpeta in ("runs", "batches"):
-        for ruta in (pathlib.Path(tmp_path) / carpeta).iterdir():
-            assert "test-key" not in ruta.read_text(encoding="utf-8"), ruta.name
+    for folder in ("runs", "batches"):
+        for path in (pathlib.Path(tmp_path) / folder).iterdir():
+            assert "test-key" not in path.read_text(encoding="utf-8"), path.name
 
 
 def test_abort_inside_a_cell_keeps_the_billed_evidence(tmp_path, fake_cli):
@@ -354,12 +354,12 @@ def test_abort_inside_a_cell_keeps_the_billed_evidence(tmp_path, fake_cli):
     assert len(batches) == 2  # the k=1 bracket closed done; the k=4 one closed aborted
     estados = sorted((b["k"], "done" if not b["notes"] else "aborted") for b in batches)
     assert estados == [(1, "done"), (4, "aborted")]
-    manifiesto = json.loads(
+    manifest = json.loads(
         (pathlib.Path(tmp_path) / "runs" / "manifest-T1-concurrency.json").read_text(
             encoding="utf-8"
         )
     )
-    entry_status = [e["status"] for e in manifiesto["batches"].values()]
+    entry_status = [e["status"] for e in manifest["batches"].values()]
     assert entry_status.count("aborted") == 1 and entry_status.count("done") == 1
 
 
@@ -369,11 +369,11 @@ def test_resume_never_reprobes_and_skips_done_cells(tmp_path, fake_cli):
     prepare(tmp_path)
     assert probe_cli(tmp_path, "--model", MODEL)[0] == 0
     antes_chats, antes_reads = len(chats(fake_cli)), len(reads(fake_cli))
-    ruta = pathlib.Path(tmp_path) / "runs" / "manifest-T1-concurrency.json"
-    manifiesto = json.loads(ruta.read_text(encoding="utf-8"))
-    victima = next(iter(manifiesto["batches"]))
-    manifiesto["batches"][victima]["status"] = "in_flight"  # a crash mid-cell
-    ruta.write_text(json.dumps(manifiesto), encoding="utf-8")
+    path = pathlib.Path(tmp_path) / "runs" / "manifest-T1-concurrency.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    victima = next(iter(manifest["batches"]))
+    manifest["batches"][victima]["status"] = "in_flight"  # a crash mid-cell
+    path.write_text(json.dumps(manifest), encoding="utf-8")
     assert (
         run_cli(
             tmp_path,
@@ -428,14 +428,14 @@ def test_failed_sibling_does_not_void_the_cell_verdicts(tmp_path, fake_cli):
     requests = read_jsonl(tmp_path, "runs", "requests-*.jsonl")
     fallidas = [r for r in requests if r["http"] != 200]
     assert len(fallidas) == 1 and fallidas[0]["k"] == 1
-    veredictos = [r["checker"] for r in requests]
-    assert veredictos.count("pass") == 23 and veredictos.count(None) == 1  # the good ones pass
+    verdicts = [r["checker"] for r in requests]
+    assert verdicts.count("pass") == 23 and verdicts.count(None) == 1  # the good ones pass
     doc = summary(tmp_path)
     por_k = {c["k"]: c for c in doc["cells"]}
     assert por_k[1]["completed"] == 7  # not voided to 0 by the rejected sibling
     batches = {b["k"]: b for b in read_jsonl(tmp_path, "batches", "batches-*.jsonl")}
-    esperado = batches[1]["dpp_weekly"] * usd_per_pp(100) / 7
-    assert abs(por_k[1]["cost_per_completed_task_usd"] - esperado) < 1e-9
+    expected = batches[1]["dpp_weekly"] * usd_per_pp(100) / 7
+    assert abs(por_k[1]["cost_per_completed_task_usd"] - expected) < 1e-9
     assert por_k[4]["completed"] == 8 and por_k[8]["completed"] == 8
 
 
@@ -487,10 +487,10 @@ def test_cell_plan_drift_is_refused(tmp_path, fake_cli):
 
     prepare(tmp_path)
     assert probe_cli(tmp_path, "--model", MODEL)[0] == 0
-    ruta = pathlib.Path(tmp_path) / "runs" / "manifest-T1-concurrency.json"
-    manifiesto = json.loads(ruta.read_text(encoding="utf-8"))
-    manifiesto["cell_plan"] = {"ks": [1, 4, 8], "n": 12}  # as if the harness changed
-    ruta.write_text(json.dumps(manifiesto), encoding="utf-8")
+    path = pathlib.Path(tmp_path) / "runs" / "manifest-T1-concurrency.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["cell_plan"] = {"ks": [1, 4, 8], "n": 12}  # as if the harness changed
+    path.write_text(json.dumps(manifest), encoding="utf-8")
     assert (
         run_cli(
             tmp_path,
@@ -545,7 +545,7 @@ def test_the_k_cells_run_under_a_proven_lane(tmp_path, fake_cli):
     the same gate `bench run` enforces."""
     prepare(tmp_path)
     assert probe_cli(tmp_path, "--model", MODEL)[0] == 0
-    canarios = [
+    canaries = [
         json.loads(l)
         for l in (pathlib.Path(tmp_path, "runs").glob("canary-*.jsonl"))
         .__iter__()
@@ -554,16 +554,16 @@ def test_the_k_cells_run_under_a_proven_lane(tmp_path, fake_cli):
         .splitlines()
         if l.strip()
     ]
-    assert len(canarios) == 1 and canarios[0]["alarm"] is False
+    assert len(canaries) == 1 and canaries[0]["alarm"] is False
     from obench import lane
 
-    assert canarios[0]["model"] == lane.CANARY_MODEL  # the fixed reference model
+    assert canaries[0]["model"] == lane.CANARY_MODEL  # the fixed reference model
     # The cells' requests are salted; the probe's volleys are exempt.
-    lineas = read_jsonl(tmp_path, "runs", "requests-*.jsonl")
-    assert all(r["nonce_sha256"] for r in lineas)  # measured cells: salted
-    assert all(r["prompt_sha256"] for r in lineas)
-    manifiesto = json.loads(
+    lines = read_jsonl(tmp_path, "runs", "requests-*.jsonl")
+    assert all(r["nonce_sha256"] for r in lines)  # measured cells: salted
+    assert all(r["prompt_sha256"] for r in lines)
+    manifest = json.loads(
         pathlib.Path(tmp_path, "runs", "manifest-T1-concurrency.json").read_text(encoding="utf-8")
     )
-    assert manifiesto["lane"]["mode"] == "cache-free"
-    assert manifiesto["canary"]["status"] == "ok"
+    assert manifest["lane"]["mode"] == "cache-free"
+    assert manifest["canary"]["status"] == "ok"

@@ -27,8 +27,8 @@ Loaders in the consumer: `_plantilla(name)` (analyze.py) reads each template fro
 
 Analysis JSON artifacts → template substitution → output HTML in `analysis/` (or the stamped `analysis-s<x>/` folder):
 
-1. The CLI (`cmd_analyze` / release path) builds the doc with `analyze.build(...)`, then calls `analyze.write_bundle(base, doc, tabla=tabla)`.
-2. `write_bundle()` (analyze.py) derives both rates payloads from `tabla` itself — the dashboard gets `_rates_map()` (analysis-cells models only), the calculator `_rates_map_full()` (an empty calculator is unrepresentable: the choice is not the caller's) — writes `analysis.json`, then:
+1. The CLI (`cmd_analyze` / release path) builds the doc with `analyze.build(...)`, then calls `analyze.write_bundle(base, doc, table=table)`.
+2. `write_bundle()` (analyze.py) derives both rates payloads from `table` itself — the dashboard gets `_rates_map()` (analysis-cells models only), the calculator `_rates_map_full()` (an empty calculator is unrepresentable: the choice is not the caller's) — writes `analysis.json`, then:
    - `render_dashboard(doc, rates)` — fills the dashboard template's three placeholders.
    - `render_calculator(doc, rates)` — full per-model table map; every priced model gets a row and filter option.
 3. Output: `analysis.json`, `dashboard.html`, `calculator.html` under the bundle folder.

@@ -74,9 +74,9 @@ _BATCH_SCHEMA: dict[str, tuple] = {
     "settle_exit": (str, None),  # "stable" | "capped"; null when the loop never ran
     "count_check_s": (float, int, None),  # null on an aborted batch closed without a check
     "wall_clock_s": (float, int, None),  # the cell's makespan (null when nothing completed)
-    "medidor_pre": (dict,),
-    # medidor_post is null on an aborted batch whose post read itself failed
-    "medidor_post": (dict, None),
+    "meter_pre": (dict,),
+    # meter_post is null on an aborted batch whose post read itself failed
+    "meter_post": (dict, None),
     "dpp_session": (float, int, None),
     "dpp_weekly": (float, int, None),
     "request_counts": (dict,),
@@ -159,29 +159,29 @@ class SchemaError(Exception):
     """A raw line does not honor the agreed dataset schema."""
 
 
-def _validate(line: dict, esquema: dict, tipo: str) -> None:
+def _validate(line: dict, schema: dict, kind: str) -> None:
     if not isinstance(line, dict):
-        raise SchemaError(f"{tipo} line is not an object: {type(line).__name__}")
-    faltantes = [k for k in esquema if k not in line]
-    if faltantes:
-        raise SchemaError(f"{tipo} line is missing fields: {', '.join(sorted(faltantes))}")
-    sobrantes = [k for k in line if k not in esquema]
-    if sobrantes:
+        raise SchemaError(f"{kind} line is not an object: {type(line).__name__}")
+    missing = [k for k in schema if k not in line]
+    if missing:
+        raise SchemaError(f"{kind} line is missing fields: {', '.join(sorted(missing))}")
+    extra = [k for k in line if k not in schema]
+    if extra:
         # A field the schema does not declare is a producer bug (a typo writes
         # the wrong evidence under the wrong name): it fails loudly on write.
-        raise SchemaError(f"{tipo} line carries undeclared fields: {', '.join(sorted(sobrantes))}")
-    for campo, permitidos in esquema.items():
-        valor = line[campo]
-        admite_nulo = None in permitidos
-        concretos = tuple(t for t in permitidos if t is not None)
-        if isinstance(valor, bool) and int in concretos:
-            raise SchemaError(f"{tipo} line: field {campo!r} must be an int, not a bool")
-        if valor is None and not admite_nulo:
-            raise SchemaError(f"{tipo} line: field {campo!r} must not be null (got null)")
-        if valor is not None and not isinstance(valor, concretos):
+        raise SchemaError(f"{kind} line carries undeclared fields: {', '.join(sorted(extra))}")
+    for field, allowed in schema.items():
+        value = line[field]
+        allows_null = None in allowed
+        concrete = tuple(t for t in allowed if t is not None)
+        if isinstance(value, bool) and int in concrete:
+            raise SchemaError(f"{kind} line: field {field!r} must be an int, not a bool")
+        if value is None and not allows_null:
+            raise SchemaError(f"{kind} line: field {field!r} must not be null (got null)")
+        if value is not None and not isinstance(value, concrete):
             raise SchemaError(
-                f"{tipo} line: field {campo!r} has type {type(valor).__name__}, "
-                f"expected {' or '.join(t.__name__ for t in concretos)}"
+                f"{kind} line: field {field!r} has type {type(value).__name__}, "
+                f"expected {' or '.join(t.__name__ for t in concrete)}"
             )
 
 
@@ -198,14 +198,14 @@ def validate_batch_line(line: dict) -> None:
         if line["workload"] is None:
             raise SchemaError("batch line: a bracket without 'workload' must carry its 'pool'")
         return
-    cargas = pool.get("workloads")
+    workloads = pool.get("workloads")
     if (
-        not isinstance(cargas, list)
-        or not cargas
-        or not all(isinstance(w, str) and w for w in cargas)
+        not isinstance(workloads, list)
+        or not workloads
+        or not all(isinstance(w, str) and w for w in workloads)
     ):
         raise SchemaError("batch line: 'pool.workloads' must be a non-empty list of workload names")
-    if len(set(cargas)) != len(cargas):
+    if len(set(workloads)) != len(workloads):
         raise SchemaError("batch line: 'pool.workloads' repeats a workload name")
     reps = pool.get("reps")
     if not isinstance(reps, int) or isinstance(reps, bool) or reps < 1:
@@ -226,37 +226,37 @@ def validate_canary_line(line: dict) -> None:
 
 def validate_estimate_line(line: dict) -> None:
     _validate(line, _ESTIMATE_SCHEMA, "estimate")
-    celda = line["cell"]
-    if not isinstance(celda.get("workload"), str) or not isinstance(celda.get("model"), str):
+    cell = line["cell"]
+    if not isinstance(cell.get("workload"), str) or not isinstance(cell.get("model"), str):
         raise SchemaError("estimate line: 'cell' must carry 'workload' and 'model' strings")
 
 
-def read_jsonl(ruta: pathlib.Path) -> list[dict]:
+def read_jsonl(path: pathlib.Path) -> list[dict]:
     """The raw lines of one JSONL artifact, tolerant of a torn tail: the run
     reads line-by-line, so a crash mid-write can leave the last line half
     written — it is skipped, not fatal (the raw is immutable, the reader is
     the only tolerance the protocol grants)."""
-    if not ruta.exists():
+    if not path.exists():
         return []
-    lineas = []
-    for cruda in ruta.read_text(encoding="utf-8").splitlines():
-        if not cruda.strip():
+    lines = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        if not raw.strip():
             continue
         try:
-            doc = json.loads(cruda)
+            doc = json.loads(raw)
         except json.JSONDecodeError:
             continue
         if isinstance(doc, dict):
-            lineas.append(doc)
-    return lineas
+            lines.append(doc)
+    return lines
 
 
-def read_dataset(directorio: pathlib.Path, patron: str) -> list[dict]:
+def read_dataset(directory: pathlib.Path, pattern: str) -> list[dict]:
     """Every raw line of the directory's dataset files, torn tails skipped."""
-    lineas: list[dict] = []
-    directorio = pathlib.Path(directorio)
-    if not directorio.exists():
-        return lineas
-    for ruta in sorted(directorio.glob(patron)):
-        lineas.extend(read_jsonl(ruta))
-    return lineas
+    lines: list[dict] = []
+    directory = pathlib.Path(directory)
+    if not directory.exists():
+        return lines
+    for path in sorted(directory.glob(pattern)):
+        lines.extend(read_jsonl(path))
+    return lines

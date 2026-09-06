@@ -25,7 +25,7 @@ T3_NAMES = tuple(fixtures_t3.WORKLOADS)
 _RE_STEP = re.compile(r"This is action (\d+) of (\d+)")
 
 
-def cuerpo(prompt: str) -> str:
+def body(prompt: str) -> str:
     """The fixture body the reply scripts parse: the wire prompt carries the
     lane's nonce as one line above the fixture."""
     if prompt.startswith("Sandbox task ("):
@@ -84,24 +84,24 @@ def scripted_actions(workload: str) -> list[dict]:
 
 def correct_reply(prompt: str) -> str:
     """The scripted agent that actually fixes the task, then verifies and finishes."""
-    prompt = cuerpo(prompt)
+    prompt = body(prompt)
     if not prompt.startswith("Sandbox task ("):
         return "world"  # the canary's T2-size body: never graded, only accepted
     workload = fixtures_t3.workload_of(prompt)
-    acciones = scripted_actions(workload)
-    paso = int(_RE_STEP.search(prompt).group(1))
-    if paso <= len(acciones):
-        return json.dumps(acciones[paso - 1])
+    actions = scripted_actions(workload)
+    step = int(_RE_STEP.search(prompt).group(1))
+    if step <= len(actions):
+        return json.dumps(actions[step - 1])
     return json.dumps({"action": "finish", "summary": "every test passes"})
 
 
 def confident_reply(prompt: str) -> str:
     """The agent that claims success without fixing anything: a no-op patch,
     then `finish` claiming the tests pass — the checker must land it as a fail."""
-    if not cuerpo(prompt).startswith("Sandbox task ("):
+    if not body(prompt).startswith("Sandbox task ("):
         return "world"  # the canary's T2-size body: never graded, only accepted
-    paso = int(_RE_STEP.search(cuerpo(prompt)).group(1))
-    if paso == 1:
+    step = int(_RE_STEP.search(body(prompt)).group(1))
+    if step == 1:
         return json.dumps(
             {
                 "action": "apply_patch",
@@ -120,16 +120,16 @@ def looping_reply(_prompt: str) -> str:
 
 def sloppy_reply(prompt: str) -> str:
     """A turn of prose before the fix: the invalid step is spent, the loop recovers."""
-    prompt = cuerpo(prompt)
+    prompt = body(prompt)
     if not prompt.startswith("Sandbox task ("):
         return "world"  # the canary's T2-size body: never graded, only accepted
     workload = fixtures_t3.workload_of(prompt)
-    acciones = scripted_actions(workload)
-    paso = int(_RE_STEP.search(prompt).group(1))
-    if paso == 1:
+    actions = scripted_actions(workload)
+    step = int(_RE_STEP.search(prompt).group(1))
+    if step == 1:
         return "I will fix the failing test suite now."
-    if paso <= len(acciones) + 1:
-        return json.dumps(acciones[paso - 2])
+    if step <= len(actions) + 1:
+        return json.dumps(actions[step - 2])
     return json.dumps({"action": "finish", "summary": "every test passes"})
 
 
@@ -189,8 +189,8 @@ def test_the_loop_records_tokens_per_step_inside_the_bracketed_batch(tmp_path, f
             "pre"
         ].get(r["model"], 0)
         assert contados == len(r["steps"])
-        esperado = len(r["steps"]) * fake_cli.ticks_per_request * 0.1
-        assert abs(batch["dpp_session"] - esperado) <= 0.1
+        expected = len(r["steps"]) * fake_cli.ticks_per_request * 0.1
+        assert abs(batch["dpp_session"] - expected) <= 0.1
 
 
 def test_a_confident_non_fix_fails_the_checker(tmp_path, fake_cli):
@@ -370,15 +370,15 @@ def test_a_sandbox_that_never_reaches_pytest_aborts_the_batch(tmp_path, fake_cli
     assert "sandbox never ran pytest" in err and "Traceback" not in err
     requests = read_requests(tmp_path)
     assert all(r["checker"] is None for r in requests)  # billed evidence kept, ungraded
-    manifiesto = json.loads((tmp_path / "runs" / "manifest-T3.json").read_text(encoding="utf-8"))
-    assert all(e["status"] == "aborted" for e in manifiesto["batches"].values())
+    manifest = json.loads((tmp_path / "runs" / "manifest-T3.json").read_text(encoding="utf-8"))
+    assert all(e["status"] == "aborted" for e in manifest["batches"].values())
 
 
 def gaming_reply(prompt: str) -> str:
     """A scripted agent that games instead of working: it writes a pytest.ini
     that collects nothing, a tests/conftest.py that skips everything, and a
     planted passing test — then finishes claiming success."""
-    acciones = [
+    actions = [
         {
             "action": "write_file",
             "path": "pytest.ini",
@@ -395,34 +395,34 @@ def gaming_reply(prompt: str) -> str:
             "content": "def test_planted_pass():\n    assert True\n",
         },
     ]
-    prompt = cuerpo(prompt)
+    prompt = body(prompt)
     if not prompt.startswith("Sandbox task ("):
         return "world"  # the canary's T2-size body: never graded, only accepted
     workload = fixtures_t3.workload_of(prompt)
-    paso = int(_RE_STEP.search(prompt).group(1))
+    step = int(_RE_STEP.search(prompt).group(1))
     if workload == "debugging":
-        if paso <= len(acciones):
-            return json.dumps(acciones[paso - 1])
+        if step <= len(actions):
+            return json.dumps(actions[step - 1])
         return json.dumps({"action": "finish", "summary": "the suite now passes"})
     return correct_reply(prompt)
 
 
-def trap_reply(contenido: str):
+def trap_reply(content: str):
     """A scripted agent that plants one extra test file at the repo root — in
     the debugging repo only; the other two workloads run the correct
     transcripts. (A root-level test file is carried into the graded copy, so
     the trap's code really executes inside the sandbox.)"""
 
     def _reply(prompt: str) -> str:
-        prompt = cuerpo(prompt)
+        prompt = body(prompt)
         if not prompt.startswith("Sandbox task ("):
             return "world"  # the canary's T2-size body: never graded, only accepted
         workload = fixtures_t3.workload_of(prompt)
-        paso = int(_RE_STEP.search(prompt).group(1))
+        step = int(_RE_STEP.search(prompt).group(1))
         if workload == "debugging":
-            if paso == 1:
+            if step == 1:
                 return json.dumps(
-                    {"action": "write_file", "path": "test_trap.py", "content": contenido}
+                    {"action": "write_file", "path": "test_trap.py", "content": content}
                 )
             return json.dumps({"action": "finish", "summary": "all tests pass"})
         return correct_reply(prompt)
@@ -452,8 +452,8 @@ def test_parse_action_extracts_a_json_object_with_trailing_prose():
     must not invalidate an otherwise parsable action."""
     from obench.agent import parse_action
 
-    accion = parse_action('{"action": "finish", "summary": "done"} - tests pass now.')
-    assert accion == {"action": "finish", "summary": "done"}
+    action = parse_action('{"action": "finish", "summary": "done"} - tests pass now.')
+    assert action == {"action": "finish", "summary": "done"}
     assert parse_action('prose first {"action": "finish"}') == {"action": "finish"}
     assert parse_action("no braces at all") is None
     assert parse_action("{not json") is None
@@ -464,11 +464,11 @@ def test_hostile_write_ends_the_task_without_losing_the_batch(tmp_path, fake_cli
     at its recorded error step: the billed evidence stays, the batch completes."""
 
     def hostile(prompt: str) -> str:
-        if not cuerpo(prompt).startswith("Sandbox task ("):
+        if not body(prompt).startswith("Sandbox task ("):
             return "world"  # the canary's T2-size body: never graded, only accepted
-        workload = fixtures_t3.workload_of(cuerpo(prompt))
-        paso = int(_RE_STEP.search(cuerpo(prompt)).group(1))
-        if workload == "debugging" and paso == 1:
+        workload = fixtures_t3.workload_of(body(prompt))
+        step = int(_RE_STEP.search(body(prompt)).group(1))
+        if workload == "debugging" and step == 1:
             return json.dumps(
                 {"action": "write_file", "path": "trap.py", "content": "bad \ud800 char"}
             )
@@ -479,20 +479,20 @@ def test_hostile_write_ends_the_task_without_losing_the_batch(tmp_path, fake_cli
     code, out, err = run_t3(tmp_path, "--reps", "1", "--model", "glm-5.3-flash")
     assert code == 0, out or err
     requests = read_requests(tmp_path)
-    por_carga: dict[str, list[dict]] = {}
+    per_workload: dict[str, list[dict]] = {}
     for r in requests:
-        por_carga.setdefault(r["workload"], []).append(r)
-    hostiles = por_carga["debugging"]
+        per_workload.setdefault(r["workload"], []).append(r)
+    hostiles = per_workload["debugging"]
     assert len(hostiles) == 1  # the narrowed run's single task, with its record
     for r in hostiles:
-        pasos = r["steps"]
-        assert len(pasos) == 1  # the loop ended at the broken action
-        assert pasos[0]["action"] == "error" and pasos[0]["action_ok"] is False
-        assert "UnicodeEncodeError" in pasos[0]["result"]
-        assert pasos[0]["http"] == 200  # the step was billed: the evidence is kept
+        steps = r["steps"]
+        assert len(steps) == 1  # the loop ended at the broken action
+        assert steps[0]["action"] == "error" and steps[0]["action_ok"] is False
+        assert "UnicodeEncodeError" in steps[0]["result"]
+        assert steps[0]["http"] == 200  # the step was billed: the evidence is kept
     # the other workloads' tasks are unaffected
-    assert all(r["steps"][-1]["action"] == "finish" for r in por_carga["multi_file"])
-    assert all(r["steps"][-1]["action"] == "finish" for r in por_carga["refactoring"])
+    assert all(r["steps"][-1]["action"] == "finish" for r in per_workload["multi_file"])
+    assert all(r["steps"][-1]["action"] == "finish" for r in per_workload["refactoring"])
 
 
 def test_one_crashed_task_never_discards_its_siblings(tmp_path, monkeypatch):
@@ -518,7 +518,7 @@ def test_one_crashed_task_never_discards_its_siblings(tmp_path, monkeypatch):
         n=2,
         fixture_hash="h",
     )
-    registros = asyncio.run(
+    records = asyncio.run(
         agent.run_tasks(
             None,  # never consulted: run_task is patched out
             spec,
@@ -527,7 +527,7 @@ def test_one_crashed_task_never_discards_its_siblings(tmp_path, monkeypatch):
             sandbox_root=tmp_path,
         )
     )
-    assert len(registros) == 2
-    for r in registros:
+    assert len(records) == 2
+    for r in records:
         assert r["steps"] == [] and r["http"] is None
         assert "task crashed" in r["err"] and "OSError" in r["err"]

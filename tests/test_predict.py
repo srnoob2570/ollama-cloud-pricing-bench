@@ -60,8 +60,8 @@ def estimate(
 
 
 def estimates_path(tmp_path, phase: str) -> pathlib.Path:
-    nombre = predict.PHASE_FILE[phase]
-    return pathlib.Path(tmp_path, predict.PREDICT_DIR, nombre)
+    name = predict.PHASE_FILE[phase]
+    return pathlib.Path(tmp_path, predict.PREDICT_DIR, name)
 
 
 def write_raw(tmp_path, requests: list[dict], batches: list[dict]) -> None:
@@ -136,8 +136,8 @@ def craft_cell(tmp_path, workload: str, model: str, *, reps: dict[int, tuple[int
                 "settle_exit": "stable",
                 "count_check_s": 0.5,
                 "wall_clock_s": 10.0,
-                "medidor_pre": {"limits": {"session": {"usage": 0.5}, "weekly": {"usage": 0.5}}},
-                "medidor_post": {
+                "meter_pre": {"limits": {"session": {"usage": 0.5}, "weekly": {"usage": 0.5}}},
+                "meter_post": {
                     "limits": {
                         "session": {"usage": 0.5 + dpp / 200},
                         "weekly": {"usage": 0.5 + dpp / 100},
@@ -197,7 +197,7 @@ def estimate_all_blind(tmp_path) -> None:
     The four measured cells' estimates are chosen so every hand-derived MAPE below
     is simple; the ten still-unmeasured cells get placeholder numbers.
     """
-    valores = {
+    values = {
         ("long_context", "glm-5.3-flash"): (
             4.0,
             0.00558,
@@ -213,7 +213,7 @@ def estimate_all_blind(tmp_path) -> None:
         ),  # legacy |8-4|/4 = 1.0, new (0.28875-0.2625)/0.2625 = 0.09999999999999998
     }
     for workload, model in predict._GRID:
-        pp, usd = valores.get((workload, model), (1.0, 0.01))
+        pp, usd = values.get((workload, model), (1.0, 0.01))
         code, out, err = estimate(tmp_path, "blind", workload, model, pp, usd)
         assert code == 0, out or err
 
@@ -221,13 +221,13 @@ def estimate_all_blind(tmp_path) -> None:
 def estimate_all_informed(tmp_path) -> None:
     """The informed re-estimation of the four measured cells: exact (the learning
     curve's floor - MAPE 0 against the same reals)."""
-    valores = {
+    values = {
         ("long_context", "glm-5.3-flash"): (2.0, 0.00465),
         ("long_generation", "kimi-k3"): (1.0, 0.0786),
         ("ratio_out", "glm-5.3-flash"): (0.05, 0.0056),
         ("multi_file", "kimi-k2.7-code"): (4.0, 0.2625),
     }
-    for (workload, model), (pp, usd) in valores.items():
+    for (workload, model), (pp, usd) in values.items():
         code, out, err = estimate(tmp_path, "informed", workload, model, pp, usd)
         assert code == 0, out or err
 
@@ -240,7 +240,7 @@ def report(tmp_path, *extra) -> dict:
     return doc
 
 
-def fila(doc: dict, workload: str, model: str) -> dict:
+def row(doc: dict, workload: str, model: str) -> dict:
     return next(c for c in doc["cells"] if c["workload"] == workload and c["model"] == model)
 
 
@@ -253,18 +253,18 @@ def test_grid_holds_the_measurable_set_on_the_slates():
     """The v1.1 re-scope: the strong four T2 workloads + T3, the pairs whose
     legacy the meter resolves per cell — qa_short (T1, sub-resolution level)
     and the pooled weak trio are out."""
-    celdas = predict.grid()
-    assert len(celdas) == 14
+    cells = predict.grid()
+    assert len(cells) == 14
     slates = {
         "T1": set(standard_table()),
         "T2": set(workloads.SLATE_T2),
         "T3": set(workloads.SLATE_T3),
     }
-    for c in celdas:
+    for c in cells:
         assert c.model in slates[c.level], c.key
         assert c.workload in {w.name for w in workloads.WORKLOADS_BY_LEVEL[c.level]}, c.key
         assert c.level in ("T2", "T3"), c.key  # the measurable-legacy levels only
-    assert {(c.workload, c.model) for c in celdas} == (
+    assert {(c.workload, c.model) for c in cells} == (
         {
             (w, m)
             for w in ("long_context", "long_generation", "ratio_in", "ratio_out")
@@ -277,7 +277,7 @@ def test_grid_holds_the_measurable_set_on_the_slates():
         }
     )
     # the agentic cells carry the T3 slate's code model, never kimi-k3
-    assert {c.model for c in celdas if c.level == "T3"} == {
+    assert {c.model for c in cells if c.level == "T3"} == {
         "glm-5.3-flash",
         "kimi-k2.7-code",
     }
@@ -362,15 +362,15 @@ def test_blind_estimate_is_one_per_cell_and_locked(tmp_path):
     assert code == 0, out or err
     code, _out, err = estimate(tmp_path, "blind", "long_context", "glm-5.3-flash", 3.0, 0.06)
     assert code == 2 and "locked" in err and "not revisable" in err
-    lineas = [
-        json.loads(cruda)
-        for cruda in (tmp_path / predict.PREDICT_DIR / "estimates-phase1.jsonl")
+    lines = [
+        json.loads(raw)
+        for raw in (tmp_path / predict.PREDICT_DIR / "estimates-phase1.jsonl")
         .read_text(encoding="utf-8")
         .splitlines()
-        if cruda.strip()
+        if raw.strip()
     ]
-    assert len(lineas) == 1  # the second estimate never landed
-    linea = lineas[0]
+    assert len(lines) == 1  # the second estimate never landed
+    linea = lines[0]
     validate_estimate_line(linea)
     assert predict.line_hash({k: v for k, v in linea.items() if k != "hash"}) == linea["hash"]
     assert linea["evidence"] == {"request_lines": 0, "batch_lines": 0}
@@ -380,10 +380,10 @@ def test_blind_estimate_is_one_per_cell_and_locked(tmp_path):
 def test_registry_tamper_refuses_everything_after_it(tmp_path):
     pricing_dir(tmp_path)
     assert estimate(tmp_path, "blind", "long_context", "glm-5.3-flash", 2.0, 0.05)[0] == 0
-    ruta = pathlib.Path(tmp_path, predict.PREDICT_DIR, "estimates-phase1.jsonl")
-    linea = json.loads(ruta.read_text(encoding="utf-8").splitlines()[0])
+    path = pathlib.Path(tmp_path, predict.PREDICT_DIR, "estimates-phase1.jsonl")
+    linea = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
     linea["estimated_pp"] = 1.0  # an estimate edited after its lock
-    ruta.write_text(json.dumps(linea) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(linea) + "\n", encoding="utf-8")
     code, _out, err = estimate(tmp_path, "blind", "ratio_in", "kimi-k3", 1.0, 0.01)
     assert code == 2 and "lock" in err and "edited" in err
     code, _out, err = run_cli(
@@ -395,11 +395,11 @@ def test_registry_tamper_refuses_everything_after_it(tmp_path):
 def test_torn_and_foreign_registry_lines_are_refused(tmp_path):
     pricing_dir(tmp_path)
     assert estimate(tmp_path, "blind", "long_context", "glm-5.3-flash", 2.0, 0.05)[0] == 0
-    ruta = pathlib.Path(tmp_path, predict.PREDICT_DIR, "estimates-phase1.jsonl")
-    ruta.write_text(ruta.read_text(encoding="utf-8") + "{torn\n", encoding="utf-8")
+    path = pathlib.Path(tmp_path, predict.PREDICT_DIR, "estimates-phase1.jsonl")
+    path.write_text(path.read_text(encoding="utf-8") + "{torn\n", encoding="utf-8")
     code, _out, err = estimate(tmp_path, "blind", "ratio_in", "kimi-k3", 1.0, 0.01)
     assert code == 2 and "not JSON" in err
-    ruta.write_text('{"junk": true}\n', encoding="utf-8")  # a foreign object, valid JSON
+    path.write_text('{"junk": true}\n', encoding="utf-8")  # a foreign object, valid JSON
     code, _out, err = estimate(tmp_path, "blind", "ratio_in", "kimi-k3", 1.0, 0.01)
     assert code == 2 and "schema" in err
 
@@ -461,16 +461,16 @@ def test_report_mape_matches_the_manual_math(tmp_path, fake_cli):
     full_study(tmp_path)
     antes = {
         str(p): p.read_bytes()
-        for carpeta in ("runs", "batches")
-        for p in sorted(pathlib.Path(tmp_path, carpeta).glob("*.jsonl"))
+        for folder in ("runs", "batches")
+        for p in sorted(pathlib.Path(tmp_path, folder).glob("*.jsonl"))
     }
     doc = report(tmp_path)
 
     assert fake_cli.calls == []  # the report never touches the API
     despues = {
         str(p): p.read_bytes()
-        for carpeta in ("runs", "batches")
-        for p in sorted(pathlib.Path(tmp_path, carpeta).glob("*.jsonl"))
+        for folder in ("runs", "batches")
+        for p in sorted(pathlib.Path(tmp_path, folder).glob("*.jsonl"))
     }
     assert despues == antes  # raw untouched
     assert doc["estimates"] == {"blind": 14, "informed": 4}
@@ -540,24 +540,24 @@ def test_report_mape_matches_the_manual_math(tmp_path, fake_cli):
         "mape_new": 0.09999999999999998,
     }
 
-    ruta = pathlib.Path(tmp_path, predict.PREDICT_DIR, "report.json")
+    path = pathlib.Path(tmp_path, predict.PREDICT_DIR, "report.json")
     assert (
-        ruta.exists()
-        and json.loads(ruta.read_text(encoding="utf-8"))["kind"] == "predictability-report"
+        path.exists()
+        and json.loads(path.read_text(encoding="utf-8"))["kind"] == "predictability-report"
     )
 
 
 def test_report_excludes_sub_resolution_cells_from_the_legacy_side(tmp_path):
     full_study(tmp_path)
     doc = report(tmp_path)
-    salida = next(
+    output = next(
         c for c in doc["cells"] if c["workload"] == "ratio_out" and c["model"] == "glm-5.3-flash"
     )
     # the real exists but sits under the tick: no legacy APE anywhere
-    assert salida["real_pp"] == 0.05 and salida["legacy_status"] == "sub_resolution"
-    assert salida["blind"]["ape_legacy"] is None
-    assert salida["informed"]["ape_legacy"] is None
-    assert salida["blind"]["ape_new"] == 1.0  # the new side has no such floor
+    assert output["real_pp"] == 0.05 and output["legacy_status"] == "sub_resolution"
+    assert output["blind"]["ape_legacy"] is None
+    assert output["informed"]["ape_legacy"] is None
+    assert output["blind"]["ape_new"] == 1.0  # the new side has no such floor
     hallazgos = doc["findings"]
     assert hallazgos["sub_resolution_legacy"] == [
         "ratio_out/glm-5.3-flash (real 0.05 pp, under the 0.1 pp tick)"
@@ -579,11 +579,9 @@ def test_report_lists_unmeasured_and_pending_cells(tmp_path):
     assert hallazgos["pending_blind"] == []
     assert len(hallazgos["pending_informed"]) == 10  # blind but never re-estimated
     # an unmeasured cell carries no real and no APE, even with an estimate in hand
-    entrada = next(
-        c for c in doc["cells"] if c["workload"] == "ratio_in" and c["model"] == "kimi-k3"
-    )
-    assert entrada["real_pp"] is None and entrada["legacy_status"] == "unmeasured"
-    assert entrada["blind"]["ape_legacy"] is None and entrada["blind"]["ape_new"] is None
+    input = next(c for c in doc["cells"] if c["workload"] == "ratio_in" and c["model"] == "kimi-k3")
+    assert input["real_pp"] is None and input["legacy_status"] == "unmeasured"
+    assert input["blind"]["ape_legacy"] is None and input["blind"]["ape_new"] is None
 
 
 def test_report_flags_off_grid_estimates_and_measured_cells_without_blind(tmp_path):
@@ -595,11 +593,11 @@ def test_report_flags_off_grid_estimates_and_measured_cells_without_blind(tmp_pa
     blind after the run) and is named in findings.measured_without_blind."""
     pricing_dir(tmp_path)
     assert estimate(tmp_path, "blind", "long_context", "glm-5.3-flash", 2.0, 0.05)[0] == 0
-    ruta = estimates_path(tmp_path, "blind")
-    linea = json.loads(ruta.read_text(encoding="utf-8").splitlines()[0])
+    path = estimates_path(tmp_path, "blind")
+    linea = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
     linea["cell"] = {"workload": "qa_short", "model": "glm-5.3-flash"}  # a v1-era cell
     linea["hash"] = predict.line_hash(linea)  # re-locked: the registry itself is honest
-    ruta.write_text(json.dumps(linea, ensure_ascii=False) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(linea, ensure_ascii=False) + "\n", encoding="utf-8")
     # the walkthrough headline counts grid cells only and names the strays
     doc = json_doc(tmp_path, "predict", "--pricing-dir", pricing_dir(tmp_path))
     assert doc["counts"] == {"blind": 0, "informed": 0, "cells": 14, "off_grid": 1}
@@ -666,7 +664,7 @@ def test_refuses_flags_it_does_not_read(tmp_path):
     assert code == 2 and "unrecognized" in err
     code, _out, err = run_cli(tmp_path, "predict", "--k", "4", "--pricing-dir", pricing)
     assert code == 2 and "unrecognized" in err
-    code, _out, err = run_cli(tmp_path, "predict", "--ancla", "100", "--pricing-dir", pricing)
+    code, _out, err = run_cli(tmp_path, "predict", "--anchor", "100", "--pricing-dir", pricing)
     assert code == 2 and "unrecognized" in err  # the MAPEs are native-unit: no anchor
     code, _out, err = run_cli(tmp_path, "predict", "--level", "T1", "--pricing-dir", pricing)
     assert code == 2 and "no --level" in err
@@ -786,7 +784,7 @@ def test_report_sets_aside_estimates_from_another_table_vintage(tmp_path):
     full_study(tmp_path)  # the estimates lock while only the 08-31 table exists
     encarecida = {m: {k: v * 1.2 for k, v in r.items()} for m, r in standard_table().items()}
     write_table(tmp_path / PRICING, "2026-09-01", encarecida)
-    code, salida, err = run_cli(
+    code, output, err = run_cli(
         tmp_path,
         "predict",
         "--report",
@@ -796,8 +794,8 @@ def test_report_sets_aside_estimates_from_another_table_vintage(tmp_path):
         pricing,
         "--json",
     )
-    assert code == 0, salida or err
-    doc = json.loads(salida)
+    assert code == 0, output or err
+    doc = json.loads(output)
     assert doc["table_version"] == "2026-09-01"
     qa = next(
         c for c in doc["cells"] if c["workload"] == "long_context" and c["model"] == "glm-5.3-flash"

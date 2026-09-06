@@ -32,22 +32,22 @@ from obench.pricing import Rate
 
 WEB = pathlib.Path(analyze_module.__file__).parent / "web"
 DRIVER = pathlib.Path(__file__).parent / "js_driver.js"
-MARCADOR = '<script id="shared-formulas">'
-NOMBRES = ("dashboard_template.html", "calculator_template.html")
+MARKER = '<script id="shared-formulas">'
+NAMES = ("dashboard_template.html", "calculator_template.html")
 
 TICK = 0.1 * U  # one meter tick in dollars: the analyze build's TICKUSD
 
 
-def _bloque(nombre: str) -> str:
-    cuerpo = (WEB / nombre).read_text(encoding="utf-8")
-    assert MARCADOR in cuerpo, nombre
-    return cuerpo.split(MARCADOR, 1)[1].split("</script>", 1)[0]
+def _block(name: str) -> str:
+    body = (WEB / name).read_text(encoding="utf-8")
+    assert MARKER in body, name
+    return body.split(MARKER, 1)[1].split("</script>", 1)[0]
 
 
-def run_js(bloque: str, prelude: str, exprs: list[str], tmp_path: pathlib.Path) -> list:
-    ruta = tmp_path / "shared-formulas.js"
-    ruta.write_text(bloque, encoding="utf-8")
-    trabajo = {"file": str(ruta), "prelude": prelude, "exprs": exprs}
+def run_js(block: str, prelude: str, exprs: list[str], tmp_path: pathlib.Path) -> list:
+    path = tmp_path / "shared-formulas.js"
+    path.write_text(block, encoding="utf-8")
+    trabajo = {"file": str(path), "prelude": prelude, "exprs": exprs}
     proc = subprocess.run(
         ["node", str(DRIVER)],
         input=json.dumps(trabajo),
@@ -65,25 +65,25 @@ def test_the_shared_formulas_block_is_byte_equal_across_pages():
     the same bytes on both pages, and it is self-contained (pure functions, no
     DOM or page globals), so the node-free equality is the only intra-template
     guard needed."""
-    tablero, calculadora = (_bloque(n) for n in NOMBRES)
-    assert tablero == calculadora
+    page, calculator = (_block(n) for n in NAMES)
+    assert page == calculator
     for prohibido in (
         "document",
         "window",
         "DATA",
         "RATES",
-        "estado",
+        "state",
         "PER",
         "TICKUSD",
         "CREDITRATIO",
     ):
-        assert re.search(rf"\b{prohibido}\b", tablero) is None, prohibido
-    for funcion in ("isNum", "isNull", "newCostCore", "verdictOf", "medianOf"):
-        assert f"function {funcion}(" in tablero, funcion
+        assert re.search(rf"\b{prohibido}\b", page) is None, prohibido
+    for function in ("isNum", "isNull", "newCostCore", "verdictOf", "medianOf"):
+        assert f"function {function}(" in page, function
 
 
 GOLDEN_VERDICTS = [
-    # (legacy, nuevo, tick_usd, legacy_session, credit_ratio) — the manual-math
+    # (legacy, newCost, tick_usd, legacy_session, credit_ratio) — the manual-math
     # cells of test_analyze: 9.6U vs 2/3 paid (new), 0.2U vs 2/3 (legacy), no
     # data, the two-tick-band tie at ratio 1, the sub-tick winner priced
     # with its session equivalent, and the ratio-1 1:1 comparison
@@ -112,7 +112,7 @@ def test_js_verdict_and_cost_match_the_persisted_rule(tmp_path):
     """The shipped verdictOf/newCostCore/medianOf return what Python's
     verdict_of/new_task_cost/statistics.median return on the same inputs, and
     both agree with the hand-written margins above."""
-    bloque = _bloque(NOMBRES[0])
+    block = _block(NAMES[0])
     exprs = [
         f"verdictOf({json.dumps(v[0])}, {json.dumps(v[1])}, {json.dumps(v[2])}, "
         f"{json.dumps(v[3])}, {json.dumps(v[4])})"
@@ -132,15 +132,15 @@ def test_js_verdict_and_cost_match_the_persisted_rule(tmp_path):
         "var ALPHA = {input: 0.6, cached_input: 0.3, output: 1.2, has_cache_discount: true};"
         "var BETA = {input: 1.0, cached_input: 1.0, output: 2.0, has_cache_discount: false};"
     )
-    js = run_js(bloque, prelude, exprs, tmp_path)
+    js = run_js(block, prelude, exprs, tmp_path)
 
     # verdicts: Python and JS, then the hand literals
-    for fixture, (margen, ganador), salida in zip(GOLDEN_VERDICTS, GOLDEN_MARGINS, js):
+    for fixture, (margin, winner), output in zip(GOLDEN_VERDICTS, GOLDEN_MARGINS, js):
         py = verdict_of(*fixture)
-        assert py == {"winner": ganador, "margin_pct": margen}, fixture
-        assert salida == {"winner": ganador, "margin_pct": margen}, fixture
-        if margen is not None:
-            assert round(salida["margin_pct"], 9) == round(margen, 9)
+        assert py == {"winner": winner, "margin_pct": margin}, fixture
+        assert output == {"winner": winner, "margin_pct": margin}, fixture
+        if margin is not None:
+            assert round(output["margin_pct"], 9) == round(margin, 9)
     # costs: Python and JS, then the hand literals
     alfa = Rate("alpha", 0.60, 0.30, 1.20)
     beta = Rate("beta", 1.00, 1.00, 2.00)
@@ -190,12 +190,12 @@ def test_the_shipped_block_re_verdicts_the_rendered_dashboard(tmp_path):
     )
     analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
     html = (tmp_path / "analysis" / "dashboard.html").read_text(encoding="utf-8")
-    datos = json.loads(
+    data = json.loads(
         html.split('<script id="analysis-data" type="application/json">', 1)[1].split(
             "</script>", 1
         )[0]
     )
-    tarifas = json.loads(
+    rates = json.loads(
         html.split('<script id="rates-data" type="application/json">', 1)[1].split("</script>", 1)[
             0
         ]
@@ -203,13 +203,13 @@ def test_the_shipped_block_re_verdicts_the_rendered_dashboard(tmp_path):
     # the slider sits at the assumed S1 default, so every cell's JS verdict
     # must match the persisted s1 verdict (measured models keep their measured s)
     prelude = (
-        f"var DATA = {json.dumps(datos)};"
-        f"var RATES = {json.dumps(tarifas)};"
+        f"var DATA = {json.dumps(data)};"
+        f"var RATES = {json.dumps(rates)};"
         "var PER = RATES.per;"
-        "var estado = {slider: 50};"
+        "var state = {slider: 50};"
         "function sOf(model) {"
         "  var e = DATA.s_per_model && DATA.s_per_model[model];"
-        '  return e && e.source === "measured" && isNum(e.s) ? e.s : estado.slider / 100;'
+        '  return e && e.source === "measured" && isNum(e.s) ? e.s : state.slider / 100;'
         "}"
         "function cellVerdict(c) {"
         "  var legacy = c.legacy_cost_task_usd ? c.legacy_cost_task_usd.median : null;"
@@ -219,10 +219,10 @@ def test_the_shipped_block_re_verdicts_the_rendered_dashboard(tmp_path):
         "    DATA.base_params.tick_usd, session, DATA.base_params.credit_ratio);"
         "}"
     )
-    celdas = [c for c in datos["cells"] if c["workload"] != "concurrency"]
-    exprs = [f"cellVerdict(DATA.cells[{i}])" for i in range(len(datos["cells"]))]
-    js = run_js(_bloque(NOMBRES[0]), prelude, exprs, tmp_path)
-    assert len(js) == len(celdas) and celdas
-    for celda, js_verdict in zip(celdas, js):
-        persistido = celda["verdict"]["s1"]
-        assert js_verdict == persistido, celda["model"] + "/" + celda["workload"]
+    cells = [c for c in data["cells"] if c["workload"] != "concurrency"]
+    exprs = [f"cellVerdict(DATA.cells[{i}])" for i in range(len(data["cells"]))]
+    js = run_js(_block(NAMES[0]), prelude, exprs, tmp_path)
+    assert len(js) == len(cells) and cells
+    for cell, js_verdict in zip(cells, js):
+        persistido = cell["verdict"]["s1"]
+        assert js_verdict == persistido, cell["model"] + "/" + cell["workload"]

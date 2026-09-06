@@ -190,11 +190,11 @@ def nonce_text(seed: str, index: int, words: int) -> str:
     """RNG(nonce_seed, i): a deterministic word stream from the seed and the
     request's coordinate hash — sha256 in counter mode, so no Python RNG
     internals sit between the manifest and the sent prompt."""
-    salida: list[str] = []
+    output: list[str] = []
     for j in range(words):
         digest = hashlib.sha256(f"{seed}|{index}|{j}".encode("utf-8")).digest()
-        salida.append(_WORDS[int.from_bytes(digest[:4], "big") % len(_WORDS)])
-    return " ".join(salida)
+        output.append(_WORDS[int.from_bytes(digest[:4], "big") % len(_WORDS)])
+    return " ".join(output)
 
 
 def salted_prompt(prompt: str, nonce: str) -> str:
@@ -202,8 +202,8 @@ def salted_prompt(prompt: str, nonce: str) -> str:
     return f"{nonce}\n\n{prompt}"
 
 
-def _sha256_hex(texto: str) -> str:
-    return hashlib.sha256(texto.encode("utf-8")).hexdigest()
+def _sha256_hex(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def prompt_sha256(prompt: str) -> str:
@@ -220,9 +220,9 @@ def expected_tin(level: str, workload: str) -> int:
     level's workload table; the fallback covers workstreams outside it."""
     from . import workloads  # deferred: the lane must import cheaply everywhere
 
-    for carga in workloads.WORKLOADS_BY_LEVEL.get(level, ()):
-        if carga.name == workload:
-            return carga.t_in
+    for spec in workloads.WORKLOADS_BY_LEVEL.get(level, ()):
+        if spec.name == workload:
+            return spec.t_in
     return EXPECTED_TIN_FALLBACK
 
 

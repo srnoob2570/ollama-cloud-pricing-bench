@@ -85,23 +85,23 @@ class Package:
     doc: dict  # the metadata document itself
 
 
-def _sha256(ruta: pathlib.Path) -> str:
-    return hashlib.sha256(ruta.read_bytes()).hexdigest()
+def _sha256(path: pathlib.Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _count_lines(ruta: pathlib.Path) -> int:
+def _count_lines(path: pathlib.Path) -> int:
     """Non-blank lines, tolerating a torn multi-byte tail (a crashed writer's
     mark): the release packages bytes as they are, the sha256 map pins them,
     and analyze skips the torn line — refusing here would block the dataset
     forever over one damaged tail."""
-    datos = ruta.read_bytes().decode("utf-8", errors="replace")
-    return sum(1 for l in datos.splitlines() if l.strip())
+    data = path.read_bytes().decode("utf-8", errors="replace")
+    return sum(1 for l in data.splitlines() if l.strip())
 
 
-def _atomic_write(ruta: pathlib.Path, texto: str) -> None:
-    tmp = ruta.with_name(ruta.name + ".tmp")
-    tmp.write_text(texto, encoding="utf-8")
-    tmp.replace(ruta)
+def _atomic_write(path: pathlib.Path, text: str) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
 
 
 # ---------------------------------------------------------------------------
@@ -112,23 +112,23 @@ def _atomic_write(ruta: pathlib.Path, texto: str) -> None:
 def _find_manifest(runs_dir: pathlib.Path, run_id: str) -> tuple[pathlib.Path, dict] | None:
     """The manifest binding this run_id; a corrupt manifest cannot prove a
     binding, so it is skipped (another one may bind)."""
-    for ruta in sorted(runs_dir.glob("manifest-*.json")):
+    for path in sorted(runs_dir.glob("manifest-*.json")):
         try:
-            doc = json.loads(ruta.read_text(encoding="utf-8"))
+            doc = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             continue
         if isinstance(doc, dict) and doc.get("run_id") == run_id:
-            return ruta, doc
+            return path, doc
     return None
 
 
-def _scan_raw(ruta: pathlib.Path) -> tuple[set[str], set[str]]:
+def _scan_raw(path: pathlib.Path) -> tuple[set[str], set[str]]:
     """(table_version stamps, model ids) across the file's parseable lines;
     a torn or damaged line is skipped (the sha256 map pins the bytes either
     way, and analyze is the one that must tolerate torn tails)."""
-    versiones: set[str] = set()
-    modelos: set[str] = set()
-    for linea in ruta.read_bytes().decode("utf-8", errors="replace").splitlines():
+    versions: set[str] = set()
+    models: set[str] = set()
+    for linea in path.read_bytes().decode("utf-8", errors="replace").splitlines():
         if not linea.strip():
             continue
         try:
@@ -138,10 +138,10 @@ def _scan_raw(ruta: pathlib.Path) -> tuple[set[str], set[str]]:
         if not isinstance(doc, dict):
             continue
         if isinstance(doc.get("table_version"), str):
-            versiones.add(doc["table_version"])
+            versions.add(doc["table_version"])
         if isinstance(doc.get("model"), str):
-            modelos.add(doc["model"])
-    return versiones, modelos
+            models.add(doc["model"])
+    return versions, models
 
 
 def collect_run(
@@ -158,77 +158,77 @@ def collect_run(
     base = pathlib.Path(base)
     runs_dir = base / "runs"
     batches_dir = base / "batches"
-    ruta_requests = runs_dir / f"requests-{run_id}.jsonl"
-    ruta_batches = batches_dir / f"batches-{run_id}.jsonl"
-    if not (ruta_requests.exists() and ruta_batches.exists()):
+    requests_path = runs_dir / f"requests-{run_id}.jsonl"
+    batches_path = batches_dir / f"batches-{run_id}.jsonl"
+    if not (requests_path.exists() and batches_path.exists()):
         raise ReleaseError(
             f"no dataset for run {run_id!r} under {base} (expected "
             f"runs/requests-{run_id}.jsonl and batches/batches-{run_id}.jsonl)"
         )
-    if _count_lines(ruta_requests) == 0 or _count_lines(ruta_batches) == 0:
+    if _count_lines(requests_path) == 0 or _count_lines(batches_path) == 0:
         raise ReleaseError(
             f"the dataset of run {run_id!r} is empty (no raw lines) - nothing to release"
         )
-    hallado = _find_manifest(runs_dir, run_id)
-    if hallado is None:
+    found = _find_manifest(runs_dir, run_id)
+    if found is None:
         raise ReleaseError(
             f"no manifest under {runs_dir} binds run {run_id!r} - the release cannot "
             "stamp its level, table and protocol"
         )
-    ruta_manifiesto, manifiesto = hallado
-    abiertos = sorted(
+    manifest_path, manifest = found
+    open_states = sorted(
         {
             str(e.get("status"))
-            for e in manifiesto.get("batches", {}).values()
+            for e in manifest.get("batches", {}).values()
             if not isinstance(e, dict) or e.get("status") not in ("done", "aborted")
         }
     )
-    if abiertos:
+    if open_states:
         # An unfinished run would burn the one-release-per-run tag on partial
         # evidence: aborts are legitimate closed states, in_flight is not.
         raise ReleaseError(
             f"run {run_id!r} is not finished: its manifest holds batches in state "
-            f"{', '.join(abiertos)} (`bench status` shows them) - resolve the run "
+            f"{', '.join(open_states)} (`bench status` shows them) - resolve the run "
             "before releasing its dataset"
         )
-    tabla_version = manifiesto.get("table_version")
-    if not isinstance(tabla_version, str):
+    table_version = manifest.get("table_version")
+    if not isinstance(table_version, str):
         raise ReleaseError(
-            f"manifest {ruta_manifiesto.name} does not name its table_version - "
+            f"manifest {manifest_path.name} does not name its table_version - "
             "the release cannot pair the run with a table"
         )
-    ruta_tabla = pathlib.Path(pricing_dir) / f"{tabla_version}.json"
-    if not ruta_tabla.exists():
+    table_path = pathlib.Path(pricing_dir) / f"{table_version}.json"
+    if not table_path.exists():
         raise ReleaseError(
-            f"the run's table snapshot pricing/{tabla_version}.json is not in the "
+            f"the run's table snapshot pricing/{table_version}.json is not in the "
             f"pricing directory - the release cannot pair raw<->table"
         )
     try:
-        tabla = PriceTable(ruta_tabla)  # parses + validates the rates
+        table = PriceTable(table_path)  # parses + validates the rates
     except TableError as e:
         raise ReleaseError(f"the run's table snapshot is unreadable: {e}") from None
-    if tabla.table_version != tabla_version:
+    if table.table_version != table_version:
         raise ReleaseError(
-            f"the table snapshot pricing/{ruta_tabla.name} declares table_version "
-            f"{tabla.table_version!r} but the run's manifest binds {tabla_version!r} - "
+            f"the table snapshot pricing/{table_path.name} declares table_version "
+            f"{table.table_version!r} but the run's manifest binds {table_version!r} - "
             "a mismatched raw<->table pairing"
         )
-    versiones, modelos = _scan_raw(ruta_requests)
-    versiones_b, _modelos_b = _scan_raw(ruta_batches)
-    versiones |= versiones_b
-    divergentes = sorted(v for v in versiones if v != tabla_version)
+    versions, models = _scan_raw(requests_path)
+    versions_b, _modelos_b = _scan_raw(batches_path)
+    versions |= versions_b
+    divergentes = sorted(v for v in versions if v != table_version)
     if divergentes:
         raise ReleaseError(
             f"the raw lines of run {run_id!r} are stamped with table(s) "
-            f"{', '.join(divergentes)} but its manifest binds {tabla_version!r} - the "
+            f"{', '.join(divergentes)} but its manifest binds {table_version!r} - the "
             "release would pair the dataset with a table that never priced it"
         )
 
     archivos: list[tuple[str, pathlib.Path]] = [
-        (f"runs/{ruta_requests.name}", ruta_requests),
-        (f"batches/{ruta_batches.name}", ruta_batches),
-        (f"runs/{ruta_manifiesto.name}", ruta_manifiesto),
-        (f"pricing/{ruta_tabla.name}", ruta_tabla),
+        (f"runs/{requests_path.name}", requests_path),
+        (f"batches/{batches_path.name}", batches_path),
+        (f"runs/{manifest_path.name}", manifest_path),
+        (f"pricing/{table_path.name}", table_path),
     ]
     # Workstream evidence rides along when it exists and is readable: the
     # run's own probe volleys always, and every cache-calibration summary whose
@@ -236,35 +236,35 @@ def collect_run(
     # readings per model no matter which workstream run produced them, so a
     # release without them would analyze with an assumed S1 where the local
     # analysis measured one.
-    ruta_probe = runs_dir / f"probe-{run_id}.jsonl"
-    if ruta_probe.exists() and _count_lines(ruta_probe) > 0:
-        archivos.append((f"runs/{ruta_probe.name}", ruta_probe))
+    probe_path = runs_dir / f"probe-{run_id}.jsonl"
+    if probe_path.exists() and _count_lines(probe_path) > 0:
+        archivos.append((f"runs/{probe_path.name}", probe_path))
     # The billing canary's raw line rides along when it exists (protocol v3):
     # its ratio and alarm claim must regenerate from shipped raw evidence —
     # nonce hashes, seeds, per-chat outcomes and the four meter payloads —
     # never be taken on faith from the manifest's summary.
-    ruta_canary = runs_dir / f"canary-{run_id}.jsonl"
-    if ruta_canary.exists() and _count_lines(ruta_canary) > 0:
-        archivos.append((f"runs/{ruta_canary.name}", ruta_canary))
-    for ruta_cal in sorted(runs_dir.glob("calibration-*.json")):
+    canary_path = runs_dir / f"canary-{run_id}.jsonl"
+    if canary_path.exists() and _count_lines(canary_path) > 0:
+        archivos.append((f"runs/{canary_path.name}", canary_path))
+    for cal_path in sorted(runs_dir.glob("calibration-*.json")):
         try:
-            doc = json.loads(ruta_cal.read_text(encoding="utf-8"))
-            lecturas = doc["readings"] if isinstance(doc, dict) else None
+            doc = json.loads(cal_path.read_text(encoding="utf-8"))
+            readings = doc["readings"] if isinstance(doc, dict) else None
         except (json.JSONDecodeError, OSError, UnicodeDecodeError, KeyError, TypeError):
             continue  # unreadable evidence: analyze skips it too, so may the release
-        if isinstance(lecturas, dict) and any(m in modelos for m in lecturas if isinstance(m, str)):
-            archivos.append((f"runs/{ruta_cal.name}", ruta_cal))
-    return archivos, manifiesto, sorted(modelos)
+        if isinstance(readings, dict) and any(m in models for m in readings if isinstance(m, str)):
+            archivos.append((f"runs/{cal_path.name}", cal_path))
+    return archivos, manifest, sorted(models)
 
 
-def _key_forms(clave: str) -> list[bytes]:
+def _key_forms(key: str) -> list[bytes]:
     """The byte forms a JSON dataset could carry the key in: raw, and the two
     JSON escape schemes (the runner writes ensure_ascii=False, which still
     escapes quotes, backslashes and control characters; a hand edit may have
     used ensure_ascii=True)."""
-    formas = [clave.encode("utf-8")]
+    formas = [key.encode("utf-8")]
     for ascii_out in (False, True):
-        escapada = json.dumps(clave, ensure_ascii=ascii_out)[1:-1].encode("utf-8")
+        escapada = json.dumps(key, ensure_ascii=ascii_out)[1:-1].encode("utf-8")
         if escapada not in formas:
             formas.append(escapada)
     return formas
@@ -274,11 +274,11 @@ def _scrub(archivos: list[tuple[str, pathlib.Path]]) -> None:
     """The guardrail, enforced at the only moment a release can be stopped:
     the live key (raw or JSON-escaped) and any bearer-shaped string must not
     appear in any byte."""
-    clave = os.environ.get("OLLAMA_API_KEY", "")
-    formas = _key_forms(clave) if clave else []
+    key = os.environ.get("OLLAMA_API_KEY", "")
+    formas = _key_forms(key) if key else []
     culpables: list[str] = []
-    for rel, ruta in archivos:
-        blob = ruta.read_bytes()
+    for rel, path in archivos:
+        blob = path.read_bytes()
         if formas and any(f in blob for f in formas):
             culpables.append(f"{rel} (the live OLLAMA_API_KEY)")
         elif _BEARER_SHAPE.search(blob):
@@ -375,7 +375,7 @@ def package(base, *, run_id: str, pricing_dir) -> Package:
     """One run's dataset -> releases/dataset-<run_id>.tar.gz + metadata asset
     + notes. Raises ReleaseError on an unusable run or a credential hit."""
     base = pathlib.Path(base)
-    archivos, manifiesto, modelos = collect_run(base, run_id, pathlib.Path(pricing_dir))
+    archivos, manifest, models = collect_run(base, run_id, pathlib.Path(pricing_dir))
     releases_dir = base / RELEASES_DIR
     releases_dir.mkdir(parents=True, exist_ok=True)
     # The readable copy of the same evidence, derived BEFORE the scrub: a
@@ -383,10 +383,10 @@ def package(base, *, run_id: str, pricing_dir) -> Package:
     # clear the same credential guardrail and ship sealed in the sha256 map.
     encabezado = {
         "run_id": run_id,
-        "level": manifiesto.get("level"),
-        "models": modelos,
-        "protocol_version": manifiesto.get("protocol_version"),
-        "table_version": manifiesto.get("table_version"),
+        "level": manifest.get("level"),
+        "models": models,
+        "protocol_version": manifest.get("protocol_version"),
+        "table_version": manifest.get("table_version"),
     }
     try:
         archivos += dataset_export.export_dataset(
@@ -399,37 +399,37 @@ def package(base, *, run_id: str, pricing_dir) -> Package:
     meta = {
         "kind": DATASET_KIND,
         "run_id": run_id,
-        "level": manifiesto.get("level"),
-        "models": modelos,
-        "protocol_version": manifiesto.get("protocol_version"),
-        "fixture_version": manifiesto.get("fixture_version"),
-        "table_version": manifiesto.get("table_version"),
-        "table_sha256": _sha256(por_archivo[f"pricing/{manifiesto['table_version']}.json"]),
+        "level": manifest.get("level"),
+        "models": models,
+        "protocol_version": manifest.get("protocol_version"),
+        "fixture_version": manifest.get("fixture_version"),
+        "table_version": manifest.get("table_version"),
+        "table_sha256": _sha256(por_archivo[f"pricing/{manifest['table_version']}.json"]),
         "code": git_code(base),
         "created_at": time.time(),
         "counts": {
             "request_lines": _count_lines(por_archivo[f"runs/requests-{run_id}.jsonl"]),
             "batch_lines": _count_lines(por_archivo[f"batches/batches-{run_id}.jsonl"]),
         },
-        "files": {rel: _sha256(ruta) for rel, ruta in archivos},
+        "files": {rel: _sha256(path) for rel, path in archivos},
     }
-    ruta_meta = releases_dir / f"metadata-{run_id}.json"
-    ruta_notes = releases_dir / f"notes-{run_id}.md"
-    ruta_tar = releases_dir / f"dataset-{run_id}.tar.gz"
-    _atomic_write(ruta_meta, json.dumps(meta, ensure_ascii=False, indent=2))
-    _atomic_write(ruta_notes, _notes_text(meta))
-    tmp = ruta_tar.with_name(ruta_tar.name + ".tmp")
+    meta_path = releases_dir / f"metadata-{run_id}.json"
+    notes_path = releases_dir / f"notes-{run_id}.md"
+    tar_path = releases_dir / f"dataset-{run_id}.tar.gz"
+    _atomic_write(meta_path, json.dumps(meta, ensure_ascii=False, indent=2))
+    _atomic_write(notes_path, _notes_text(meta))
+    tmp = tar_path.with_name(tar_path.name + ".tmp")
     with tarfile.open(tmp, "w:gz") as tar:
-        for rel, ruta in archivos:
-            tar.add(ruta, arcname=rel)
-        tar.add(ruta_meta, arcname="metadata.json")  # the tarball alone suffices
-    tmp.replace(ruta_tar)
+        for rel, path in archivos:
+            tar.add(path, arcname=rel)
+        tar.add(meta_path, arcname="metadata.json")  # the tarball alone suffices
+    tmp.replace(tar_path)
     return Package(
         run_id=run_id,
         tag=f"{TAG_PREFIX}{run_id}",
-        tar=ruta_tar,
-        metadata=ruta_meta,
-        notes=ruta_notes,
+        tar=tar_path,
+        metadata=meta_path,
+        notes=notes_path,
         doc=meta,
     )
 
@@ -485,10 +485,10 @@ def publish(base, paquete: Package, *, repo: str) -> None:
     # are staged (releases/.stage-<tag>/): dataset.tar.gz, metadata.json,
     # notes.md. The local artefacts keep their run_id suffixes — two runs must
     # never overwrite each other's staged copies.
-    escenario = base / RELEASES_DIR / f".stage-{paquete.tag}"
-    if escenario.exists():
-        shutil.rmtree(escenario)
-    escenario.mkdir(parents=True)
+    scenario = base / RELEASES_DIR / f".stage-{paquete.tag}"
+    if scenario.exists():
+        shutil.rmtree(scenario)
+    scenario.mkdir(parents=True)
     cortos = {
         paquete.tar: "dataset.tar.gz",
         paquete.metadata: "metadata.json",
@@ -497,50 +497,48 @@ def publish(base, paquete: Package, *, repo: str) -> None:
     try:
         for origen, corto in cortos.items():
             if origen.exists():
-                shutil.copy(origen, escenario / corto)
-        argv += [str(escenario / corto) for corto in cortos.values()]
+                shutil.copy(origen, scenario / corto)
+        argv += [str(scenario / corto) for corto in cortos.values()]
         argv += [
             "-R",
             repo,
             "--title",
             f"bench dataset {paquete.run_id}",
             "--notes-file",
-            str(escenario / "notes.md"),
+            str(scenario / "notes.md"),
         ]
         commit = (paquete.doc.get("code") or {}).get("git_commit")
         if commit and _commit_is_pushed(commit, cwd=base):
             argv += ["--target", commit]  # the tag anchors to the producing code
         code, _out, err = _gh(argv, cwd=base)
     finally:
-        shutil.rmtree(escenario, ignore_errors=True)
+        shutil.rmtree(scenario, ignore_errors=True)
     if code != 0:
         raise ReleaseError(f"gh release create failed ({code}): {err.strip()}")
 
 
-def load_metadata(raiz) -> dict:
+def load_metadata(root) -> dict:
     """The fetched dataset's stamp, validated (kind + the pairing's keys)."""
-    ruta = pathlib.Path(raiz) / "metadata.json"
-    if not ruta.exists():
-        raise ReleaseError(f"no metadata.json under {ruta.parent} - not an obench dataset")
+    path = pathlib.Path(root) / "metadata.json"
+    if not path.exists():
+        raise ReleaseError(f"no metadata.json under {path.parent} - not an obench dataset")
     try:
-        texto = ruta.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
         raise ReleaseError(f"metadata.json is unreadable ({type(e).__name__}: {e})") from None
     try:
-        meta = json.loads(texto)
+        meta = json.loads(text)
     except json.JSONDecodeError as e:
         raise ReleaseError(f"metadata.json is not valid JSON: {e}") from None
     if not isinstance(meta, dict) or meta.get("kind") not in (DATASET_KIND, DATASET_KIND_LEGACY):
         raise ReleaseError("metadata.json is not an obench dataset stamp (kind mismatch)")
-    faltantes = [
-        k for k in ("run_id", "table_version", "protocol_version", "files") if k not in meta
-    ]
-    if faltantes:
-        raise ReleaseError(f"metadata.json is missing: {', '.join(faltantes)}")
+    missing = [k for k in ("run_id", "table_version", "protocol_version", "files") if k not in meta]
+    if missing:
+        raise ReleaseError(f"metadata.json is missing: {', '.join(missing)}")
     return meta
 
 
-def _verify_files(raiz: pathlib.Path, meta: dict) -> None:
+def _verify_files(root: pathlib.Path, meta: dict) -> None:
     """Both directions of integrity: every stamped file exists with its exact
     sha256, AND the tree holds nothing the metadata does not stamp (analyze
     globs the tree, so an added file would enter the analysis unverified)."""
@@ -548,17 +546,17 @@ def _verify_files(raiz: pathlib.Path, meta: dict) -> None:
     if not isinstance(hashes, dict) or not hashes:
         raise ReleaseError("metadata.json carries no file hashes - integrity cannot be verified")
     for rel, sha in hashes.items():
-        ruta = raiz / rel
-        if not ruta.exists():
+        path = root / rel
+        if not path.exists():
             raise ReleaseError(f"integrity check failed: {rel} is missing from the dataset")
-        real = _sha256(ruta)
+        real = _sha256(path)
         if real != sha:
             raise ReleaseError(
                 f"integrity check failed: {rel} does not match its sha256 "
                 f"(expected {sha[:12]}..., got {real[:12]}...) - the release was "
                 "edited after publication"
             )
-    presentes = {p.relative_to(raiz).as_posix() for p in raiz.rglob("*") if p.is_file()}
+    presentes = {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
     extra = presentes - set(hashes) - {"metadata.json"}
     if extra:
         raise ReleaseError(
@@ -619,11 +617,11 @@ def fetch(
             f"the dataset tarball of {tag} is corrupt ({type(e).__name__}: {e}) - integrity refused"
         ) from None
     meta = load_metadata(extraido)
-    esperado = f"{TAG_PREFIX}{meta['run_id']}"
-    if tag != esperado:
+    expected = f"{TAG_PREFIX}{meta['run_id']}"
+    if tag != expected:
         raise ReleaseError(
             f"release {tag} carries the metadata of run {meta['run_id']!r} (expected "
-            f"tag {esperado!r}) - a mismatched raw<->metadata pairing"
+            f"tag {expected!r}) - a mismatched raw<->metadata pairing"
         )
     _verify_files(extraido, meta)
     if table_version is not None and meta["table_version"] != table_version:
@@ -641,42 +639,42 @@ def fetch(
             f"the release's models do not include {model!r} "
             f"({', '.join(meta.get('models', [])) or 'none recorded'})"
         )
-    destino = releases_dir / tag
+    dest = releases_dir / tag
     preservados: list[tuple[str, pathlib.Path]] = []
-    if destino.exists():
+    if dest.exists():
         # The analysis bundles under the fetched tree are derived AFTER the
         # fetch (`bench analyze --release <tag>` writes analysis/ and the
         # analysis-s<x>/ stamped sets there): a re-fetch refreshes the raw
         # dataset, never the derived bundles - the persisted reference and
         # every stamped set survive the re-download (methodology v1.2, #46).
-        for hijo in sorted(destino.iterdir()):
+        for hijo in sorted(dest.iterdir()):
             if hijo.is_dir() and hijo.name.startswith("analysis"):
                 resguardado = trabajo / "_preserve" / hijo.name
                 resguardado.parent.mkdir(exist_ok=True)
                 shutil.move(str(hijo), str(resguardado))
                 preservados.append((hijo.name, resguardado))
-        shutil.rmtree(destino)
-    extraido.rename(destino)
-    for nombre, resguardado in preservados:
-        shutil.move(str(resguardado), str(destino / nombre))
+        shutil.rmtree(dest)
+    extraido.rename(dest)
+    for name, resguardado in preservados:
+        shutil.move(str(resguardado), str(dest / name))
     shutil.rmtree(trabajo)
-    return destino, meta
+    return dest, meta
 
 
 def release_table(stage) -> PriceTable:
     """The fetched release's own price table — the pairing's `table` half,
     cross-checked against the metadata's stamp."""
     meta = load_metadata(stage)
-    ruta = pathlib.Path(stage) / "pricing" / f"{meta['table_version']}.json"
-    if not ruta.exists():
+    path = pathlib.Path(stage) / "pricing" / f"{meta['table_version']}.json"
+    if not path.exists():
         raise ReleaseError(
             f"the release's table snapshot pricing/{meta['table_version']}.json is "
             "missing from the fetched dataset"
         )
-    tabla = PriceTable(ruta)
-    if tabla.table_version != meta["table_version"]:
+    table = PriceTable(path)
+    if table.table_version != meta["table_version"]:
         raise ReleaseError(
-            f"the release's table snapshot declares table_version {tabla.table_version!r} "
+            f"the release's table snapshot declares table_version {table.table_version!r} "
             f"but its metadata stamps {meta['table_version']!r} - a mismatched pairing"
         )
-    return tabla
+    return table

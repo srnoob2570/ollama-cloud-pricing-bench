@@ -55,9 +55,9 @@
 
 ## Language
 - Code, fixtures, datasets, commits, issue bodies: English. `README.md`/`README.es.md`
-  are kept as pairs; the methodology stays Spanish.
-- Code idiom: English docstrings carrying the protocol rationale; Spanish domain nouns
-  (`manifiesto`, `modelo_api`, `ruta`, `veredictos`) — match the surrounding code.
+  are kept as pairs; the methodology is English.
+- Code idiom: English docstrings carrying the protocol rationale; English domain nouns
+  (`manifest`, `api_model`, `path`, `verdicts`) — match the surrounding code.
 
 ## Testing contract
 - The CLI is the seam; assertions come only from produced artifacts and the requests

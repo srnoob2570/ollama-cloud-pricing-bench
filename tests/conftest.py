@@ -29,7 +29,7 @@ def fake_cli(fake, monkeypatch):
     tests script `fake.catalog` explicitly.
 
     The default world is the one the paired probe measured (docs/research/
-    cache-pareado-kimi-2026-09-01.md): the endpoint caches, so the billing
+    cache-paired-kimi-2026-09-01.md): the endpoint caches, so the billing
     canary's replay volley bills the discount and the lane check passes. Hits
     stay invisible in reported tokens (`cache_report_hits = False`), the
     evidence shape every pre-lane test pinned; the calibration's own tests
@@ -48,8 +48,8 @@ def fake_cli(fake, monkeypatch):
 def write_table(pricing_dir: pathlib.Path, version: str, models: dict) -> pathlib.Path:
     """Writes a test versioned price table; returns the DIRECTORY."""
     pricing_dir.mkdir(parents=True, exist_ok=True)
-    ruta = pricing_dir / f"{version}.json"
-    ruta.write_text(
+    path = pricing_dir / f"{version}.json"
+    path.write_text(
         json.dumps(
             {
                 "table_version": version,

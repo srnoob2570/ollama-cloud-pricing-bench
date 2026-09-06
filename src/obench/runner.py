@@ -53,7 +53,7 @@ from .fixtures import FIXTURE_VERSION
 from .meter import TICK_BAND, TICK_PP  # the meter's resolution, in percentage points
 
 # The passive detector's expected Δpp rates (weekly pp per 1M tokens), from the
-# measurability-budget derivation (issue #28, docs/research/presupuesto-
+# measurability-budget derivation (issue #28, docs/research/budget-
 # medibilidad-2026-09-01.md §3): prefill-dominated brackets (in-share >= 0.9)
 # move the weekly window at ~2.6 pp/1M, generation-carrying ones at ~5.4. The
 # across-model spread is >=12x, so the detector only flags a COLLAPSE — a
@@ -219,16 +219,16 @@ def plan(
 class Manifest:
     """Per-level run state (runs/manifest-<level>.json): resume without re-billing."""
 
-    def __init__(self, ruta: pathlib.Path, doc: dict) -> None:
-        self.ruta = ruta
+    def __init__(self, path: pathlib.Path, doc: dict) -> None:
+        self.path = path
         self.doc = doc
 
     @classmethod
-    def load(cls, ruta: pathlib.Path, *, strict: bool = False) -> Manifest | None:
-        if not ruta.exists():
+    def load(cls, path: pathlib.Path, *, strict: bool = False) -> Manifest | None:
+        if not path.exists():
             return None
         try:
-            doc = json.loads(ruta.read_text(encoding="utf-8"))
+            doc = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(doc, dict) or not isinstance(doc.get("batches"), dict):
                 raise TypeError("missing the batches map")
             if not isinstance(doc.get("run_id"), str):
@@ -241,20 +241,20 @@ class Manifest:
                 # renders broken entries as corrupt instead.
                 if not isinstance(doc.get("catalog", []), list):
                     raise TypeError("'catalog' must be a list of snapshots")
-                for entrada in doc["batches"].values():
-                    if not isinstance(entrada, dict) or not isinstance(entrada.get("status"), str):
+                for input in doc["batches"].values():
+                    if not isinstance(input, dict) or not isinstance(input.get("status"), str):
                         raise TypeError("a batch entry is not a status map")
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             raise RunnerError(
-                f"manifest {ruta.name} is corrupt ({e}); the run state is unreadable - "
+                f"manifest {path.name} is corrupt ({e}); the run state is unreadable - "
                 "delete it (and its runs/*-<run_id>.jsonl) only as an explicit operator decision"
             ) from None
-        return cls(ruta, doc)
+        return cls(path, doc)
 
     @classmethod
     def create(
         cls,
-        ruta: pathlib.Path,
+        path: pathlib.Path,
         *,
         run_id: str,
         level: str,
@@ -284,7 +284,7 @@ class Manifest:
             doc["reps"] = reps
         if catalog is not None:  # /v1/models snapshots, one per attempt (provenance)
             doc["catalog"] = [{"captured_at": time.time(), **catalog}]
-        m = cls(ruta, doc)
+        m = cls(path, doc)
         m.save()
         return m
 
@@ -293,12 +293,12 @@ class Manifest:
         return self.doc["run_id"]
 
     def status(self, bid: str) -> str | None:
-        entrada = self.doc["batches"].get(bid)
-        return entrada["status"] if entrada else None
+        input = self.doc["batches"].get(bid)
+        return input["status"] if input else None
 
     def set(self, bid: str, status: str, **extra) -> None:
-        entrada = {"status": status, "at": time.time(), **extra}
-        self.doc["batches"][bid] = entrada
+        input = {"status": status, "at": time.time(), **extra}
+        self.doc["batches"][bid] = input
         self.save()
 
     def append_catalog(self, catalogo: dict) -> None:
@@ -306,20 +306,20 @@ class Manifest:
         self.doc.setdefault("catalog", []).append({"captured_at": time.time(), **catalogo})
 
     def save(self) -> None:
-        self.ruta.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.ruta.with_suffix(".json.tmp")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(self.doc, indent=2), encoding="utf-8")
-        tmp.replace(self.ruta)
+        tmp.replace(self.path)
 
 
-def _numero(valor) -> float | None:
+def _numero(value) -> float | None:
     """A real number from a manifest (bools are not numbers here), or None."""
-    if isinstance(valor, bool) or not isinstance(valor, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return valor
+    return value
 
 
-def status_doc(nivel: str, manifiesto: Manifest) -> dict:
+def status_doc(level: str, manifest: Manifest) -> dict:
     """The status of one level's run, computed from its manifest (no API).
 
     The single owner of the manifest-shape-to-report contract (the writer is
@@ -328,7 +328,7 @@ def status_doc(nivel: str, manifiesto: Manifest) -> dict:
     manifest is run state that a recovering operator may have hand-edited:
     malformed entries render as unknown/corrupt instead of crashing the report.
     """
-    doc = manifiesto.doc
+    doc = manifest.doc
     counts: dict[str, int] = {"done": 0, "aborted": 0, "in_flight": 0}
     dpp_session = dpp_weekly = 0.0
     con_bracket = cerrados = 0
@@ -337,31 +337,29 @@ def status_doc(nivel: str, manifiesto: Manifest) -> dict:
     # The billing canary's volleys are bracketed spend no batch line carries:
     # kept separate so the quota totals stay equal to the per-batch rows, and
     # the report can state the canary's own consumption explicitly.
-    canario = doc.get("canary")
-    canario_dpp = canario.get("dpp") if isinstance(canario, dict) else None
+    canary = doc.get("canary")
+    canary_dpp = canary.get("dpp") if isinstance(canary, dict) else None
 
     def _pareada(salted, replay):
         """A canary window's paired spend: salted + replay, or None when either
         reading is unreadable (a half-pair would understate the quota)."""
-        salada, repeticion = _numero(salted), _numero(replay)
-        return salada + repeticion if salada is not None and repeticion is not None else None
+        salada, rep = _numero(salted), _numero(replay)
+        return salada + rep if salada is not None and rep is not None else None
 
-    canario_sesion = canario_semanal = None
-    if isinstance(canario_dpp, dict):
-        canario_sesion = _pareada(
-            canario_dpp.get("salted_session"), canario_dpp.get("replay_session")
+    session_canary = weekly_canary = None
+    if isinstance(canary_dpp, dict):
+        session_canary = _pareada(
+            canary_dpp.get("salted_session"), canary_dpp.get("replay_session")
         )
-        canario_semanal = _pareada(
-            canario_dpp.get("salted_weekly"), canario_dpp.get("replay_weekly")
-        )
-    for batch_id, entrada in doc.get("batches", {}).items():
-        if not isinstance(entrada, dict):
-            entrada = {"status": "corrupt"}
-        estado = str(entrada.get("status", "?"))
-        counts[estado] = counts.get(estado, 0) + 1
-        dpp_s = _numero(entrada.get("dpp_session"))
-        dpp_w = _numero(entrada.get("dpp_weekly"))
-        if estado in ("done", "aborted"):
+        weekly_canary = _pareada(canary_dpp.get("salted_weekly"), canary_dpp.get("replay_weekly"))
+    for batch_id, input in doc.get("batches", {}).items():
+        if not isinstance(input, dict):
+            input = {"status": "corrupt"}
+        state = str(input.get("status", "?"))
+        counts[state] = counts.get(state, 0) + 1
+        dpp_s = _numero(input.get("dpp_session"))
+        dpp_w = _numero(input.get("dpp_weekly"))
+        if state in ("done", "aborted"):
             cerrados += 1
         # Each window accumulates on its own readable delta, so the quota totals
         # always agree with the report's own per-batch rows; `batches_with_bracket`
@@ -372,21 +370,21 @@ def status_doc(nivel: str, manifiesto: Manifest) -> dict:
             dpp_weekly += dpp_w
         if dpp_s is not None and dpp_w is not None:
             con_bracket += 1
-        ok = _numero(entrada.get("requests_ok"))
+        ok = _numero(input.get("requests_ok"))
         if ok is not None:
             requests_ok += int(ok)
         batches.append(
             {
                 "batch_id": batch_id,
-                "status": estado,
-                "workload": entrada.get("workload"),
-                "pool": entrada.get("pool"),
-                "model": entrada.get("model"),
-                "rep": entrada.get("rep"),
+                "status": state,
+                "workload": input.get("workload"),
+                "pool": input.get("pool"),
+                "model": input.get("model"),
+                "rep": input.get("rep"),
                 "dpp_session": dpp_s,
                 "dpp_weekly": dpp_w,
                 "requests_ok": None if ok is None else int(ok),
-                "note": entrada.get("note"),
+                "note": input.get("note"),
             }
         )
     try:
@@ -395,7 +393,7 @@ def status_doc(nivel: str, manifiesto: Manifest) -> dict:
         planned = len(batches)
     counts["pending"] = max(0, planned - len(batches))
     return {
-        "level": doc.get("level", nivel),
+        "level": doc.get("level", level),
         "run_id": doc.get("run_id"),
         "table_version": doc.get("table_version"),
         "protocol_version": doc.get("protocol_version"),
@@ -411,8 +409,8 @@ def status_doc(nivel: str, manifiesto: Manifest) -> dict:
             "dpp_weekly": dpp_weekly,
             "batches_with_bracket": con_bracket,
             "closed_batches": cerrados,
-            "canary_dpp_session": canario_sesion,
-            "canary_dpp_weekly": canario_semanal,
+            "canary_dpp_session": session_canary,
+            "canary_dpp_weekly": weekly_canary,
         },
         "batches": batches,
     }
@@ -430,8 +428,8 @@ def open_workstream_manifest(
     strictly, mint its run_id and create it when absent, refuse drift, and join
     this attempt's catalog snapshot to the history on reuse. One resume state,
     one drift guard, one creation path — every workstream resumes alike."""
-    ruta = runs_dir / f"manifest-{level}.json"
-    existente = Manifest.load(ruta, strict=True)
+    path = runs_dir / f"manifest-{level}.json"
+    existente = Manifest.load(path, strict=True)
     run_id = (
         existente.run_id
         if existente
@@ -440,8 +438,8 @@ def open_workstream_manifest(
     )
     if existente:
         _check_drift(existente, cfg)
-    manifiesto = existente or Manifest.create(
-        ruta,
+    manifest = existente or Manifest.create(
+        path,
         run_id=run_id,
         level=level,
         table_version=cfg["table_version"],
@@ -452,35 +450,35 @@ def open_workstream_manifest(
     )
     if existente:
         if cfg.get("catalog"):
-            manifiesto.append_catalog(cfg["catalog"])
+            manifest.append_catalog(cfg["catalog"])
     # The cache-free lane binds its run: the spec is derived from the run_id, so
     # a resume always re-derives the same nonce stream; a recorded spec that
     # disagrees is a hand-edited manifest, refused like any other drift.
     if cfg.get("lane"):
-        previa = manifiesto.doc.get("lane")
-        esperado = lane.lane_spec(run_id)
-        if previa is None:
-            manifiesto.doc["lane"] = esperado
-            manifiesto.save()
-        elif previa != esperado:
+        prior = manifest.doc.get("lane")
+        expected = lane.lane_spec(run_id)
+        if prior is None:
+            manifest.doc["lane"] = expected
+            manifest.save()
+        elif prior != expected:
             raise RunnerError(
-                f"manifest {ruta.name} records lane spec {previa!r} but this run would "
-                f"use {esperado!r} - the lane spec may not drift inside one run_id "
+                f"manifest {path.name} records lane spec {prior!r} but this run would "
+                f"use {expected!r} - the lane spec may not drift inside one run_id "
                 "- keep the datasets apart"
             )
-        cfg["lane"] = manifiesto.doc["lane"]
+        cfg["lane"] = manifest.doc["lane"]
     if existente:
-        manifiesto.save()
-    return manifiesto
+        manifest.save()
+    return manifest
 
 
-def _usage_ventana(payload: dict | None, window: str) -> float | None:
+def _usage_window(payload: dict | None, window: str) -> float | None:
     """The window's raw usage fraction (0.382 = 38.2 %), or None when unreadable."""
     try:
-        valor = payload["limits"][window]["usage"]
+        value = payload["limits"][window]["usage"]
     except (KeyError, TypeError):
         return None
-    return valor if isinstance(valor, (int, float)) else None
+    return value if isinstance(value, (int, float)) else None
 
 
 async def registration_settle(
@@ -502,16 +500,16 @@ async def registration_settle(
     decides what a failed registration read costs the batch).
     """
     t0 = time.monotonic()
-    lecturas: list[tuple[float, float, float]] = []  # (session, weekly, monotonic)
+    readings: list[tuple[float, float, float]] = []  # (session, weekly, monotonic)
     if primera is not None:
-        s, w = _usage_ventana(primera, "session"), _usage_ventana(primera, "weekly")
+        s, w = _usage_window(primera, "session"), _usage_window(primera, "weekly")
         if s is not None and w is not None:
-            lecturas.append((s, w, t0))
-    lecturas_payload: list[dict | None] = [primera] if primera is not None else []
+            readings.append((s, w, t0))
+    readings_payload: list[dict | None] = [primera] if primera is not None else []
     leidas = 0
     exito, error = "", ""
     while True:
-        if len(lecturas) >= 2 and lecturas[-2][:2] == lecturas[-1][:2]:
+        if len(readings) >= 2 and readings[-2][:2] == readings[-1][:2]:
             exito = "stable"
             break
         if time.monotonic() - t0 >= cap_s:
@@ -527,26 +525,26 @@ async def registration_settle(
         if status != 200 or payload is None:
             error = f"HTTP {status}"
             break
-        s, w = _usage_ventana(payload, "session"), _usage_ventana(payload, "weekly")
+        s, w = _usage_window(payload, "session"), _usage_window(payload, "weekly")
         if s is None or w is None:
             error = "unreadable meter payload"
             break
-        lecturas.append((s, w, time.monotonic()))
-        lecturas_payload.append(payload)
+        readings.append((s, w, time.monotonic()))
+        readings_payload.append(payload)
 
     def _registrada(window: int) -> float | None:
         """Seconds after the loop's first sample when the window last took a new
         value; 0.0 when it was already at its final value there."""
-        if not lecturas:
+        if not readings:
             return None
-        ultima = lecturas[0][window]
-        momento = lecturas[0][2]
-        for lectura in lecturas[1:]:
-            if lectura[window] != ultima:
-                ultima, momento = lectura[window], lectura[2]
+        ultima = readings[0][window]
+        momento = readings[0][2]
+        for reading in readings[1:]:
+            if reading[window] != ultima:
+                ultima, momento = reading[window], reading[2]
         return momento - t0
 
-    post = lecturas_payload[-1] if lecturas_payload else None
+    post = readings_payload[-1] if readings_payload else None
     return {
         "reads": leidas,
         "exit": exito or None,
@@ -566,19 +564,19 @@ def _salter(cfg: dict, spec: BatchSpec):
     if not lane_cfg:
         return None
     seed_ = lane_cfg["nonce_seed"]
-    palabras_de: dict[str, int] = {}
+    words_by: dict[str, int] = {}
 
-    def _nonce(workload: str, rep: int, indice, turno=None):
+    def _nonce(workload: str, rep: int, index, turno=None):
         # The nonce's coordinates include k: two cells of the same (workload,
         # model, rep) at different k must never share a prefix — the glossary's
         # comparability clause reads on fixture tokens, and a shared salt would
         # let one cell's burst warm the next cell's cache.
-        coords = [spec.level, workload, spec.model, rep, spec.k, indice]
+        coords = [spec.level, workload, spec.model, rep, spec.k, index]
         if turno is not None:
             coords.append(turno)
-        if workload not in palabras_de:
-            palabras_de[workload] = lane.nonce_words(lane.expected_tin(spec.level, workload))
-        return lane.nonce_text(seed_, lane.nonce_index(*coords), palabras_de[workload])
+        if workload not in words_by:
+            words_by[workload] = lane.nonce_words(lane.expected_tin(spec.level, workload))
+        return lane.nonce_text(seed_, lane.nonce_index(*coords), words_by[workload])
 
     return _nonce
 
@@ -594,12 +592,12 @@ def _counts(payload: dict | None, window: str = "session") -> dict[str, int]:
     if not isinstance(payload, dict):
         return {}
     limits = payload.get("limits")
-    ventana = limits.get(window) if isinstance(limits, dict) else None
-    modelos = ventana.get("models") if isinstance(ventana, dict) else None
-    if not isinstance(modelos, list):
+    entry = limits.get(window) if isinstance(limits, dict) else None
+    models = entry.get("models") if isinstance(entry, dict) else None
+    if not isinstance(models, list):
         return {}
     counts: dict[str, int] = {}
-    for m in modelos:
+    for m in models:
         if (
             isinstance(m, dict)
             and isinstance(m.get("name"), str)
@@ -629,7 +627,7 @@ def _dpp(pre: dict | None, post: dict | None, window: str) -> float | None:
     return (despues - antes) * 100
 
 
-def _wall_clock_s(registros: list[dict]) -> float | None:
+def _wall_clock_s(records: list[dict]) -> float | None:
     """The batch's makespan: last completion minus first launch across its requests.
 
     For a k=1 cell this is the serialized total; for k>1 it is what parallelism
@@ -638,7 +636,7 @@ def _wall_clock_s(registros: list[dict]) -> float | None:
     """
     tiempos = [
         (r["t_start"], r["t_total"])
-        for r in registros
+        for r in records
         if isinstance(r.get("t_start"), (int, float)) and isinstance(r.get("t_total"), (int, float))
     ]
     if not tiempos:
@@ -646,13 +644,13 @@ def _wall_clock_s(registros: list[dict]) -> float | None:
     return max(fin for _ini, fin in tiempos) - min(ini for ini, _fin in tiempos)
 
 
-def _sum_steps(pasos: list[dict], campo: str) -> int | None:
+def _sum_steps(steps: list[dict], field: str) -> int | None:
     """A T3 task's token total across its loop steps: None unless EVERY step
     reports the count (a partial sum would silently understate the billing)."""
-    valores = [p.get(campo) for p in pasos]
-    if not valores or any(not isinstance(v, int) or isinstance(v, bool) for v in valores):
+    values = [p.get(field) for p in steps]
+    if not values or any(not isinstance(v, int) or isinstance(v, bool) for v in values):
         return None
-    return sum(valores)
+    return sum(values)
 
 
 def _request_line(
@@ -670,11 +668,11 @@ def _request_line(
     checker: str | None,
 ) -> dict:
     done = rec["done"]  # the verbatim done-object; None when the request never completed
-    pasos = rec.get("steps") or []  # a T3 task's loop steps (its raw per-step evidence)
-    if pasos:
-        tok_in = _sum_steps(pasos, "tok_in")
-        tok_out = _sum_steps(pasos, "tok_out")
-        tok_cached = _sum_steps(pasos, "tok_cached")
+    steps = rec.get("steps") or []  # a T3 task's loop steps (its raw per-step evidence)
+    if steps:
+        tok_in = _sum_steps(steps, "tok_in")
+        tok_out = _sum_steps(steps, "tok_out")
+        tok_cached = _sum_steps(steps, "tok_cached")
     else:
         tok_in = done.get("prompt_eval_count") if done else None
         tok_out = done.get("eval_count") if done else None
@@ -705,7 +703,7 @@ def _request_line(
         "err": rec["err"],
         "checker": checker,
         "tool_calls": rec.get("tool_calls"),
-        "steps": pasos,
+        "steps": steps,
         "sandbox": rec.get("sandbox"),  # the T3 checker's sandbox run; null for T1/T2
         "out_text_hash": (
             hashlib.sha256(rec["content"].encode("utf-8")).hexdigest() if rec["content"] else None
@@ -716,14 +714,14 @@ def _request_line(
     }
 
 
-def write_jsonl(ruta: pathlib.Path, line: dict) -> None:
-    with ruta.open("a", encoding="utf-8") as f:
+def write_jsonl(path: pathlib.Path, line: dict) -> None:
+    with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
 def _judge_units(
     specs_requeridos: tuple,
-    registros: list[dict],
+    records: list[dict],
     unidades: tuple[tuple[str, int, int], ...],
 ) -> list[str | None]:
     """One verdict per request of the batch, each workload judged with its own
@@ -734,17 +732,17 @@ def _judge_units(
     count) in send order, exactly as the burst laid them out."""
     indices_de: dict[str, list[int]] = {}
     pos = 0
-    for workload, _rep, peticiones in unidades:
-        indices_de.setdefault(workload, []).extend(range(pos, pos + peticiones))
-        pos += peticiones
+    for workload, _rep, requests in unidades:
+        indices_de.setdefault(workload, []).extend(range(pos, pos + requests))
+        pos += requests
     juzgados: list[tuple[int, str | None]] = []
     for workload, indices in indices_de.items():
-        veredictos = checkers.judge(
+        verdicts = checkers.judge(
             workload,
             [specs_requeridos[i].prompt for i in indices],
-            [registros[i] for i in indices],
+            [records[i] for i in indices],
         )
-        juzgados.extend(zip(indices, veredictos, strict=True))
+        juzgados.extend(zip(indices, verdicts, strict=True))
     return [v for _i, v in sorted(juzgados, key=lambda par: par[0])]
 
 
@@ -761,14 +759,14 @@ CANARY_REPLAYS = 5
 CANARY_ALARM_RATIO = 0.5  # the replay billing near 1 means the salting broke
 
 
-def _canary_nonces(run_id: str, palabras: int) -> tuple[list[str], str]:
+def _canary_nonces(run_id: str, words: int) -> tuple[list[str], str]:
     """The canary volley's nonces: CANARY_SALTED fresh ones + the replay nonce,
     which re-uses the FIRST salted nonce verbatim — the identical prefix the
     replays must share (per-request re-salting the replays would defeat them,
     and the ratio would read ~1: the alarm)."""
     seed_ = lane.nonce_seed(run_id)
     salados = [
-        lane.nonce_text(seed_, lane.nonce_index("canary", "salted", k), palabras)
+        lane.nonce_text(seed_, lane.nonce_index("canary", "salted", k), words)
         for k in range(CANARY_SALTED)
     ]
     return salados, salados[0]
@@ -778,21 +776,21 @@ async def _read_meter(client: OllamaCloud, cuando: str) -> tuple[int, dict | Non
     """One meter read bracketing a canary volley: a failed read aborts cleanly,
     loudly, naming the phase (`cuando`) so the operator knows where it died."""
     try:
-        estado, payload = await client.usage()
+        state, payload = await client.usage()
     except Exception as e:  # noqa: BLE001 - a meter failure aborts cleanly, loudly
         raise RunnerError(
             f"canary: meter read failed ({type(e).__name__}: {e}) {cuando} volley"
         ) from None
-    if estado != 200 or payload is None:
-        raise RunnerError(f"canary: meter read failed (HTTP {estado}) {cuando} volley")
-    return estado, payload
+    if state != 200 or payload is None:
+        raise RunnerError(f"canary: meter read failed (HTTP {state}) {cuando} volley")
+    return state, payload
 
 
 async def _canary_volley(
     client: OllamaCloud,
     *,
     run_id: str,
-    modelo_api: str,
+    api_model: str,
     model: str,
     prompts: list[str],
     cfg: dict,
@@ -805,22 +803,22 @@ async def _canary_volley(
     _, pre = await _read_meter(client, f"before the {fase}")
     outcomes = []
     for prompt, semilla in zip(prompts, semillas, strict=True):
-        rec = await client.chat(model=modelo_api, prompt=prompt, seed=semilla)
+        rec = await client.chat(model=api_model, prompt=prompt, seed=semilla)
         outcomes.append({"http": rec["http"], "err": rec["err"], "done": rec["done"] is not None})
     _, primera = await _read_meter(client, f"after the {fase}")
-    registro = await registration_settle(
+    record = await registration_settle(
         client, primera=primera, cap_s=cfg["settle_s"], poll_s=cfg["settle_poll_s"]
     )
-    if registro["exit"] is None:
+    if record["exit"] is None:
         raise RunnerError(
-            f"canary: meter read failed ({registro['error']}) registering the {fase} volley"
+            f"canary: meter read failed ({record['error']}) registering the {fase} volley"
         )
     return {
         "seeds": semillas,
         "outcomes": outcomes,
-        "meter": {"pre": pre, "post": registro["post"]},
-        "reads": registro["reads"],
-        "settle_exit": registro["exit"],
+        "meter": {"pre": pre, "post": record["post"]},
+        "reads": record["reads"],
+        "settle_exit": record["exit"],
     }
 
 
@@ -858,39 +856,39 @@ async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str) -> 
     until the operator deletes the manifest — an explicit decision, never a
     silent retry). A canary recorded on another model (a pre-pinning manifest)
     is stale evidence: it re-runs."""
-    manifiesto = ctx.manifiesto
+    manifest = ctx.manifest
     emit = cfg["emit"]
-    previo = manifiesto.doc.get("canary")
+    prior = manifest.doc.get("canary")
     if (
-        isinstance(previo, dict)
-        and previo.get("status") in ("ok", "inconclusive")
-        and previo.get("model") == CANARY_MODEL
+        isinstance(prior, dict)
+        and prior.get("status") in ("ok", "inconclusive")
+        and prior.get("model") == CANARY_MODEL
     ):
         if emit:
             emit(
-                f"canary: already ran for this run on {previo.get('model')!r} (ratio "
-                f"{_fmt_ratio(previo.get('ratio'))}, status {previo['status']}) - reused"
+                f"canary: already ran for this run on {prior.get('model')!r} (ratio "
+                f"{_fmt_ratio(prior.get('ratio'))}, status {prior['status']}) - reused"
             )
-        return previo
-    if isinstance(previo, dict) and previo.get("status") in ("alarm", "failed"):
-        causa = (
+        return prior
+    if isinstance(prior, dict) and prior.get("status") in ("alarm", "failed"):
+        cause = (
             "already alarmed"
-            if previo.get("status") == "alarm"
+            if prior.get("status") == "alarm"
             else "never completed (a mid-canary failure left it unfinished)"
         )
         raise RunnerError(
-            f"canary: this run's billing canary {causa} (ratio "
-            f"{_fmt_ratio(previo.get('ratio'))}) - the lane was never proven for this "
-            f"run_id; delete {manifiesto.ruta.name} to start a clean run"
+            f"canary: this run's billing canary {cause} (ratio "
+            f"{_fmt_ratio(prior.get('ratio'))}) - the lane was never proven for this "
+            f"run_id; delete {manifest.path.name} to start a clean run"
         )
 
-    modelo_api = cfg.get("model_map", {}).get(CANARY_MODEL, CANARY_MODEL)
-    specs_cuerpo = fixtures.build("T2", "long_context", 1)
-    cuerpo = specs_cuerpo[0].prompt
-    palabras = lane.nonce_words(lane.expected_tin("T2", "long_context"))
-    salados, nonce_replay = _canary_nonces(manifiesto.run_id, palabras)
-    prompts_salados = [lane.salted_prompt(cuerpo, n) for n in salados]
-    prompt_replay = lane.salted_prompt(cuerpo, nonce_replay)
+    api_model = cfg.get("model_map", {}).get(CANARY_MODEL, CANARY_MODEL)
+    body_specs = fixtures.build("T2", "long_context", 1)
+    body = body_specs[0].prompt
+    words = lane.nonce_words(lane.expected_tin("T2", "long_context"))
+    salados, nonce_replay = _canary_nonces(manifest.run_id, words)
+    prompts_salados = [lane.salted_prompt(body, n) for n in salados]
+    prompt_replay = lane.salted_prompt(body, nonce_replay)
 
     if emit:
         emit(
@@ -901,14 +899,14 @@ async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str) -> 
     # inside them persists the partial evidence (the billed chats land in the
     # canary line, the manifest marks the canary failed) before re-raising —
     # a resume refuses, it never re-bills the canary from scratch.
-    fallo_canary = ""
+    canary_failure = ""
     salado = None
-    repeticion = None
+    rep = None
     try:
         salado = await _canary_volley(
             client,
-            run_id=manifiesto.run_id,
-            modelo_api=modelo_api,
+            run_id=manifest.run_id,
+            api_model=api_model,
             model=CANARY_MODEL,
             prompts=prompts_salados,
             cfg=cfg,
@@ -919,23 +917,20 @@ async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str) -> 
             emit(
                 f"canary: salted volley registered ({salado['reads']} reads, {salado['settle_exit']})"
             )
-        repeticion = await _canary_volley(
+        rep = await _canary_volley(
             client,
-            run_id=manifiesto.run_id,
-            modelo_api=modelo_api,
+            run_id=manifest.run_id,
+            api_model=api_model,
             model=CANARY_MODEL,
             prompts=[prompt_replay] * CANARY_REPLAYS,
             cfg=cfg,
             fase="replay",
         )
-        _exigir_volley_aceptado(repeticion, "replay")
+        _exigir_volley_aceptado(rep, "replay")
         if emit:
-            emit(
-                f"canary: replay volley registered ({repeticion['reads']} reads, "
-                f"{repeticion['settle_exit']})"
-            )
+            emit(f"canary: replay volley registered ({rep['reads']} reads, {rep['settle_exit']})")
     except RunnerError as e:
-        fallo_canary = str(e)
+        canary_failure = str(e)
 
     vacio = {
         "seeds": [],
@@ -945,53 +940,53 @@ async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str) -> 
         "settle_exit": None,
     }
     salado = salado or vacio
-    repeticion = repeticion or vacio
+    rep = rep or vacio
     dpp = {
         "salted_session": _dpp(salado["meter"]["pre"], salado["meter"]["post"], "session"),
         "salted_weekly": _dpp(salado["meter"]["pre"], salado["meter"]["post"], "weekly"),
-        "replay_session": _dpp(repeticion["meter"]["pre"], repeticion["meter"]["post"], "session"),
-        "replay_weekly": _dpp(repeticion["meter"]["pre"], repeticion["meter"]["post"], "weekly"),
+        "replay_session": _dpp(rep["meter"]["pre"], rep["meter"]["post"], "session"),
+        "replay_weekly": _dpp(rep["meter"]["pre"], rep["meter"]["post"], "weekly"),
     }
     # The ratio mounts on the session window (the probe's practically finer
     # readout), the weekly as the fallback; both sub-resolution -> inconclusive.
     ratio = None
     base = None
-    for ventana in ("session", "weekly"):
-        salado_pp, replay_pp = dpp[f"salted_{ventana}"], dpp[f"replay_{ventana}"]
+    for window in ("session", "weekly"):
+        salado_pp, replay_pp = dpp[f"salted_{window}"], dpp[f"replay_{window}"]
         if (
             isinstance(salado_pp, (int, float))
             and salado_pp > 0
             and isinstance(replay_pp, (int, float))
         ):
             ratio = replay_pp / salado_pp
-            base = ventana
+            base = window
             break
-    estable = salado["settle_exit"] == "stable" and repeticion["settle_exit"] == "stable"
+    estable = salado["settle_exit"] == "stable" and rep["settle_exit"] == "stable"
     alarma = ratio is not None and estable and ratio > CANARY_ALARM_RATIO
-    if fallo_canary:
-        estado_canary = "failed"
+    if canary_failure:
+        canary_state = "failed"
     elif alarma:
-        estado_canary = "alarm"
+        canary_state = "alarm"
     elif ratio is not None and estable:
-        estado_canary = "ok"
+        canary_state = "ok"
     else:
-        estado_canary = "inconclusive"
-    causa_inconclusa = ""
-    if estado_canary == "inconclusive":
-        causa_inconclusa = (
+        canary_state = "inconclusive"
+    unresolved_cause = ""
+    if canary_state == "inconclusive":
+        unresolved_cause = (
             " - the ratio was unmeasurable (sub-tick volleys)"
             if ratio is None
             else " - a volley's registration settle never stabilized (capped); the "
             "ratio is not trustworthy evidence"
         )
     linea = {
-        "canary_id": f"{manifiesto.run_id}-canary",
-        "run_id": manifiesto.run_id,
+        "canary_id": f"{manifest.run_id}-canary",
+        "run_id": manifest.run_id,
         "level": level,
         "model": CANARY_MODEL,
         "workload": CANARY_WORKLOAD,
-        "body_fixture_hash": fixtures.fixture_hash(specs_cuerpo),
-        "body_sha256": lane.prompt_sha256(cuerpo),
+        "body_fixture_hash": fixtures.fixture_hash(body_specs),
+        "body_sha256": lane.prompt_sha256(body),
         "salted": {
             "nonce_sha256": [lane.nonce_sha256(n) for n in salados],
             "seeds": salado["seeds"],
@@ -999,21 +994,21 @@ async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str) -> 
         },
         "replay": {
             "nonce_sha256": lane.nonce_sha256(nonce_replay),
-            "seeds": repeticion["seeds"],
-            "outcomes": repeticion["outcomes"],
+            "seeds": rep["seeds"],
+            "outcomes": rep["outcomes"],
         },
         "meter": {
             "salted_pre": salado["meter"]["pre"],
             "salted_post": salado["meter"]["post"],
-            "replay_pre": repeticion["meter"]["pre"],
-            "replay_post": repeticion["meter"]["post"],
+            "replay_pre": rep["meter"]["pre"],
+            "replay_post": rep["meter"]["post"],
         },
         "dpp": dpp,
         "ratio": ratio,
         "ratio_basis": base,
         "alarm": alarma,
-        "reads": {"salted": salado["reads"], "replay": repeticion["reads"]},
-        "settle_exits": {"salted": salado["settle_exit"], "replay": repeticion["settle_exit"]},
+        "reads": {"salted": salado["reads"], "replay": rep["reads"]},
+        "settle_exits": {"salted": salado["settle_exit"], "replay": rep["settle_exit"]},
         "table_version": cfg["table_version"],
         "protocol_version": PROTOCOL_VERSION,
         "notes": (
@@ -1021,39 +1016,39 @@ async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str) -> 
             "(salted[0]'s nonce, the cache discount); the ratio mounts on the session "
             "window with the weekly as corroboration; alarm above "
             f"{CANARY_ALARM_RATIO} aborts the run at the gate"
-            + causa_inconclusa
-            + (f" - incomplete: {fallo_canary}" if fallo_canary else "")
+            + unresolved_cause
+            + (f" - incomplete: {canary_failure}" if canary_failure else "")
         ),
         "at": time.time(),
     }
     schema.validate_canary_line(linea)
-    write_jsonl(ctx.ruta_canary, linea)
-    manifiesto.doc["canary"] = {
-        "status": estado_canary,
+    write_jsonl(ctx.canary_path, linea)
+    manifest.doc["canary"] = {
+        "status": canary_state,
         "ratio": ratio,
         "ratio_basis": base,
         "alarm": alarma,
         "model": CANARY_MODEL,
         "at": linea["at"],
         "dpp": dpp,  # the canary's own quota spend (its volleys are bracketed too)
-        "settle_exits": {"salted": salado["settle_exit"], "replay": repeticion["settle_exit"]},
+        "settle_exits": {"salted": salado["settle_exit"], "replay": rep["settle_exit"]},
     }
-    manifiesto.save()
-    if fallo_canary:
+    manifest.save()
+    if canary_failure:
         if emit:
-            emit(f"canary: FAILED - {fallo_canary}")
-        raise RunnerError(fallo_canary)
+            emit(f"canary: FAILED - {canary_failure}")
+        raise RunnerError(canary_failure)
     if emit:
         if alarma:
-            veredicto = "ALARM: the replay billed near full price - the run aborts at the gate"
-        elif estado_canary == "ok":
-            veredicto = "the lane holds"
+            verdict = "ALARM: the replay billed near full price - the run aborts at the gate"
+        elif canary_state == "ok":
+            verdict = "the lane holds"
         else:
-            veredicto = (
-                f"inconclusive{causa_inconclusa} - proceeding, the passive detector "
+            verdict = (
+                f"inconclusive{unresolved_cause} - proceeding, the passive detector "
                 "watches the brackets"
             )
-        emit(f"canary: ratio {_fmt_ratio(ratio)} ({base or 'unmeasurable'}) - " + veredicto)
+        emit(f"canary: ratio {_fmt_ratio(ratio)} ({base or 'unmeasurable'}) - " + verdict)
     if alarma:
         raise RunnerError(
             f"billing canary: replay ratio {_fmt_ratio(ratio)} > {CANARY_ALARM_RATIO} - "
@@ -1063,7 +1058,7 @@ async def _ensure_canary(client: OllamaCloud, *, ctx, cfg: dict, level: str) -> 
             "full-price replay there is an alarm, not honest pricing - verify before "
             "deleting the manifest"
         )
-    return manifiesto.doc["canary"]
+    return manifest.doc["canary"]
 
 
 def _fmt_ratio(ratio) -> str:
@@ -1074,7 +1069,7 @@ async def burst(
     client: OllamaCloud,
     spec: BatchSpec,
     specs: tuple,
-    modelo_api: str,
+    api_model: str,
     *,
     salt=None,
     coords: list[tuple[str, int, int]] | None = None,
@@ -1086,7 +1081,7 @@ async def burst(
     `coords` — one (workload, rep, index-within-unit) triple per request,
     aligned with `specs` — parameterizes seeds and nonces across the bracket's
     units (a per-cell bracket's reps, a pooled one's workloads); the default
-    treats the batch as one single (workload, rep) unit. `modelo_api` is the
+    treats the batch as one single (workload, rep) unit. `api_model` is the
     id actually sent (the preflight's catalog match — the live catalog tags ids
     the price table lists untagged); the dataset records the slate id, the
     manifest's catalog history carries the mapping. `salt` ((workload, rep,
@@ -1099,15 +1094,15 @@ async def burst(
     semaforo = asyncio.Semaphore(spec.k)
 
     async def _one(pos: int) -> dict:
-        workload, rep, indice = coords[pos]
-        seed_value = fixtures.seed(workload, spec.model, rep, indice)
+        workload, rep, index = coords[pos]
+        seed_value = fixtures.seed(workload, spec.model, rep, index)
         async with semaforo:
             if pos < len(spec.gap_s) and spec.gap_s[pos]:
                 await asyncio.sleep(spec.gap_s[pos])
-            nonce = salt(workload, rep, indice) if salt else None
+            nonce = salt(workload, rep, index) if salt else None
             prompt = lane.salted_prompt(specs[pos].prompt, nonce) if nonce else specs[pos].prompt
             rec = await client.chat(
-                model=modelo_api,
+                model=api_model,
                 prompt=prompt,
                 seed=seed_value,
                 tools=list(specs[pos].tools) or None,
@@ -1127,11 +1122,11 @@ class BatchContext:
     """Everything one bracketed batch needs beyond its spec and the client."""
 
     base: pathlib.Path
-    manifiesto: Manifest
+    manifest: Manifest
     cfg: dict
     rutas_requests: pathlib.Path
-    ruta_batches: pathlib.Path
-    ruta_canary: pathlib.Path | None = None  # the billing canary's line (measured runs)
+    batches_path: pathlib.Path
+    canary_path: pathlib.Path | None = None  # the billing canary's line (measured runs)
 
 
 def _notes(*partes: str) -> str:
@@ -1144,7 +1139,7 @@ def _label(spec: BatchSpec) -> str:
     return f"{spec.workload or 'pool[' + '+'.join(spec.pool) + ']'}/{spec.model}"
 
 
-def _passive_detector(registros: list[dict], dpp_weekly: float | None) -> dict:
+def _passive_detector(records: list[dict], dpp_weekly: float | None) -> dict:
     """The canary's passive companion: the closed bracket's Δpp against the #28
     token budget.
 
@@ -1157,10 +1152,10 @@ def _passive_detector(registros: list[dict], dpp_weekly: float | None) -> dict:
     notes. The threshold is deferred until v3 data exists.
     """
     tokens_in = tokens_out = 0
-    for rec in registros:
-        pasos = rec.get("steps") or []
-        if pasos:
-            tin, tout = _sum_steps(pasos, "tok_in"), _sum_steps(pasos, "tok_out")
+    for rec in records:
+        steps = rec.get("steps") or []
+        if steps:
+            tin, tout = _sum_steps(steps, "tok_in"), _sum_steps(steps, "tok_out")
         else:
             done = rec.get("done")
             tin = done.get("prompt_eval_count") if done else None
@@ -1173,7 +1168,7 @@ def _passive_detector(registros: list[dict], dpp_weekly: float | None) -> dict:
     if tokens <= 0:
         return {"expected_pp": None, "measured_pp": dpp_weekly, "collapsed": False}
     familia = "prefill" if tokens_in / tokens >= DETECTOR_PREFILL_SHARE else "generation"
-    esperado = tokens / 1_000_000 * DETECTOR_RATES[familia]
+    expected = tokens / 1_000_000 * DETECTOR_RATES[familia]
     # A collapse is a bracket whose budget predicts a readable Δpp but measures
     # LESS THAN ONE TICK (below the meter's quantum, the tick read through the
     # comparison band — an exact-zero test would miss a 1-tick residue left by
@@ -1181,28 +1176,28 @@ def _passive_detector(registros: list[dict], dpp_weekly: float | None) -> dict:
     colapsado = bool(
         dpp_weekly is not None
         and dpp_weekly < TICK_PP * (1 - TICK_BAND)
-        and esperado >= DETECTOR_TICKS_FLOOR * TICK_PP
+        and expected >= DETECTOR_TICKS_FLOOR * TICK_PP
     )
     return {
-        "expected_pp": esperado,
+        "expected_pp": expected,
         "measured_pp": dpp_weekly,
         "collapsed": colapsado,
     }
 
 
 def _mark(
-    manifiesto: Manifest, spec: BatchSpec, status: str, *, include_rep: bool = False, **extra
+    manifest: Manifest, spec: BatchSpec, status: str, *, include_rep: bool = False, **extra
 ) -> None:
     """One manifest state write: the bracket's identity kwargs in one place.
     `rep` is included only when the caller asks — some abort paths predate it,
-    and bench status renders entrada.get("rep"), so normalizing would change
+    and bench status renders input.get("rep"), so normalizing would change
     the persisted manifest."""
     kw: dict = {"workload": spec.workload, "model": spec.model}
     if include_rep:
         kw["rep"] = spec.rep
     kw["pool"] = list(spec.pool) or None
     kw.update(extra)
-    manifiesto.set(spec.batch_id, status, **kw)
+    manifest.set(spec.batch_id, status, **kw)
 
 
 def _unit_plan(spec: BatchSpec, level: str, unidades, sal) -> tuple:
@@ -1210,8 +1205,8 @@ def _unit_plan(spec: BatchSpec, level: str, unidades, sal) -> tuple:
     fixture specs, per-request coordinates, per-workload fixture hashes and
     T3's per-turn salter (the agent loop salts every step)."""
     specs_unidades = [
-        (workload, rep, fixtures.build(level, workload, peticiones))
-        for workload, rep, peticiones in unidades
+        (workload, rep, fixtures.build(level, workload, requests))
+        for workload, rep, requests in unidades
     ]
     specs_requeridos = tuple(spec for _w, _r, u in specs_unidades for spec in u)
     # Per-request coordinates for seeds and nonces: (workload, rep, index
@@ -1226,21 +1221,21 @@ def _unit_plan(spec: BatchSpec, level: str, unidades, sal) -> tuple:
     sal_t3 = None
     if level == "T3":
         sal_t3 = (
-            (lambda indice, turno=None, _u=(spec.workload, spec.rep): sal(*_u, indice, turno))
+            (lambda index, turno=None, _u=(spec.workload, spec.rep): sal(*_u, index, turno))
             if sal
             else None
         )
     return specs_requeridos, coords, hashes, sal_t3
 
 
-async def _pre_read_or_abort(client: OllamaCloud, spec: BatchSpec, manifiesto: Manifest) -> dict:
+async def _pre_read_or_abort(client: OllamaCloud, spec: BatchSpec, manifest: Manifest) -> dict:
     """The bracket's meter pre-read: a failed read aborts the batch before any
     request — the manifest says so, and the error names the bracket."""
     try:
         status, pre = await client.usage()
     except Exception as e:  # noqa: BLE001 - a meter failure aborts cleanly, loudly
         _mark(
-            manifiesto,
+            manifest,
             spec,
             "aborted",
             note=f"aborted: meter read failed ({type(e).__name__}: {e}) before the batch",
@@ -1249,7 +1244,7 @@ async def _pre_read_or_abort(client: OllamaCloud, spec: BatchSpec, manifiesto: M
             f"batch {spec.batch_id}: meter read failed ({type(e).__name__}: {e}) before the batch"
         ) from None
     if status != 200 or pre is None:
-        manifiesto.set(spec.batch_id, "aborted")
+        manifest.set(spec.batch_id, "aborted")
         raise RunnerError(f"meter read failed (HTTP {status}) before batch {spec.batch_id}")
     return pre
 
@@ -1268,13 +1263,13 @@ async def _execute_batch(
     a checker failure or a bracket failure aborts the batch.
     """
     cfg = ctx.cfg
-    manifiesto = ctx.manifiesto
+    manifest = ctx.manifest
     level = spec.level
-    _mark(manifiesto, spec, "in_flight")
-    pre = await _pre_read_or_abort(client, spec, manifiesto)
+    _mark(manifest, spec, "in_flight")
+    pre = await _pre_read_or_abort(client, spec, manifest)
 
-    modelo_api = cfg.get("model_map", {}).get(spec.model, spec.model)
-    nota_checker = ""
+    api_model = cfg.get("model_map", {}).get(spec.model, spec.model)
+    checker_note = ""
     sal = _salter(cfg, spec)
     # The bracket's units: (workload, rep, requests) in send order. Specs the
     # workstreams build themselves (calibration, probe) carry no units — their
@@ -1286,75 +1281,75 @@ async def _execute_batch(
             # T3's burst IS the agent loop: each task consults the model
             # step by step over its own working copy, and every step is
             # one billed chat request — salted per turn under the lane.
-            registros = await agent.run_tasks(
+            records = await agent.run_tasks(
                 client,
                 spec,
                 specs_requeridos,
-                modelo_api,
-                sandbox_root=ctx.base / "sandbox" / manifiesto.run_id,
+                api_model,
+                sandbox_root=ctx.base / "sandbox" / manifest.run_id,
                 salt=sal_t3,
             )
-            ok = sum(1 for r in registros for p in r["steps"] if p["http"] == 200)
-            intentados = sum(len(r["steps"]) for r in registros)
+            ok = sum(1 for r in records for p in r["steps"] if p["http"] == 200)
+            intentados = sum(len(r["steps"]) for r in records)
         else:
-            registros = await burst(
-                client, spec, specs_requeridos, modelo_api, salt=sal, coords=coords
+            records = await burst(
+                client, spec, specs_requeridos, api_model, salt=sal, coords=coords
             )
-            ok = sum(1 for r in registros if r["http"] == 200)
+            ok = sum(1 for r in records if r["http"] == 200)
             intentados = spec.n
         try:
-            veredictos = _judge_units(specs_requeridos, registros, unidades)
+            verdicts = _judge_units(specs_requeridos, records, unidades)
         except checkers.CheckersError as e:
             # Checker drift is a harness bug, not a model outcome: the billed
             # requests are still logged (null verdicts) and the batch aborts.
-            nota_checker = f"aborted: checker failure - {type(e).__name__}: {e}"
+            checker_note = f"aborted: checker failure - {type(e).__name__}: {e}"
             if cfg["emit"]:
-                cfg["emit"](f"batch {spec.batch_id} ({_label(spec)}): {nota_checker}")
-            veredictos = [None] * len(registros)
-        for idx, rec in enumerate(registros):
-            workload, rep, indice = coords[idx]
+                cfg["emit"](f"batch {spec.batch_id} ({_label(spec)}): {checker_note}")
+            verdicts = [None] * len(records)
+        for idx, rec in enumerate(records):
+            workload, rep, index = coords[idx]
             linea = _request_line(
                 rec,
                 spec,
-                run_id=manifiesto.run_id,
+                run_id=manifest.run_id,
                 level=level,
                 index=idx,
                 workload=workload,
                 rep=rep,
                 fixture_hash=hashes[workload],
-                seed_value=fixtures.seed(workload, spec.model, rep, indice),
+                seed_value=fixtures.seed(workload, spec.model, rep, index),
                 table_version=cfg["table_version"],
-                checker=veredictos[idx],
+                checker=verdicts[idx],
             )
             schema.validate_request_line(linea)
             write_jsonl(ctx.rutas_requests, linea)
     except Exception as e:  # noqa: BLE001 - any failure aborts the batch, loudly
-        nota = f"aborted: {type(e).__name__}: {e}"
-        _mark(manifiesto, spec, "aborted", note=nota)
-        raise RunnerError(f"batch {spec.batch_id} ({_label(spec)}): {nota}") from None
+        note = f"aborted: {type(e).__name__}: {e}"
+        _mark(manifest, spec, "aborted", note=note)
+        raise RunnerError(f"batch {spec.batch_id} ({_label(spec)}): {note}") from None
     if ok == 0:
         # A fully rejected burst bills nothing but measures nothing either:
         # recorded as aborted (the request lines above carry the evidence),
         # never as a silent done cell.
-        nota = (
+        note = (
             f"aborted: 0 of {intentados} requests accepted - the endpoint rejected "
             "every request (model id or catalog drift?); nothing was billed"
         )
-        _mark(manifiesto, spec, "aborted", include_rep=True, note=nota)
-        raise RunnerError(f"batch {spec.batch_id} ({_label(spec)}): {nota}")
+        _mark(manifest, spec, "aborted", include_rep=True, note=note)
+        raise RunnerError(f"batch {spec.batch_id} ({_label(spec)}): {note}")
     t_burst_end = time.time()
 
     # Per-model count check, issued immediately after the burst (<= ~2 s):
     # the counter is instant and exact, so a dropped request aborts here.
-    error_lectura = ""
+    reading_error = ""
     try:
         status_c, leido = await client.usage()
     except Exception as e:  # noqa: BLE001 - the bracket still closes below
-        status_c, leido, error_lectura = 0, None, f"{type(e).__name__}: {e}"
+        status_c, leido, reading_error = 0, None, f"{type(e).__name__}: {e}"
     count_check_s = time.time() - t_burst_end
     counts_pre = _counts(pre)
     counts_check = _counts(leido)
-    contados = counts_check.get(modelo_api, 0) - counts_pre.get(modelo_api, 0)
+    contados = counts_check.get(api_model, 0) - counts_pre.get(api_model, 0)
 
     post: dict | None = None
     abort_headline = ""
@@ -1364,8 +1359,8 @@ async def _execute_batch(
         # still runs (first sample null when the count-check read itself died),
         # so the aborted bracket's post payload carries the spend it can see.
         abort_headline = (
-            f"aborted: meter read failed ({error_lectura}) at the count check"
-            if error_lectura
+            f"aborted: meter read failed ({reading_error}) at the count check"
+            if reading_error
             else (
                 f"aborted: request_count check failed - expected {ok} accepted "
                 f"requests, meter counted {contados} (delta {contados - ok})"
@@ -1374,67 +1369,67 @@ async def _execute_batch(
     # The registration settle: the count-check read is the loop's first
     # sample; the loop polls until two consecutive reads agree in both
     # windows, or the cap burns (the bracket still closes, marked capped).
-    registro = await registration_settle(
+    record = await registration_settle(
         client,
         primera=leido if status_c == 200 else None,
         cap_s=cfg["settle_s"],
         poll_s=cfg["settle_poll_s"],
     )
-    post = registro["post"]
-    if registro["exit"] is None:
+    post = record["post"]
+    if record["exit"] is None:
         if not abort_headline:
-            causa = registro["error"] or "unknown meter failure"
+            cause = record["error"] or "unknown meter failure"
             # A checker-invalidated batch stays invalidated: the note must
             # say BOTH causes, or the operator re-runs a suite whose
             # verdicts were never valid.
-            nota = _notes(f"aborted: meter read failed ({causa}) during registration", nota_checker)
+            note = _notes(f"aborted: meter read failed ({cause}) during registration", checker_note)
             _close_batch(
-                ctx.ruta_batches,
+                ctx.batches_path,
                 spec,
-                manifiesto,
+                manifest,
                 cfg,
                 pre,
                 None,
                 counts_pre,
                 counts_check,
-                _wall_clock_s(registros),
+                _wall_clock_s(records),
                 ok,
-                _notes(nota, spec.plan_note),
-                settle=registro,
+                _notes(note, spec.plan_note),
+                settle=record,
                 count_check_s=None,
             )
             _mark(
-                manifiesto,
+                manifest,
                 spec,
                 "aborted",
                 include_rep=True,
                 dpp_session=None,
                 dpp_weekly=None,
                 requests_ok=ok,
-                note=nota,
+                note=note,
             )
-            raise RunnerError(f"batch {spec.batch_id} ({_label(spec)}): {nota}")
+            raise RunnerError(f"batch {spec.batch_id} ({_label(spec)}): {note}")
         post = None  # an aborted batch may carry a null post payload
 
-    notas = _notes(abort_headline, nota_checker, spec.plan_note)
-    dpp_sesion = _dpp(pre, post, "session")
-    wall_clock = _wall_clock_s(registros)
+    notes = _notes(abort_headline, checker_note, spec.plan_note)
+    dpp_session = _dpp(pre, post, "session")
+    wall_clock = _wall_clock_s(records)
     # The passive detector: the closed bracket's Δpp against the #28 token
     # budget (a collapse below a readable prediction is broken salting's
     # signature; the threshold is refined once v3 data exists).
-    detectoro = _passive_detector(registros, _dpp(pre, post, "weekly"))
+    detectoro = _passive_detector(records, _dpp(pre, post, "weekly"))
     if detectoro.get("collapsed"):
-        notas = _notes(
-            notas,
+        notes = _notes(
+            notes,
             "passive detector: the bracket's weekly dpp measures "
             f"{detectoro['measured_pp']:g} pp against a token budget of "
             f"{detectoro['expected_pp']:.2f} pp (broken salting signature? threshold "
             "deferred, #28)",
         )
     _close_batch(
-        ctx.ruta_batches,
+        ctx.batches_path,
         spec,
-        manifiesto,
+        manifest,
         cfg,
         pre,
         post,
@@ -1442,29 +1437,29 @@ async def _execute_batch(
         counts_check,
         wall_clock,
         ok,
-        notas,
-        settle=registro,
+        notes,
+        settle=record,
         count_check_s=count_check_s,
     )
     # Only a real failure aborts; spec.plan_note is provenance, never a verdict.
-    estado_final = "aborted" if (abort_headline or nota_checker) else "done"
+    final_state = "aborted" if (abort_headline or checker_note) else "done"
     _mark(
-        manifiesto,
+        manifest,
         spec,
-        estado_final,
+        final_state,
         include_rep=True,
-        dpp_session=dpp_sesion,
+        dpp_session=dpp_session,
         dpp_weekly=_dpp(pre, post, "weekly"),
         requests_ok=ok,
-        settle_exit=registro["exit"],  # a capped bracket's read is analysis-visible
+        settle_exit=record["exit"],  # a capped bracket's read is analysis-visible
         detector=detectoro,
     )
-    if estado_final == "aborted":
-        raise RunnerError(f"batch {spec.batch_id} ({_label(spec)}): {notas}")
+    if final_state == "aborted":
+        raise RunnerError(f"batch {spec.batch_id} ({_label(spec)}): {notes}")
     return BatchOutcome(
         ok=ok,
         intentados=intentados,
-        dpp_session=dpp_sesion,
+        dpp_session=dpp_session,
         wall_clock_s=wall_clock,
     )
 
@@ -1496,14 +1491,14 @@ class ExecReport:
     escritas: int
 
 
-def _nota_resume(spec: BatchSpec, estado: str) -> str | None:
+def _note_resume(spec: BatchSpec, state: str) -> str | None:
     """The runner's default resume note: loud skips, silent done cells."""
-    if estado == "in_flight":
+    if state == "in_flight":
         return (
             f"resume: batch {spec.batch_id} ({_label(spec)}) is in_flight from "
             "an interrupted run - skipped, never silently retried"
         )
-    if estado == "aborted":
+    if state == "aborted":
         return (
             f"resume: batch {spec.batch_id} ({_label(spec)}) aborted in an earlier "
             "attempt - skipped; its spend is already in the dataset"
@@ -1519,7 +1514,7 @@ def _progreso(spec: BatchSpec, resultado: BatchOutcome, idx: str) -> str:
     )
 
 
-def _sin_nota(spec: BatchSpec) -> str | None:
+def _without_note(spec: BatchSpec) -> str | None:
     """No pre-bracket line (the runner's default)."""
     return None
 
@@ -1535,7 +1530,7 @@ class WorkstreamSession:
     from the run_id; the canary reuses, refuses or alarms per what the manifest
     already records. The choreography is one ordering: open -> derive specs ->
     pin -> canary (when the lane is on) -> brackets -> grow_planned ->
-    write_summary. `manifiesto` and `client` are exposed because the probe
+    write_summary. `manifest` and `client` are exposed because the probe
     fires volleys through them — a workstream reads them, it never rebuilds
     the loop."""
 
@@ -1543,31 +1538,31 @@ class WorkstreamSession:
         self,
         *,
         base: pathlib.Path,
-        manifiesto: Manifest,
+        manifest: Manifest,
         cfg: dict,
         runs_dir: pathlib.Path,
         batches_dir: pathlib.Path,
         client: OllamaCloud,
     ) -> None:
-        self.manifiesto = manifiesto
+        self.manifest = manifest
         self.client = client
         self.runs_dir = runs_dir
         self.batches_dir = batches_dir
         self._cfg = cfg
         self._ctx = BatchContext(
             base=base,
-            manifiesto=manifiesto,
+            manifest=manifest,
             cfg=cfg,
-            rutas_requests=runs_dir / f"requests-{manifiesto.run_id}.jsonl",
-            ruta_batches=batches_dir / f"batches-{manifiesto.run_id}.jsonl",
-            ruta_canary=runs_dir / f"canary-{manifiesto.run_id}.jsonl" if cfg.get("lane") else None,
+            rutas_requests=runs_dir / f"requests-{manifest.run_id}.jsonl",
+            batches_path=batches_dir / f"batches-{manifest.run_id}.jsonl",
+            canary_path=runs_dir / f"canary-{manifest.run_id}.jsonl" if cfg.get("lane") else None,
         )
 
     @property
     def run_id(self) -> str:
-        return self.manifiesto.run_id
+        return self.manifest.run_id
 
-    def modelo_api(self, model: str) -> str:
+    def api_model(self, model: str) -> str:
         """The id actually sent (the preflight's catalog match)."""
         return self._cfg.get("model_map", {}).get(model, model)
 
@@ -1583,26 +1578,26 @@ class WorkstreamSession:
         calibration's gap ladder, the concurrency cell plan) stamp on first
         sight; a later invocation deriving a different plan is refused like
         any other drift — the readings under one run_id stay comparable."""
-        previo = self.manifiesto.doc.get(key)
-        if previo is None:
-            self.manifiesto.doc[key] = plan
-            self.manifiesto.save()
-        elif previo != plan:
-            nombre = key.replace("_", " ")
+        prior = self.manifest.doc.get(key)
+        if prior is None:
+            self.manifest.doc[key] = plan
+            self.manifest.save()
+        elif prior != plan:
+            name = key.replace("_", " ")
             raise RunnerError(
-                f"manifest {self.manifiesto.ruta.name} records {nombre} {previo!r} but "
-                f"this invocation would run {plan!r} - the {nombre} may not drift inside "
+                f"manifest {self.manifest.path.name} records {name} {prior!r} but "
+                f"this invocation would run {plan!r} - the {name} may not drift inside "
                 "one run_id - keep the datasets apart"
             )
 
     def grow_planned(self, count: int) -> None:
         """The plan is the max union of everything this run_id has ever covered:
         a wider resume grows it, and status's pending count stays truthful."""
-        previa = self.manifiesto.doc.get("planned")
-        nueva = max(previa if isinstance(previa, int) else 0, count)
-        if nueva != previa:
-            self.manifiesto.doc["planned"] = nueva
-            self.manifiesto.save()
+        prior = self.manifest.doc.get("planned")
+        updated = max(prior if isinstance(prior, int) else 0, count)
+        if updated != prior:
+            self.manifest.doc["planned"] = updated
+            self.manifest.save()
 
     async def canary(self, level: str) -> dict:
         """The billing canary, once per run, before the first bracket."""
@@ -1626,20 +1621,20 @@ class WorkstreamSession:
         the session emits it only when an emit was given); the defaults carry
         the runner's notes verbatim. Counters: brackets closed here, skipped
         for done, in_flight and aborted, and the requests written."""
-        saltar = on_skip or _nota_resume
-        arrancar = on_start or _sin_nota
+        saltar = on_skip or _note_resume
+        arrancar = on_start or _without_note
         progresar = on_progress or _progreso
         hechos = omitidos = en_vuelo = abortados_previos = escritas = 0
         total = len(specs)
         for spec in specs:
-            estado = self.manifiesto.status(spec.batch_id)
-            if estado in ("done", "in_flight", "aborted"):
+            state = self.manifest.status(spec.batch_id)
+            if state in ("done", "in_flight", "aborted"):
                 omitidos += 1
-                if estado == "in_flight":
+                if state == "in_flight":
                     en_vuelo += 1
-                elif estado == "aborted":
+                elif state == "aborted":
                     abortados_previos += 1
-                self._emitir(saltar(spec, estado))
+                self._emitir(saltar(spec, state))
                 continue
             self._emitir(arrancar(spec))
             resultado = await self.execute_one(spec)
@@ -1656,9 +1651,9 @@ class WorkstreamSession:
 
     def write_summary(self, kind: str, doc: dict) -> pathlib.Path:
         """The workstream's derived dataset doc: one JSON per run_id."""
-        ruta = self.runs_dir / f"{kind}-{self.run_id}.json"
-        ruta.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
-        return ruta
+        path = self.runs_dir / f"{kind}-{self.run_id}.json"
+        path.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+        return path
 
     async def __aenter__(self) -> "WorkstreamSession":
         return self
@@ -1682,7 +1677,7 @@ def open_workstream(
     """The spending workstreams' one bootstrap: load the level's manifest
     strictly, mint its run_id and create it when absent, refuse drift, join the
     catalog history, and open the session that owns the rest of the protocol.
-    Use as `async with sesion:` — the client closes even when a bracket aborts."""
+    Use as `async with session:` — the client closes even when a bracket aborts."""
     base = pathlib.Path(base)
     runs_dir = base / "runs"
     batches_dir = base / "batches"
@@ -1700,12 +1695,12 @@ def open_workstream(
         "transport": transport,
         "emit": emit,
     }
-    manifiesto = open_workstream_manifest(
+    manifest = open_workstream_manifest(
         runs_dir, level=ws.level, run_id_prefix=ws.run_id_prefix, cfg=cfg
     )
     return WorkstreamSession(
         base=base,
-        manifiesto=manifiesto,
+        manifest=manifest,
         cfg=cfg,
         runs_dir=runs_dir,
         batches_dir=batches_dir,
@@ -1718,14 +1713,14 @@ def _check_drift(existente: Manifest, cfg: dict) -> None:
     and k may not drift."""
     if existente.doc.get("table_version") != cfg["table_version"]:
         raise RunnerError(
-            f"manifest {existente.ruta.name} belongs to table "
+            f"manifest {existente.path.name} belongs to table "
             f"{existente.doc.get('table_version')!r} but this run would use "
             f"{cfg['table_version']!r} - finish or archive that run (delete its manifest) "
             "before running another table"
         )
     if existente.doc.get("protocol_version") != PROTOCOL_VERSION:
         raise RunnerError(
-            f"manifest {existente.ruta.name} was written under protocol "
+            f"manifest {existente.path.name} was written under protocol "
             f"{existente.doc.get('protocol_version')!r}; this harness speaks "
             f"{PROTOCOL_VERSION!r} - keep the datasets apart"
         )
@@ -1733,7 +1728,7 @@ def _check_drift(existente: Manifest, cfg: dict) -> None:
         # The fixture_hash algorithm (or the fixture bytes it pins) changed: a
         # resumed run_id would mix incomparable hashes under one dataset.
         raise RunnerError(
-            f"manifest {existente.ruta.name} was written with fixture scheme "
+            f"manifest {existente.path.name} was written with fixture scheme "
             f"{existente.doc.get('fixture_version')!r}; this harness produces "
             f"{FIXTURE_VERSION!r} - the batch hashes are not comparable - keep the "
             "datasets apart"
@@ -1744,7 +1739,7 @@ def _check_drift(existente: Manifest, cfg: dict) -> None:
         # brackets as done on rep-1 id collisions (a cell billed once, measured
         # under a different bracket shape) - a resume never mixes compositions.
         raise RunnerError(
-            f"manifest {existente.ruta.name} was written with composition "
+            f"manifest {existente.path.name} was written with composition "
             f"{existente.doc.get('composition', 'per-rep (pre-hybrid)')!r}; this harness "
             f"plans {COMPOSITION_VERSION!r} (methodology v1.1 §5's hybrid: the strong "
             "four per-cell, the weak trio pooled per model) - resuming would mix "
@@ -1753,7 +1748,7 @@ def _check_drift(existente: Manifest, cfg: dict) -> None:
     k_cfg = cfg.get("k")
     if k_cfg is not None and existente.doc.get("k") != k_cfg:
         raise RunnerError(
-            f"manifest {existente.ruta.name} records k={existente.doc.get('k')!r} but this "
+            f"manifest {existente.path.name} records k={existente.doc.get('k')!r} but this "
             f"run would use k={k_cfg!r} - mixing k inside one run_id would duplicate cells"
         )
     reps_cfg = cfg.get("reps")
@@ -1770,7 +1765,7 @@ def _check_drift(existente: Manifest, cfg: dict) -> None:
         # per-rep compositions (T1/T3) never collide — their batch ids embed
         # the rep, so their wider resume still grows the plan the union allows.
         raise RunnerError(
-            f"manifest {existente.ruta.name} was planned at --reps "
+            f"manifest {existente.path.name} was planned at --reps "
             f"{existente.doc.get('reps')!r} but this run would use --reps {reps_cfg!r} - "
             "the pooled brackets' batch ids do not separate densities, and a resume at "
             "another one would misread the run state - finish or archive that run "
@@ -1779,9 +1774,9 @@ def _check_drift(existente: Manifest, cfg: dict) -> None:
 
 
 def _close_batch(
-    ruta_batches: pathlib.Path,
+    batches_path: pathlib.Path,
     spec: BatchSpec,
-    manifiesto: Manifest,
+    manifest: Manifest,
     cfg: dict,
     pre: dict | None,
     post: dict | None,
@@ -1797,7 +1792,7 @@ def _close_batch(
     the abort path and the done path both close through here."""
     linea = _batch_line(
         spec,
-        manifiesto=manifiesto,
+        manifest=manifest,
         pre=pre,
         post=post,
         counts_pre=counts_pre,
@@ -1812,13 +1807,13 @@ def _close_batch(
         notes=notes,
     )
     schema.validate_batch_line(linea)
-    write_jsonl(ruta_batches, linea)
+    write_jsonl(batches_path, linea)
 
 
 def _batch_line(
     spec: BatchSpec,
     *,
-    manifiesto: Manifest,
+    manifest: Manifest,
     pre: dict | None,
     post: dict | None,
     counts_pre: dict[str, int],
@@ -1834,7 +1829,7 @@ def _batch_line(
 ) -> dict:
     return {
         "batch_id": spec.batch_id,
-        "run_id": manifiesto.run_id,
+        "run_id": manifest.run_id,
         "level": spec.level,
         "workload": spec.workload,  # null on a pooled bracket (the pool names them)
         "model": spec.model,
@@ -1857,8 +1852,8 @@ def _batch_line(
         "settle_exit": settle["exit"],
         "count_check_s": count_check_s,
         "wall_clock_s": wall_clock_s,
-        "medidor_pre": pre,
-        "medidor_post": post,
+        "meter_pre": pre,
+        "meter_post": post,
         "dpp_session": _dpp(pre, post, "session"),
         "dpp_weekly": _dpp(pre, post, "weekly"),
         "request_counts": {"pre": counts_pre, "count_check": counts_check, "post": counts_post},
@@ -1926,7 +1921,7 @@ async def _run_level_async(
     transport,
     emit,
 ) -> dict:
-    sesion = open_workstream(
+    session = open_workstream(
         base,
         Workstream(level=level, run_id_prefix=level, k=k, lane=True, reps=reps),
         table_version=table_version,
@@ -1937,10 +1932,10 @@ async def _run_level_async(
         transport=transport,
         emit=emit,
     )
-    async with sesion:
+    async with session:
         try:
             specs = plan(
-                run_id=sesion.run_id,
+                run_id=session.run_id,
                 level=level,
                 workloads=workloads,
                 models=models,
@@ -1950,15 +1945,15 @@ async def _run_level_async(
             )
         except ValueError as e:  # fixture drift is a clean abort, not a traceback
             raise RunnerError(f"run aborted before any request: {e}") from None
-        sesion.grow_planned(max(len(specs), len(sesion.manifiesto.doc["batches"])))
+        session.grow_planned(max(len(specs), len(session.manifest.doc["batches"])))
         if specs:
             # The billing canary opens the run: the lane must be proven before
             # the first bracket bills anything under it.
-            await sesion.canary(level)
-        reporte = await sesion.brackets(specs)
+            await session.canary(level)
+        reporte = await session.brackets(specs)
 
     return {
-        "run_id": sesion.run_id,
+        "run_id": session.run_id,
         "level": level,
         "table_version": table_version,
         "batches_planned": len(specs),

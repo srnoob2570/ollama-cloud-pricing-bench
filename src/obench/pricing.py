@@ -28,60 +28,60 @@ class Rate:
 
 
 class PriceTable:
-    def __init__(self, ruta):
-        self._ruta = pathlib.Path(ruta)
+    def __init__(self, path):
+        self._path = pathlib.Path(path)
         try:
-            doc = json.loads(self._ruta.read_text(encoding="utf-8"))
+            doc = json.loads(self._path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as e:
-            raise TableError(f"table {self._ruta.name} is not valid JSON: {e}") from None
+            raise TableError(f"table {self._path.name} is not valid JSON: {e}") from None
         for key in ("table_version", "models"):
             if key not in doc:
-                raise TableError(f"table {self._ruta.name} is missing {key!r}")
+                raise TableError(f"table {self._path.name} is missing {key!r}")
         self.table_version = str(doc["table_version"])
         self.per = int(doc.get("per", 1_000_000))
         if self.per <= 0:
-            raise TableError(f"table {self._ruta.name} has an invalid `per`: {self.per}")
+            raise TableError(f"table {self._path.name} has an invalid `per`: {self.per}")
         self.currency = doc.get("currency", "USD")
         self.models: dict[str, dict[str, float]] = doc["models"]
         self._validate()
 
     def _validate(self) -> None:
-        for nombre, t in self.models.items():
+        for name, t in self.models.items():
             try:
-                entrada = float(t["input"])
+                input = float(t["input"])
                 cacheada = float(t["cached_input"])
-                salida = float(t["output"])
+                output = float(t["output"])
             except (KeyError, TypeError, ValueError) as e:
                 raise TableError(
-                    f"table {self._ruta.name}: invalid rates for {nombre!r} ({e})"
+                    f"table {self._path.name}: invalid rates for {name!r} ({e})"
                 ) from None
-            if min(entrada, cacheada, salida) < 0:
-                raise TableError(f"table {self._ruta.name}: negative rates for {nombre!r}")
-            if cacheada > entrada:
+            if min(input, cacheada, output) < 0:
+                raise TableError(f"table {self._path.name}: negative rates for {name!r}")
+            if cacheada > input:
                 raise TableError(
-                    f"table {self._ruta.name}: {nombre!r} prices cached_input ({cacheada}) "
-                    f"ABOVE input ({entrada}) - a data error, not a discount"
+                    f"table {self._path.name}: {name!r} prices cached_input ({cacheada}) "
+                    f"ABOVE input ({input}) - a data error, not a discount"
                 )
 
     @classmethod
     def load(cls, pricing_dir, version: str | None = None) -> PriceTable:
         """Loads the `version` table, or the most recent one in the directory."""
-        directorio = pathlib.Path(pricing_dir)
-        if not directorio.exists():
-            raise TableError(f"price-table directory does not exist: {directorio}")
-        ruta = directorio / f"{version}.json" if version else None
-        if ruta is None:
-            candidatas = sorted(directorio.glob("*.json"))
+        directory = pathlib.Path(pricing_dir)
+        if not directory.exists():
+            raise TableError(f"price-table directory does not exist: {directory}")
+        path = directory / f"{version}.json" if version else None
+        if path is None:
+            candidatas = sorted(directory.glob("*.json"))
             if not candidatas:
-                raise TableError(f"no price table in {directorio}")
-            ruta = candidatas[-1]
-        if not ruta.exists():
-            raise TableError(f"price table does not exist: {ruta}")
-        return cls(ruta)
+                raise TableError(f"no price table in {directory}")
+            path = candidatas[-1]
+        if not path.exists():
+            raise TableError(f"price table does not exist: {path}")
+        return cls(path)
 
-    def rate(self, modelo: str) -> Rate:
+    def rate(self, model: str) -> Rate:
         try:
-            t = self.models[modelo]
+            t = self.models[model]
         except KeyError:
-            raise TableError(f"table {self._ruta.name} has no model {modelo!r}") from None
-        return Rate(modelo, float(t["input"]), float(t["cached_input"]), float(t["output"]))
+            raise TableError(f"table {self._path.name} has no model {model!r}") from None
+        return Rate(model, float(t["input"]), float(t["cached_input"]), float(t["output"]))

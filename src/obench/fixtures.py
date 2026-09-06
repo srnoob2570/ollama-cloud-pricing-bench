@@ -120,20 +120,20 @@ class RequestSpec:
 def _build_cached(level: str, workload: str, n: int) -> tuple[RequestSpec, ...]:
     """The workload's request specs, generated once per (level, workload, n)."""
     if level == "T1":
-        return tuple(RequestSpec(texto) for texto in _t1_prompts(workload, n))
+        return tuple(RequestSpec(text) for text in _t1_prompts(workload, n))
     if level == "T2":
         from . import fixtures_t2  # lazy: T1 runs never load the T2 generators
 
         return tuple(
-            RequestSpec(prompt=texto, tools=tuple(herramientas))
-            for texto, herramientas in fixtures_t2.specs(workload, n)
+            RequestSpec(prompt=text, tools=tuple(herramientas))
+            for text, herramientas in fixtures_t2.specs(workload, n)
         )
     if level == "T3":
         from . import fixtures_t3  # lazy: T1/T2 runs never load the T3 generators
 
         return tuple(
-            RequestSpec(prompt=texto, repo=tuple(archivos))
-            for texto, archivos in fixtures_t3.specs(workload, n)
+            RequestSpec(prompt=text, repo=tuple(archivos))
+            for text, archivos in fixtures_t3.specs(workload, n)
         )
     raise ValueError(f"fixture generators for {level!r} arrive with a later Harness ticket")
 

@@ -110,8 +110,8 @@ def test_mark_is_atomic_and_versioned(tmp_path):
     from obench.gate import mark_dry_run
 
     mark_dry_run(tmp_path, "T1", {"table_version": "2026-08-31", "rows": [{"a": 1}]})
-    marca = json.loads((tmp_path / "runs" / "gate-T1.json").read_text(encoding="utf-8"))
-    assert marca["level"] == "T1" and marca["table_version"] == "2026-08-31"
+    mark = json.loads((tmp_path / "runs" / "gate-T1.json").read_text(encoding="utf-8"))
+    assert mark["level"] == "T1" and mark["table_version"] == "2026-08-31"
     require_dry_run(tmp_path, "T1", table_version="2026-08-31")  # does not raise
     with pytest.raises(GateClosed, match="table"):
         require_dry_run(tmp_path, "T1", table_version="other")

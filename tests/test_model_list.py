@@ -27,22 +27,22 @@ def read_lines(tmp_path, dirname, pattern) -> list[dict]:
 
 
 def mark_models(tmp_path, level="T1") -> list:
-    marca = json.loads((tmp_path / "runs" / f"gate-{level}.json").read_text(encoding="utf-8"))
-    return marca["estimado"]["models"]
+    mark = json.loads((tmp_path / "runs" / f"gate-{level}.json").read_text(encoding="utf-8"))
+    return mark["estimado"]["models"]
 
 
 def narrow_dry_run(tmp_path, pricing, level, *model) -> None:
     """Runs a free dry-run at reps=1 with an optional model list (mark recorded)."""
-    codigo, _, errores = run_cli(
+    code, _, errors = run_cli(
         tmp_path, "dry-run", "--level", level, "--reps", "1", "--pricing-dir", pricing, *model
     )
-    assert codigo == 0, errores
+    assert code == 0, errors
 
 
 def test_dry_run_prices_and_records_the_requested_models(tmp_path, fake):
     pricing = with_pricing(tmp_path)
     narrow_dry_run(tmp_path, pricing, "T1", *DOS)
-    _, salida, _ = run_cli(
+    _, output, _ = run_cli(
         tmp_path,
         "dry-run",
         "--level",
@@ -54,9 +54,9 @@ def test_dry_run_prices_and_records_the_requested_models(tmp_path, fake):
         *DOS,
         "--json",
     )
-    doc = json.loads(salida)
-    assert all(fila["models"] == 2 for fila in doc["rows"])
-    assert all(fila["requests"] == 20 * 2 for fila in doc["rows"] if fila["workload"] == "qa_short")
+    doc = json.loads(output)
+    assert all(row["models"] == 2 for row in doc["rows"])
+    assert all(row["requests"] == 20 * 2 for row in doc["rows"] if row["workload"] == "qa_short")
     assert doc["models"] == ["glm-5.3-flash", "kimi-k3"]  # the mark's approved set
     assert fake.calls == []
 
@@ -66,19 +66,19 @@ def test_dry_run_without_model_records_the_full_slate(tmp_path, fake):
     narrow_dry_run(tmp_path, pricing, "T2")
     doc = mark_models(tmp_path, "T2")
     assert len(doc) == 6 and "glm-5.3-flash" in doc and "kimi-k3" in doc
-    codigo, salida, _ = run_cli(
+    code, output, _ = run_cli(
         tmp_path, "dry-run", "--level", "T2", "--reps", "1", "--pricing-dir", pricing, "--json"
     )
-    assert codigo == 0
-    filas = json.loads(salida)["rows"]
-    assert all(fila["models"] == 6 for fila in filas)
+    assert code == 0
+    rows = json.loads(output)["rows"]
+    assert all(row["models"] == 6 for row in rows)
 
 
 def test_dry_run_dedupes_preserving_order(tmp_path, fake):
     pricing = with_pricing(tmp_path)
     narrow_dry_run(tmp_path, pricing, "T1", "--model", "kimi-k3", "kimi-k3", "glm-5.2")
     assert mark_models(tmp_path) == ["kimi-k3", "glm-5.2"]
-    _, salida, _ = run_cli(
+    _, output, _ = run_cli(
         tmp_path,
         "dry-run",
         "--level",
@@ -93,12 +93,12 @@ def test_dry_run_dedupes_preserving_order(tmp_path, fake):
         "glm-5.2",
         "--json",
     )
-    assert all(fila["models"] == 2 for fila in json.loads(salida)["rows"])
+    assert all(row["models"] == 2 for row in json.loads(output)["rows"])
 
 
 def test_dry_run_refuses_models_outside_the_slate(tmp_path, fake):
     pricing = with_pricing(tmp_path)
-    codigo, _, errores = run_cli(
+    code, _, errors = run_cli(
         tmp_path,
         "dry-run",
         "--level",
@@ -111,8 +111,8 @@ def test_dry_run_refuses_models_outside_the_slate(tmp_path, fake):
         "glm-5.3-flash",
         "no-existe",
     )
-    assert codigo == 2
-    assert "no-existe" in errores and "T2 slate" in errores
+    assert code == 2
+    assert "no-existe" in errors and "T2 slate" in errors
     assert fake.calls == []
 
 
@@ -130,21 +130,21 @@ def test_run_bills_exactly_the_requested_models(tmp_path, fake_cli):
 def test_run_refuses_models_outside_the_slate(tmp_path, fake_cli):
     pricing = with_pricing(tmp_path)
     narrow_dry_run(tmp_path, pricing, "T1")
-    codigo, _, errores = run_cli(
+    code, _, errors = run_cli(
         tmp_path, "run", "--level", "T1", "--reps", "1", "--model", "no-existe"
     )
-    assert codigo == 2
-    assert "no-existe" in errores
+    assert code == 2
+    assert "no-existe" in errors
     assert fake_cli.calls == []
 
 
 def test_gate_refuses_models_the_dry_run_did_not_approve(tmp_path, fake_cli):
     pricing = with_pricing(tmp_path)
     narrow_dry_run(tmp_path, pricing, "T1", *DOS)  # narrowed mark
-    codigo, _, errores = run_t1(tmp_path, "--reps", "1")  # full slate would bill more
-    assert codigo == 2
+    code, _, errors = run_t1(tmp_path, "--reps", "1")  # full slate would bill more
+    assert code == 2
     assert fake_cli.calls == []  # refused before any spend
-    assert "never bill what the dry-run did not approve" in errores
+    assert "never bill what the dry-run did not approve" in errors
 
 
 def test_gate_accepts_a_narrower_run_than_approved(tmp_path, fake_cli):
@@ -170,7 +170,7 @@ def test_old_marks_without_models_skip_the_subset_check(tmp_path, fake_cli):
 def test_t2_subset_run_bills_only_the_list(tmp_path, fake_cli):
     pricing = with_pricing(tmp_path)
     narrow_dry_run(tmp_path, pricing, "T2", *DOS)
-    codigo, salida, errores = run_cli(
+    code, output, errors = run_cli(
         tmp_path,
         "run",
         "--level",
@@ -183,7 +183,7 @@ def test_t2_subset_run_bills_only_the_list(tmp_path, fake_cli):
         "0.01",
         *DOS,
     )
-    assert codigo == 0, salida or errores
+    assert code == 0, output or errors
     batches = read_lines(tmp_path, "batches", "batches-*.jsonl")
     assert sorted({b["model"] for b in batches}) == ["glm-5.3-flash", "kimi-k3"]
 
@@ -191,9 +191,9 @@ def test_t2_subset_run_bills_only_the_list(tmp_path, fake_cli):
 def test_probe_concurrency_keeps_the_single_model_contract(tmp_path, fake_cli):
     pricing = with_pricing(tmp_path)
     narrow_dry_run(tmp_path, pricing, "T1")
-    codigo, _, errores = run_cli(tmp_path, "probe-concurrency", "--pricing-dir", pricing, *DOS)
-    assert codigo == 2
-    assert "exactly one" in errores
+    code, _, errors = run_cli(tmp_path, "probe-concurrency", "--pricing-dir", pricing, *DOS)
+    assert code == 2
+    assert "exactly one" in errors
 
 
 def test_predict_and_analyze_keep_the_single_model_contract(tmp_path, fake_cli):

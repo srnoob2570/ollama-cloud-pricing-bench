@@ -88,10 +88,10 @@ def test_batch_dpp_matches_scripted_consumption_within_a_tick(tmp_path, fake_cli
     code, out, err = run_t1(tmp_path, "--model", "glm-5.3-flash", "--rep", "1", "--reps", "1")
     assert code == 0, out or err
     batches = {b["workload"]: b for b in read_jsonl(tmp_path, "batches", "batches-*.jsonl")}
-    esperado = {"qa_short": 20 * 0.2, "calibration": 3 * 0.2, "throughput": 1 * 0.2}
-    for w, esperado_pp in esperado.items():
-        assert abs(batches[w]["dpp_session"] - esperado_pp) <= 0.1, w
-        assert abs(batches[w]["dpp_weekly"] - esperado_pp) <= 0.1, w
+    expected = {"qa_short": 20 * 0.2, "calibration": 3 * 0.2, "throughput": 1 * 0.2}
+    for w, expected_pp in expected.items():
+        assert abs(batches[w]["dpp_session"] - expected_pp) <= 0.1, w
+        assert abs(batches[w]["dpp_weekly"] - expected_pp) <= 0.1, w
 
 
 def test_request_count_check_aborts_when_the_fake_drops_a_request(tmp_path, fake_cli):
@@ -115,15 +115,15 @@ def test_request_count_check_aborts_when_the_fake_drops_a_request(tmp_path, fake
     assert (
         batches[0]["dpp_session"]
         == (
-            batches[0]["medidor_post"]["limits"]["session"]["usage"]
-            - batches[0]["medidor_pre"]["limits"]["session"]["usage"]
+            batches[0]["meter_post"]["limits"]["session"]["usage"]
+            - batches[0]["meter_pre"]["limits"]["session"]["usage"]
         )
         * 100
     )
     assert 1.9 <= batches[0]["dpp_session"] <= 2.1
     validate_batch_line(batches[0])
-    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
-    estados = [b["status"] for b in manifiesto["batches"].values()]
+    manifest = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    estados = [b["status"] for b in manifest["batches"].values()]
     assert estados.count("aborted") == 1 and "done" not in estados
 
     # Resume: the aborted batch is skipped (its spend is already in the dataset), and
@@ -137,8 +137,8 @@ def test_request_count_check_aborts_when_the_fake_drops_a_request(tmp_path, fake
     assert code == 0, err
     chats_nuevos = [c for c in fake_cli.calls[antes:] if c["path"] == "/api/chat"]
     assert len(chats_nuevos) == 4  # calibration (3) + throughput (1); qa_short NOT retried
-    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
-    estados = [b["status"] for b in manifiesto["batches"].values()]
+    manifest = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    estados = [b["status"] for b in manifest["batches"].values()]
     assert estados == ["aborted", "done", "done"]
 
 
@@ -178,8 +178,8 @@ def test_raw_lines_honor_the_agreed_schema(tmp_path, fake_cli):
     assert ok["out_text_hash"] == hashlib.sha256(b"world").hexdigest()
     assert ok["table_version"] == "2026-08-31" and ok["protocol_version"]
     batch = batches[0]
-    for campo in ("medidor_pre", "medidor_post"):
-        assert isinstance(batch[campo]["limits"]["session"]["usage"], float)  # full raw payload
+    for field in ("meter_pre", "meter_post"):
+        assert isinstance(batch[field]["limits"]["session"]["usage"], float)  # full raw payload
     assert batch["settle_s"] == 2.0 and batch["n"] == 20
     # Protocol v3's registration settle, stamped on the line: the mode, the poll
     # count, the exit reason and both windows' registration times.
@@ -214,11 +214,11 @@ def test_in_flight_batch_is_never_silently_retried(tmp_path, fake_cli):
     pricing = prepare(tmp_path)
     assert run_t1(tmp_path, "--model", "glm-5.3-flash", "--rep", "1", "--reps", "1")[0] == 0
     antes = len(consumer_calls(fake_cli))
-    ruta = tmp_path / "runs" / "manifest-T1.json"
-    manifiesto = json.loads(ruta.read_text(encoding="utf-8"))
-    victima = next(iter(manifiesto["batches"]))
-    manifiesto["batches"][victima]["status"] = "in_flight"  # simulate a crash mid-batch
-    ruta.write_text(json.dumps(manifiesto), encoding="utf-8")
+    path = tmp_path / "runs" / "manifest-T1.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    victima = next(iter(manifest["batches"]))
+    manifest["batches"][victima]["status"] = "in_flight"  # simulate a crash mid-batch
+    path.write_text(json.dumps(manifest), encoding="utf-8")
     assert (
         run_cli(tmp_path, "dry-run", "--level", "T1", "--reps", "1", "--pricing-dir", pricing)[0]
         == 0
@@ -252,7 +252,7 @@ def test_gate_binds_the_run_density_to_the_approved_estimate(tmp_path, fake_cli)
 
 def test_json_run_prints_pure_json_on_stdout(tmp_path, fake_cli):
     prepare(tmp_path)
-    codigo, salida, errores = run_cli(
+    code, output, errors = run_cli(
         tmp_path,
         "run",
         "--level",
@@ -265,10 +265,10 @@ def test_json_run_prints_pure_json_on_stdout(tmp_path, fake_cli):
         "0.01",
         "--json",
     )
-    assert codigo == 0, salida or errores
-    doc = json.loads(salida)  # progress lines live on stderr; stdout parses
+    assert code == 0, output or errors
+    doc = json.loads(output)  # progress lines live on stderr; stdout parses
     assert doc["batches_done"] == 57 and doc["requests_written"] == 19 * 24
-    assert errores  # the progress went to stderr
+    assert errors  # the progress went to stderr
 
 
 def test_corrupt_manifest_is_a_clean_error(tmp_path, fake_cli):
@@ -326,9 +326,9 @@ def test_manifest_refuses_composition_drift_mid_run(tmp_path, fake_cli):
     a rep-1 id — billing nothing and measuring less than the plan says."""
     pricing = prepare(tmp_path)
     assert run_t1(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")[0] == 0
-    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
-    del manifiesto["composition"]  # a pre-hybrid manifest carries none
-    (tmp_path / "runs" / "manifest-T1.json").write_text(json.dumps(manifiesto), encoding="utf-8")
+    manifest = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    del manifest["composition"]  # a pre-hybrid manifest carries none
+    (tmp_path / "runs" / "manifest-T1.json").write_text(json.dumps(manifest), encoding="utf-8")
     assert (
         run_cli(tmp_path, "dry-run", "--level", "T1", "--reps", "1", "--pricing-dir", pricing)[0]
         == 0
@@ -358,8 +358,8 @@ def test_recorded_seed_is_transmitted_to_the_api(tmp_path, fake_cli):
     assert code == 0, err
     chats = [c for c in fake_cli.calls if c["path"] == "/api/chat"]
     # The canary's T2-size chats are excluded by size: this pins the cell's seeds.
-    celdas = [c for c in chats if len(c["body"]["messages"][0]["content"]) < 10_000]
-    semillas = {c["body"]["options"]["seed"] for c in celdas}
+    cells = [c for c in chats if len(c["body"]["messages"][0]["content"]) < 10_000]
+    semillas = {c["body"]["options"]["seed"] for c in cells}
     requests = read_jsonl(tmp_path, "runs", "requests-*.jsonl")
     assert {r["seed"] for r in requests} == semillas  # what was recorded is what was sent
 
@@ -375,8 +375,8 @@ def test_fully_rejected_burst_aborts_instead_of_completing(tmp_path, fake_cli):
     requests = read_jsonl(tmp_path, "runs", "requests-*.jsonl")
     assert len(requests) == 20 and all(r["http"] == 429 for r in requests)
     assert not list((tmp_path / "batches").glob("batches-*.jsonl"))  # no bracket: zero spend
-    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
-    assert all(e["status"] == "aborted" for e in manifiesto["batches"].values())
+    manifest = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    assert all(e["status"] == "aborted" for e in manifest["batches"].values())
 
 
 def test_requests_use_the_matched_catalog_id(tmp_path, fake_cli):
@@ -395,14 +395,14 @@ def test_requests_use_the_matched_catalog_id(tmp_path, fake_cli):
     assert {r["model"] for r in requests} == {"nemotron-3-nano"}  # the study's unit
     batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")
     assert len(batches) == 3 and all(b["notes"] == "" for b in batches)  # clean cells
-    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
-    assert manifiesto["catalog"][-1]["matched"]["nemotron-3-nano"] == "nemotron-3-nano:30b"
+    manifest = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    assert manifest["catalog"][-1]["matched"]["nemotron-3-nano"] == "nemotron-3-nano:30b"
 
 
-def full_catalog_less(modelo: str) -> list[str]:
+def full_catalog_less(model: str) -> list[str]:
     from conftest import standard_table
 
-    return [m for m in sorted(standard_table()) if m != modelo]
+    return [m for m in sorted(standard_table()) if m != model]
 
 
 def test_meter_read_failure_mid_batch_closes_the_bracket_cleanly(tmp_path, fake_cli):
@@ -416,9 +416,9 @@ def test_meter_read_failure_mid_batch_closes_the_bracket_cleanly(tmp_path, fake_
     assert "meter read failed (ConnectError" in err and "Traceback" not in err
     batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")  # the bracket closed
     assert len(batches) == 1 and "meter read failed" in batches[0]["notes"]
-    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
-    entrada = next(iter(manifiesto["batches"].values()))
-    assert entrada["status"] == "aborted" and entrada["requests_ok"] == 20
+    manifest = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    input = next(iter(manifest["batches"].values()))
+    assert input["status"] == "aborted" and input["requests_ok"] == 20
     # the 20 billed requests are in the dataset
     assert len(read_jsonl(tmp_path, "runs", "requests-*.jsonl")) == 20
 
@@ -445,12 +445,12 @@ def test_settled_read_failure_still_records_the_batchs_spend(tmp_path, fake_cli)
     code, _out, err = run_t1(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")
     assert code == 1 and "during registration" in err and "Traceback" not in err
     batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")
-    assert len(batches) == 1 and batches[0]["medidor_post"] is None
+    assert len(batches) == 1 and batches[0]["meter_post"] is None
     assert batches[0]["settle_exit"] is None and batches[0]["settle_reads"] == 0
-    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
-    entrada = next(iter(manifiesto["batches"].values()))
-    assert entrada["status"] == "aborted" and entrada["requests_ok"] == 20
-    assert entrada["rep"] == 1 and entrada["dpp_session"] is None
+    manifest = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    input = next(iter(manifest["batches"].values()))
+    assert input["status"] == "aborted" and input["requests_ok"] == 20
+    assert input["rep"] == 1 and input["dpp_session"] is None
 
 
 def test_checker_failure_keeps_the_billed_evidence(tmp_path, fake_cli, monkeypatch):
@@ -471,8 +471,8 @@ def test_checker_failure_keeps_the_billed_evidence(tmp_path, fake_cli, monkeypat
     assert len(requests) == 20 and all(r["checker"] is None for r in requests)  # billed, kept
     batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")
     assert len(batches) == 1 and "checker failure" in batches[0]["notes"]
-    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
-    assert all(e["status"] == "aborted" for e in manifiesto["batches"].values())
+    manifest = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    assert all(e["status"] == "aborted" for e in manifest["batches"].values())
 
 
 def test_meter_payload_without_request_counts_aborts_cleanly(tmp_path, fake_cli):
@@ -482,9 +482,9 @@ def test_meter_payload_without_request_counts_aborts_cleanly(tmp_path, fake_cli)
 
     def payload_sin_counts():
         payload = original()
-        for ventana in payload["limits"].values():
-            for entrada in ventana["models"]:
-                entrada.pop("request_count", None)
+        for window in payload["limits"].values():
+            for input in window["models"]:
+                input.pop("request_count", None)
         return payload
 
     fake_cli._read_meter = payload_sin_counts
@@ -492,8 +492,8 @@ def test_meter_payload_without_request_counts_aborts_cleanly(tmp_path, fake_cli)
     assert code == 1 and "Traceback" not in err
     assert "request_count" in err  # a clean count-check failure, loudly
     # The cell is recoverable run state (aborted), not a stranded in_flight:
-    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
-    estados = [e["status"] for e in manifiesto["batches"].values()]
+    manifest = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    estados = [e["status"] for e in manifest["batches"].values()]
     assert "in_flight" not in estados and estados.count("aborted") == 1
     # And the bracket closed: the batch's real spend is attributed to it.
     batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")
@@ -517,10 +517,10 @@ def test_run_refuses_a_manifest_with_a_corrupt_batch_entry(tmp_path, fake_cli):
         )[0]
         == 0
     )
-    ruta = tmp_path / "runs" / "manifest-T1.json"
-    manifiesto = json.loads(ruta.read_text(encoding="utf-8"))
-    manifiesto["batches"]["broken00000000"] = "not a dict"
-    ruta.write_text(json.dumps(manifiesto), encoding="utf-8")
+    path = tmp_path / "runs" / "manifest-T1.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["batches"]["broken00000000"] = "not a dict"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
     antes = len(fake_cli.calls)
     assert (
         run_cli(
@@ -576,18 +576,16 @@ def test_every_measured_request_is_salted_and_the_evidence_persists(tmp_path, fa
     )
     enviado = chat["body"]["messages"][0]["content"]
     assert hashlib.sha256(enviado.encode()).hexdigest() == ok["prompt_sha256"]
-    nonce, sep, cuerpo = enviado.partition("\n\n")
-    assert (
-        sep and "\n" not in nonce and cuerpo == "What is 7 times 8? Answer in one short sentence."
-    )
+    nonce, sep, body = enviado.partition("\n\n")
+    assert sep and "\n" not in nonce and body == "What is 7 times 8? Answer in one short sentence."
     assert hashlib.sha256(nonce.encode()).hexdigest() == ok["nonce_sha256"]
     # The nonce is regenerable from the manifest's lane spec + cell coordinates.
     from obench import lane
 
-    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
-    lane_cfg = manifiesto["lane"]
+    manifest = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    lane_cfg = manifest["lane"]
     assert lane_cfg["mode"] == "cache-free"
-    assert lane_cfg["nonce_seed"] == lane.nonce_seed(manifiesto["run_id"])
+    assert lane_cfg["nonce_seed"] == lane.nonce_seed(manifest["run_id"])
     words = lane.nonce_words(lane.expected_tin("T1", "qa_short"))
     idx = lane.nonce_index("T1", "qa_short", "glm-5.3-flash", 1, ok["k"], 2)
     assert (
@@ -597,9 +595,9 @@ def test_every_measured_request_is_salted_and_the_evidence_persists(tmp_path, fa
     # Every measured request's nonce differs (no warm starts, ever): the 24
     # cell chats all carry distinct prefixes. The canary's replays are the one
     # deliberate repeat (salted[0]'s nonce, the identical prefix its ratio reads).
-    celdas = [c for c in chats if len(c["body"]["messages"][0]["content"]) < 10_000]
-    assert len(celdas) == 24
-    assert len({c["body"]["messages"][0]["content"].split("\n\n", 1)[0] for c in celdas}) == 24
+    cells = [c for c in chats if len(c["body"]["messages"][0]["content"]) < 10_000]
+    assert len(cells) == 24
+    assert len({c["body"]["messages"][0]["content"].split("\n\n", 1)[0] for c in cells}) == 24
     # The fixtures are untouched: the batch's fixture_hash matches the bare specs.
     from obench.fixtures import build, fixture_hash
 
@@ -618,17 +616,17 @@ def test_canary_alarms_and_aborts_the_run_at_the_gate(tmp_path, fake_cli):
     assert code == 1
     assert "canary" in err and "aborts at the gate" in err and "Traceback" not in err
     assert not list((tmp_path / "batches").glob("batches-*.jsonl"))  # no bracket ran
-    lineas = read_canary(tmp_path)
-    assert len(lineas) == 1
-    assert lineas[0]["alarm"] is True and lineas[0]["ratio"] > 0.5
-    assert lineas[0]["ratio_basis"] == "session"
-    assert lineas[0]["workload"] == "billing-canary"
-    assert len(lineas[0]["salted"]["nonce_sha256"]) == 5
-    assert len({n for n in lineas[0]["salted"]["nonce_sha256"]}) == 5  # fresh nonces each
+    lines = read_canary(tmp_path)
+    assert len(lines) == 1
+    assert lines[0]["alarm"] is True and lines[0]["ratio"] > 0.5
+    assert lines[0]["ratio_basis"] == "session"
+    assert lines[0]["workload"] == "billing-canary"
+    assert len(lines[0]["salted"]["nonce_sha256"]) == 5
+    assert len({n for n in lines[0]["salted"]["nonce_sha256"]}) == 5  # fresh nonces each
     # The replay re-sends salted[0]'s prefix verbatim.
-    assert lineas[0]["replay"]["nonce_sha256"] == lineas[0]["salted"]["nonce_sha256"][0]
-    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
-    assert manifiesto["canary"]["status"] == "alarm"
+    assert lines[0]["replay"]["nonce_sha256"] == lines[0]["salted"]["nonce_sha256"][0]
+    manifest = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    assert manifest["canary"]["status"] == "alarm"
     assert not list((tmp_path / "runs").glob("requests-*.jsonl"))
 
     # A resume refuses: the lane was never proven for this run_id (an explicit
@@ -647,13 +645,13 @@ def test_canary_runs_once_per_run_and_is_reused_on_resume(tmp_path, fake_cli):
     nothing new for it."""
     pricing = prepare(tmp_path)
     assert run_t1(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")[0] == 0
-    lineas = read_canary(tmp_path)
-    assert len(lineas) == 1 and lineas[0]["alarm"] is False
-    assert len(lineas[0]["salted"]["outcomes"]) == 5
-    assert len(lineas[0]["replay"]["outcomes"]) == 5
+    lines = read_canary(tmp_path)
+    assert len(lines) == 1 and lines[0]["alarm"] is False
+    assert len(lines[0]["salted"]["outcomes"]) == 5
+    assert len(lines[0]["replay"]["outcomes"]) == 5
     # The replay volley's outcomes show the cache discount: the done-objects
     # report the reduced prompt (the fake's hit behavior), the replays bill 0.
-    assert lineas[0]["ratio"] < 0.5 and lineas[0]["dpp"]["salted_session"] > 0
+    assert lines[0]["ratio"] < 0.5 and lines[0]["dpp"]["salted_session"] > 0
     antes = len(fake_cli.calls)
     assert (
         run_cli(tmp_path, "dry-run", "--level", "T1", "--reps", "1", "--pricing-dir", pricing)[0]
@@ -676,10 +674,10 @@ def test_canary_bills_on_the_fixed_reference_model_not_the_run_model(tmp_path, f
     prepare(tmp_path)
     code, _out, err = run_t1(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")
     assert code == 0, err
-    lineas = read_canary(tmp_path)
-    assert lineas[0]["model"] == "kimi-k3" == lane.CANARY_MODEL
-    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
-    assert manifiesto["canary"]["model"] == "kimi-k3"
+    lines = read_canary(tmp_path)
+    assert lines[0]["model"] == "kimi-k3" == lane.CANARY_MODEL
+    manifest = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    assert manifest["canary"]["model"] == "kimi-k3"
     # On the wire: the canary's 10 opening chats bill kimi-k3, the measured
     # chats bill the run's model.
     chats = [c for c in fake_cli.calls if c["path"] == "/api/chat"]
@@ -716,7 +714,7 @@ def test_registration_settle_closes_capped_when_the_meter_never_stabilizes(tmp_p
         assert b["settle_mode"] == "registration"
         assert b["settle_reads"] > 0
         # The post read still carries the spend the loop could see.
-        assert b["medidor_post"] is not None and b["dpp_session"] is not None
+        assert b["meter_post"] is not None and b["dpp_session"] is not None
 
 
 def test_registration_settle_converges_within_three_polls_under_the_fake(tmp_path, fake_cli):
@@ -739,10 +737,10 @@ def test_manifest_refuses_a_v2_manifest_under_protocol_v3(tmp_path, fake_cli):
     prepare(tmp_path)
     assert run_t1(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")[0] == 0
     antes = len(fake_cli.calls)
-    ruta = tmp_path / "runs" / "manifest-T1.json"
-    manifiesto = json.loads(ruta.read_text(encoding="utf-8"))
-    manifiesto["protocol_version"] = "2"
-    ruta.write_text(json.dumps(manifiesto), encoding="utf-8")
+    path = tmp_path / "runs" / "manifest-T1.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["protocol_version"] = "2"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
     assert (
         run_cli(
             tmp_path,
@@ -768,7 +766,7 @@ def test_passive_detector_flags_a_collapsed_bracket(tmp_path, fake_cli):
     batch line's notes (the threshold itself is deferred until v3 data)."""
     from obench import runner as runner_mod
 
-    def presupuesto_grande(registros, dpp_weekly):
+    def big_budget(records, dpp_weekly):
         # A budget whose prediction collapses: predicted >= 3.5 ticks, none seen.
         return {"expected_pp": 5.0, "measured_pp": dpp_weekly, "collapsed": True}
 
@@ -776,7 +774,7 @@ def test_passive_detector_flags_a_collapsed_bracket(tmp_path, fake_cli):
 
     prepare(tmp_path)
     original = runner_mod2._passive_detector
-    runner_mod2._passive_detector = lambda registros, dpp: presupuesto_grande(registros, dpp)
+    runner_mod2._passive_detector = lambda records, dpp: big_budget(records, dpp)
     try:
         code, _out, err = run_t1(tmp_path, "--model", "glm-5.3-flash", "--rep", "1", "--reps", "1")
     finally:
@@ -784,10 +782,10 @@ def test_passive_detector_flags_a_collapsed_bracket(tmp_path, fake_cli):
     assert code == 0, _out
     batches = read_jsonl(tmp_path, "batches", "batches-*.jsonl")
     assert all("passive detector" in b["notes"] for b in batches)
-    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
-    for entrada in manifiesto["batches"].values():
-        assert entrada["detector"]["collapsed"] is True
-        assert entrada["detector"]["expected_pp"] == 5.0
+    manifest = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    for input in manifest["batches"].values():
+        assert input["detector"]["collapsed"] is True
+        assert input["detector"]["expected_pp"] == 5.0
 
 
 def test_the_settle_parameters_are_validated_as_a_bounded_pair(tmp_path, fake_cli):
@@ -821,11 +819,11 @@ def test_canary_refuses_to_measure_from_failed_requests(tmp_path, fake_cli):
     prepare(tmp_path)
     code, _out, err = run_t1(tmp_path, "--model", "glm-5.3-flash", "--reps", "1")
     assert code == 1 and "not fully accepted" in err and "Traceback" not in err
-    lineas = read_canary(tmp_path)
-    assert lineas[0]["ratio"] is None  # no verdict from failed chats
-    assert len(lineas[0]["salted"]["outcomes"]) == 5  # the billed evidence is pinned
-    manifiesto = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
-    assert manifiesto["canary"]["status"] == "failed"
+    lines = read_canary(tmp_path)
+    assert lines[0]["ratio"] is None  # no verdict from failed chats
+    assert len(lines[0]["salted"]["outcomes"]) == 5  # the billed evidence is pinned
+    manifest = json.loads((tmp_path / "runs" / "manifest-T1.json").read_text(encoding="utf-8"))
+    assert manifest["canary"]["status"] == "failed"
     assert not list((tmp_path / "runs").glob("requests-*.jsonl"))  # no bracket ran
 
     # A resume refuses: the canary never completed, it is never re-billed.

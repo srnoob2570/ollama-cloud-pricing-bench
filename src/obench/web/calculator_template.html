@@ -1097,7 +1097,7 @@
                             multiple
                             style="display: none"
                         >
-                            __OPCIONES__
+                            __OPTIONS__
                         </select>
                         <div class="model-picker" id="model-picker">
                             <button
@@ -1258,7 +1258,7 @@
         </footer>
 
         <script id="analysis-data" type="application/json">
-            __DATOS__
+            __DATA__
         </script>
         <script id="rates-data" type="application/json">
             __RATES__
@@ -1285,7 +1285,7 @@
                     per
                 );
             }
-            function verdictOf(legacy, nuevo, tickUsd, legacySession, creditRatio) {
+            function verdictOf(legacy, newCost, tickUsd, legacySession, creditRatio) {
                 // the same rule as the persisted verdicts: the new side re-denominates to
                 // paid dollars (credits divide by the plan's credit multiplier) BEFORE the
                 // comparison, so the tie band is the MINIMUM of 2 ticks and 5 % of the
@@ -1293,22 +1293,22 @@
                 // A sub-tick winner (weekly reads 0.0) prices with its session-derived
                 // weekly-equivalent; with no session reading either, the loser's own cost
                 // (a free winner saves the whole bill: exactly 100 %)
-                if (isNull(legacy) || isNull(nuevo))
+                if (isNull(legacy) || isNull(newCost))
                     return { winner: "no data", margin_pct: null };
-                nuevo = nuevo / (creditRatio || 1);
-                var band = Math.min(2 * tickUsd, 0.05 * Math.min(legacy, nuevo));
-                if (Math.abs(legacy - nuevo) <= band)
+                newCost = newCost / (creditRatio || 1);
+                var band = Math.min(2 * tickUsd, 0.05 * Math.min(legacy, newCost));
+                if (Math.abs(legacy - newCost) <= band)
                     return { winner: "tie", margin_pct: null };
-                if (legacy < nuevo) {
-                    var winnerCost = legacy || legacySession || nuevo;
+                if (legacy < newCost) {
+                    var winnerCost = legacy || legacySession || newCost;
                     return {
                         winner: "legacy",
-                        margin_pct: ((nuevo - legacy) / winnerCost) * 100,
+                        margin_pct: ((newCost - legacy) / winnerCost) * 100,
                     };
                 }
                 return {
                     winner: "new",
-                    margin_pct: ((legacy - nuevo) / (nuevo || legacy)) * 100,
+                    margin_pct: ((legacy - newCost) / (newCost || legacy)) * 100,
                 };
             }
             function medianOf(vals) {
@@ -1345,7 +1345,7 @@
             // each plan renders as its own matrix table, the preset in : out splits below
             // as its columns; paidLabel/creditsLabel carry the credit figures at face
             // value so the static file spells them too
-            var PLANES = [
+            var PLANS = [
                 {
                     name: "Pro",
                     paid: 20,
@@ -1371,7 +1371,7 @@
                 { ratio: 4, text: "4 : 1" },
             ];
             var ALL_MODELS = Object.keys(RATES.rates || {});
-            var estado = {
+            var state = {
                 models: ALL_MODELS.slice(),
                 slider: SLIDER_DEFAULT,
                 planCustomIn: 1,
@@ -1387,7 +1387,7 @@
             // innerHTML injection that carries icons. The CDN <script> is a synchronous
             // head tag on purpose: it guarantees window.lucide exists by the time this
             // runs — adding `defer` would make this a silent no-op.
-            function refrescoIconos() {
+            function refreshIcons() {
                 if (window.lucide) lucide.createIcons();
             }
             function esc(s) {
@@ -1416,7 +1416,7 @@
             function effectiveS(model) {
                 // measured keeps precedence: the custom control governs only the assumed models
                 var m = measuredS(model);
-                return m === null ? estado.slider / 100 : m;
+                return m === null ? state.slider / 100 : m;
             }
             function compactTokens(n) {
                 // 1000000 -> "1M", 1500000 -> "1.5M", 500000 -> "500k", 750 -> "750"
@@ -1464,23 +1464,23 @@
                 // trailing custom split from the fields above (an invalid pair prices as no
                 // data and the header drops to a bare "Custom")
                 var customRatio =
-                    estado.planCustomIn > 0 && estado.planCustomOut > 0
-                        ? estado.planCustomIn / estado.planCustomOut
+                    state.planCustomIn > 0 && state.planCustomOut > 0
+                        ? state.planCustomIn / state.planCustomOut
                         : null;
-                var columnas = RATIOS.map(function (r) {
+                var columns = RATIOS.map(function (r) {
                     return { th: r.text, ratio: r.ratio };
                 });
-                columnas.push({
+                columns.push({
                     th:
                         customRatio !== null
                             ? "Custom " +
-                              estado.planCustomIn +
+                              state.planCustomIn +
                               " : " +
-                              estado.planCustomOut
+                              state.planCustomOut
                             : "Custom",
                     ratio: customRatio,
                 });
-                return columnas;
+                return columns;
             }
 
             function renderPlanTokens() {
@@ -1490,14 +1490,14 @@
                 // panel's head carries the plan's paid/credit figures and the PNG/clipboard
                 // export buttons, and each table's tfoot footnotes the live cache % the
                 // S(x) control drives
-                var modelos = Object.keys(RATES.rates).filter(function (m) {
-                    return estado.models.indexOf(m) !== -1;
+                var models = Object.keys(RATES.rates).filter(function (m) {
+                    return state.models.indexOf(m) !== -1;
                 });
-                var columnas = planColumns();
-                var tablas = PLANES.map(function (plane, indice) {
-                    var filas = modelos
+                var columns = planColumns();
+                var tables = PLANS.map(function (plane, index) {
+                    var rows = models
                         .map(function (m) {
-                            var tds = columnas
+                            var tds = columns
                                 .map(function (col) {
                                     var t = planTokens(
                                         m,
@@ -1526,7 +1526,7 @@
                             );
                         })
                         .join("");
-                    var ths = columnas
+                    var ths = columns
                         .map(function (col) {
                             return (
                                 '<th colspan="3" class="sep-l ctr">' +
@@ -1535,7 +1535,7 @@
                             );
                         })
                         .join("");
-                    var subths = columnas
+                    var subths = columns
                         .map(function () {
                             return '<th class="sep-l ctr">↓ in</th><th class="ctr">↑ out</th><th class="ctr">total</th>';
                         })
@@ -1554,35 +1554,35 @@
                         "</span>" +
                         '<span class="plan-export-group">' +
                         '<button type="button" class="preset plan-export" data-plane="' +
-                        indice +
+                        index +
                         '" data-mode="download"><i data-lucide="download" class="icon-btn" aria-hidden="true"></i> PNG</button>' +
                         '<button type="button" class="preset plan-export" data-plane="' +
-                        indice +
+                        index +
                         '" data-mode="copy"><i data-lucide="copy" class="icon-btn" aria-hidden="true"></i> Copy</button></span></div>' +
                         '<table><thead><tr><th class="num">in : out ratio</th>' +
                         ths +
                         '</tr><tr class="sub-head"><th>model</th>' +
                         subths +
                         "</tr></thead><tbody>" +
-                        filas +
+                        rows +
                         '</tbody><tfoot><tr><td colspan="' +
-                        (1 + columnas.length * 3) +
+                        (1 + columns.length * 3) +
                         '">cache hit: ' +
-                        estado.slider +
+                        state.slider +
                         "% &middot; each cell: ↓ input, ↑ output, then the total</td></tr></tfoot></table></div>"
                     );
                 }).join("");
-                $("plan-tokens").innerHTML = tablas;
-                refrescoIconos();
+                $("plan-tokens").innerHTML = tables;
+                refreshIcons();
             }
 
             function exportPlanImage(planeIndex, mode, btn) {
                 // draws one plan's matrix onto an offscreen canvas using the live theme
                 // tokens and exports it as a PNG: clipboard copy when asked and supported,
                 // file download otherwise; no external library — the canvas API only
-                var plane = PLANES[planeIndex];
+                var plane = PLANS[planeIndex];
                 if (!plane) return;
-                var titulo =
+                var title =
                     plane.name +
                     " — $" +
                     plane.paid +
@@ -1591,186 +1591,186 @@
                     " credits";
                 var pie =
                     "cache: " +
-                    estado.slider +
+                    state.slider +
                     "% — the S(x) control above · each cell: ↓ input, ↑ output, then the total";
-                var modelos = Object.keys(RATES.rates).filter(function (m) {
-                    return estado.models.indexOf(m) !== -1;
+                var models = Object.keys(RATES.rates).filter(function (m) {
+                    return state.models.indexOf(m) !== -1;
                 });
-                var columnas = planColumns();
-                var raiz = getComputedStyle(document.documentElement);
+                var columns = planColumns();
+                var root = getComputedStyle(document.documentElement);
                 function tok(name) {
-                    return raiz.getPropertyValue(name).trim();
+                    return root.getPropertyValue(name).trim();
                 }
                 var sub = [
                     {
-                        cab: "↓ in",
-                        valor: function (t) {
+                        head: "↓ in",
+                        value: function (t) {
                             return "↓" + compactTokens(t.tin);
                         },
                     },
                     {
-                        cab: "↑ out",
-                        valor: function (t) {
+                        head: "↑ out",
+                        value: function (t) {
                             return "↑" + compactTokens(t.tout);
                         },
                     },
                     {
-                        cab: "total",
-                        valor: function (t) {
+                        head: "total",
+                        value: function (t) {
                             return compactTokens(t.total);
                         },
                     },
                 ];
-                var escala = 2,
+                var scale = 2,
                     edge = 16,
-                    fila = 38,
+                    row = 38,
                     pad = 10,
-                    cabecera = 46,
-                    tituloH = 24,
+                    header = 46,
+                    titleH = 24,
                     pieH = 20;
-                var fuente = getComputedStyle(document.body).fontFamily;
-                var medidas = document.createElement("canvas").getContext("2d");
-                medidas.font = "12px " + fuente;
-                var anchoModelo = 150;
-                var anchos = [];
-                columnas.forEach(function (col) {
+                var font = getComputedStyle(document.body).fontFamily;
+                var measures = document.createElement("canvas").getContext("2d");
+                measures.font = "12px " + font;
+                var modelWidth = 150;
+                var widths = [];
+                columns.forEach(function (col) {
                     sub.forEach(function (s) {
-                        var w = medidas.measureText(s.cab).width;
-                        modelos.forEach(function (m) {
+                        var w = measures.measureText(s.head).width;
+                        models.forEach(function (m) {
                             var t = planTokens(m, plane.credits, col.ratio);
                             if (!isNull(t))
                                 w = Math.max(
                                     w,
-                                    medidas.measureText(s.valor(t)).width,
+                                    measures.measureText(s.value(t)).width,
                                 );
                         });
-                        anchos.push(Math.ceil(w) + pad * 2);
+                        widths.push(Math.ceil(w) + pad * 2);
                     });
                 });
-                modelos.forEach(function (m) {
-                    anchoModelo = Math.max(
-                        anchoModelo,
-                        Math.ceil(medidas.measureText(m).width) + pad * 2,
+                models.forEach(function (m) {
+                    modelWidth = Math.max(
+                        modelWidth,
+                        Math.ceil(measures.measureText(m).width) + pad * 2,
                     );
-                    medidas.font = "11px " + fuente;
-                    anchoModelo = Math.max(
-                        anchoModelo,
-                        Math.ceil(medidas.measureText(priceLine(m)).width) +
+                    measures.font = "11px " + font;
+                    modelWidth = Math.max(
+                        modelWidth,
+                        Math.ceil(measures.measureText(priceLine(m)).width) +
                             pad * 2,
                     );
-                    medidas.font = "12px " + fuente;
+                    measures.font = "12px " + font;
                 });
-                var ancho =
+                var width =
                     Math.ceil(
                         Math.max(
-                            anchoModelo +
-                                anchos.reduce(function (a, b) {
+                            modelWidth +
+                                widths.reduce(function (a, b) {
                                     return a + b;
                                 }, 0),
-                            medidas.measureText(titulo).width + pad * 2,
-                            medidas.measureText(pie).width + pad * 2,
+                            measures.measureText(title).width + pad * 2,
+                            measures.measureText(pie).width + pad * 2,
                         ),
                     ) +
                     edge * 2;
-                var alto =
+                var height =
                     edge * 2 +
-                    tituloH +
-                    cabecera +
-                    fila * modelos.length +
+                    titleH +
+                    header +
+                    row * models.length +
                     pieH;
                 var canvas = document.createElement("canvas");
-                canvas.width = ancho * escala;
-                canvas.height = alto * escala;
+                canvas.width = width * scale;
+                canvas.height = height * scale;
                 var ctx = canvas.getContext("2d");
-                ctx.scale(escala, escala);
-                ctx.font = "12px " + fuente;
+                ctx.scale(scale, scale);
+                ctx.font = "12px " + font;
                 ctx.textBaseline = "middle";
                 ctx.fillStyle = tok("--plane");
-                ctx.fillRect(0, 0, ancho, alto);
+                ctx.fillRect(0, 0, width, height);
                 ctx.fillStyle = tok("--ink");
-                ctx.font = "600 13px " + fuente;
+                ctx.font = "600 13px " + font;
                 ctx.textAlign = "left";
-                ctx.fillText(titulo, edge, edge + tituloH / 2);
-                var ys = edge + tituloH,
+                ctx.fillText(title, edge, edge + titleH / 2);
+                var ys = edge + titleH,
                     yIni = ys;
-                ctx.font = "600 12px " + fuente;
+                ctx.font = "600 12px " + font;
                 ctx.fillStyle = tok("--surface");
-                ctx.fillRect(edge, ys, ancho - edge * 2, cabecera);
+                ctx.fillRect(edge, ys, width - edge * 2, header);
                 ctx.fillStyle = tok("--ink");
                 ctx.textAlign = "right";
                 ctx.fillText(
                     "in : out ratio",
-                    edge + anchoModelo - pad,
+                    edge + modelWidth - pad,
                     ys + 14,
                 );
                 ctx.textAlign = "left";
                 ctx.fillText("model", edge + pad, ys + 34);
-                var xs = edge + anchoModelo;
-                var limites = [];
-                columnas.forEach(function (col, i) {
+                var xs = edge + modelWidth;
+                var limits = [];
+                columns.forEach(function (col, i) {
                     var xs0 = xs;
-                    limites.push(xs0);
+                    limits.push(xs0);
                     var span =
-                        anchos[i * 3] + anchos[i * 3 + 1] + anchos[i * 3 + 2];
+                        widths[i * 3] + widths[i * 3 + 1] + widths[i * 3 + 2];
                     ctx.textAlign = "center";
                     ctx.fillText(col.th, xs0 + span / 2, ys + 14);
                     var xs1 = xs0;
                     sub.forEach(function (s, j) {
                         ctx.textAlign = "center";
                         ctx.fillText(
-                            s.cab,
-                            xs1 + anchos[i * 3 + j] / 2,
+                            s.head,
+                            xs1 + widths[i * 3 + j] / 2,
                             ys + 34,
                         );
-                        xs1 += anchos[i * 3 + j];
+                        xs1 += widths[i * 3 + j];
                     });
                     xs += span;
                 });
                 ctx.strokeStyle = tok("--grid");
                 ctx.beginPath();
-                ctx.moveTo(edge, ys + cabecera);
-                ctx.lineTo(ancho - edge, ys + cabecera);
+                ctx.moveTo(edge, ys + header);
+                ctx.lineTo(width - edge, ys + header);
                 ctx.stroke();
-                ctx.font = "12px " + fuente;
-                ys += cabecera;
-                modelos.forEach(function (m) {
+                ctx.font = "12px " + font;
+                ys += header;
+                models.forEach(function (m) {
                     ctx.textAlign = "left";
                     ctx.fillStyle = tok("--ink");
-                    ctx.fillText(m, edge + pad, ys + fila / 2 - 7);
-                    ctx.font = "11px " + fuente;
+                    ctx.fillText(m, edge + pad, ys + row / 2 - 7);
+                    ctx.font = "11px " + font;
                     ctx.fillStyle = tok("--muted");
-                    ctx.fillText(priceLine(m), edge + pad, ys + fila / 2 + 9);
-                    ctx.font = "12px " + fuente;
+                    ctx.fillText(priceLine(m), edge + pad, ys + row / 2 + 9);
+                    ctx.font = "12px " + font;
                     ctx.fillStyle = tok("--ink");
-                    var xd = edge + anchoModelo;
-                    columnas.forEach(function (col, i) {
+                    var xd = edge + modelWidth;
+                    columns.forEach(function (col, i) {
                         var t = planTokens(m, plane.credits, col.ratio);
                         sub.forEach(function (s, j) {
                             ctx.textAlign = "right";
                             ctx.fillText(
-                                isNull(t) ? "no data" : s.valor(t),
-                                xd + anchos[i * 3 + j] - pad,
-                                ys + fila / 2,
+                                isNull(t) ? "no data" : s.value(t),
+                                xd + widths[i * 3 + j] - pad,
+                                ys + row / 2,
                             );
-                            xd += anchos[i * 3 + j];
+                            xd += widths[i * 3 + j];
                         });
                     });
-                    ys += fila;
+                    ys += row;
                     ctx.strokeStyle = tok("--grid");
                     ctx.beginPath();
                     ctx.moveTo(edge, ys);
-                    ctx.lineTo(ancho - edge, ys);
+                    ctx.lineTo(width - edge, ys);
                     ctx.stroke();
                 });
                 ctx.strokeStyle = tok("--grid");
                 ctx.beginPath();
-                limites.forEach(function (xl) {
+                limits.forEach(function (xl) {
                     ctx.moveTo(xl, yIni);
                     ctx.lineTo(xl, ys);
                 });
                 ctx.stroke();
                 ctx.fillStyle = tok("--muted");
-                ctx.font = "11px " + fuente;
+                ctx.font = "11px " + font;
                 ctx.textAlign = "left";
                 ctx.fillText(pie, edge, ys + pieH / 2);
                 canvas.toBlob(function (blob) {
@@ -1784,23 +1784,23 @@
                             .write([new ClipboardItem({ "image/png": blob })])
                             .then(
                                 function () {
-                                    aviso(btn, "copied");
+                                    notice(btn, "copied");
                                 },
                                 function () {
-                                    descargarImagen(plane, blob);
-                                    aviso(
+                                    downloadImage(plane, blob);
+                                    notice(
                                         btn,
                                         "copy failed — downloaded instead",
                                     );
                                 },
                             );
                     } else {
-                        descargarImagen(plane, blob);
-                        aviso(btn, "downloaded");
+                        downloadImage(plane, blob);
+                        notice(btn, "downloaded");
                     }
                 }, "image/png");
             }
-            function descargarImagen(plane, blob) {
+            function downloadImage(plane, blob) {
                 var a = document.createElement("a");
                 a.href = URL.createObjectURL(blob);
                 a.download = "plan-" + plane.name.toLowerCase() + "-tokens.png";
@@ -1808,13 +1808,13 @@
                 a.click();
                 a.remove();
             }
-            function aviso(btn, texto) {
+            function notice(btn, text) {
                 // transient button feedback, reverted so the label reads normal again
                 if (!btn) return;
-                var previo = btn.innerHTML;
-                btn.innerHTML = texto;
+                var prior = btn.innerHTML;
+                btn.innerHTML = text;
                 setTimeout(function () {
-                    btn.innerHTML = previo;
+                    btn.innerHTML = prior;
                 }, 1200);
             }
 
@@ -1833,7 +1833,7 @@
                 var options = Array.prototype.slice.call(select.options);
                 list.innerHTML = options
                     .map(function (opt, idx) {
-                        var selected = estado.models.indexOf(opt.value) !== -1;
+                        var selected = state.models.indexOf(opt.value) !== -1;
                         return (
                             '<label class="model-picker-item" role="option" tabindex="-1" aria-selected="' +
                             selected +
@@ -1854,7 +1854,7 @@
                         );
                     })
                     .join("");
-                refrescoIconos();
+                refreshIcons();
                 pickerFocusIndex = -1;
             }
 
@@ -1866,7 +1866,7 @@
                     document.querySelectorAll(".model-picker-item"),
                     function (item) {
                         var selected =
-                            estado.models.indexOf(
+                            state.models.indexOf(
                                 item.getAttribute("data-value"),
                             ) !== -1;
                         item.setAttribute("aria-selected", selected);
@@ -1877,7 +1877,7 @@
                             : "";
                     },
                 );
-                refrescoIconos();
+                refreshIcons();
             }
 
             function getVisiblePickerItems() {
@@ -1922,18 +1922,18 @@
 
             function updateModelChips() {
                 var chips = $("model-chips");
-                if (estado.models.length === ALL_MODELS.length) {
+                if (state.models.length === ALL_MODELS.length) {
                     // the default (every model) needs no chip echo: the picker button and the
                     // count already state it, so the summary row stays silent
                     chips.innerHTML = "";
                     $("model-picker-text").textContent = "all models";
                     $("model-count").textContent = "all " + ALL_MODELS.length;
-                } else if (estado.models.length === 0) {
+                } else if (state.models.length === 0) {
                     chips.innerHTML = '<span class="chip">no models</span>';
                     $("model-picker-text").textContent = "no models";
                     $("model-count").textContent = "0";
                 } else {
-                    chips.innerHTML = estado.models
+                    chips.innerHTML = state.models
                         .map(function (m) {
                             return (
                                 '<span class="chip">' +
@@ -1949,22 +1949,22 @@
                         })
                         .join("");
                     $("model-picker-text").textContent =
-                        estado.models.length +
+                        state.models.length +
                         " model" +
-                        (estado.models.length === 1 ? "" : "s");
+                        (state.models.length === 1 ? "" : "s");
                     $("model-count").textContent =
-                        estado.models.length + " of " + ALL_MODELS.length;
+                        state.models.length + " of " + ALL_MODELS.length;
                 }
-                refrescoIconos();
+                refreshIcons();
             }
 
             function toggleModel(val) {
-                var idx = estado.models.indexOf(val);
+                var idx = state.models.indexOf(val);
                 if (idx !== -1) {
-                    estado.models.splice(idx, 1);
+                    state.models.splice(idx, 1);
                 } else {
-                    estado.models.push(val);
-                    estado.models.sort(function (a, b) {
+                    state.models.push(val);
+                    state.models.sort(function (a, b) {
                         return ALL_MODELS.indexOf(a) - ALL_MODELS.indexOf(b);
                     });
                 }
@@ -2063,7 +2063,7 @@
 
             $("model-select-all").addEventListener("click", function (e) {
                 e.stopPropagation();
-                estado.models = ALL_MODELS.slice();
+                state.models = ALL_MODELS.slice();
                 refreshPickerMarks();
                 updateModelChips();
                 renderAll();
@@ -2075,7 +2075,7 @@
 
             $("model-clear-all").addEventListener("click", function (e) {
                 e.stopPropagation();
-                estado.models = [];
+                state.models = [];
                 refreshPickerMarks();
                 updateModelChips();
                 renderAll();
@@ -2087,22 +2087,22 @@
                 var btn = e.target.closest(".chip-remove");
                 if (!btn) return;
                 var val = btn.getAttribute("data-value");
-                var idx = estado.models.indexOf(val);
+                var idx = state.models.indexOf(val);
                 if (idx !== -1) {
-                    estado.models.splice(idx, 1);
+                    state.models.splice(idx, 1);
                     updateModelChips();
                     renderAll();
                 }
             });
 
             /* custom in : out ---------------------------------------------------------- */
-            function bindPlanCustom(id, clave) {
+            function bindPlanCustom(id, key) {
                 var input = $(id);
                 input.addEventListener("input", function () {
                     // empty or garbage input reads as 0: planTokens' guard then prices the
                     // custom column as no data and the header drops to a bare "Custom"
                     var n = Number(input.value);
-                    estado[clave] = isFinite(n) ? n : 0;
+                    state[key] = isFinite(n) ? n : 0;
                     renderAll();
                 });
             }
@@ -2115,7 +2115,7 @@
                     document.querySelectorAll("button.cache-preset"),
                     function (b) {
                         var s = Number(b.getAttribute("data-s"));
-                        if (s === estado.slider) {
+                        if (s === state.slider) {
                             b.classList.add("active");
                         } else {
                             b.classList.remove("active");
@@ -2128,8 +2128,8 @@
                 document.querySelectorAll("button.cache-preset"),
                 function (b) {
                     b.addEventListener("click", function () {
-                        estado.slider = Number(b.getAttribute("data-s"));
-                        $("cache-custom").value = String(estado.slider);
+                        state.slider = Number(b.getAttribute("data-s"));
+                        $("cache-custom").value = String(state.slider);
                         updateCachePresetActive();
                         renderAll();
                     });
@@ -2139,7 +2139,7 @@
             $("cache-custom").addEventListener("input", function () {
                 var n = Number(this.value);
                 if (isFinite(n) && n >= 0 && n <= 100) {
-                    estado.slider = Math.round(n);
+                    state.slider = Math.round(n);
                 }
                 updateCachePresetActive();
                 renderAll();
@@ -2187,19 +2187,19 @@
                 },
             );
             (function initTheme() {
-                var guardado = null;
+                var saved = null;
                 try {
-                    guardado = localStorage.getItem("dashboard-theme");
+                    saved = localStorage.getItem("dashboard-theme");
                 } catch (err) {
                     /* unavailable */
                 }
-                if (guardado !== "light" && guardado !== "dark")
-                    guardado = "system";
+                if (saved !== "light" && saved !== "dark")
+                    saved = "system";
                 var radio = document.querySelector(
-                    'input[name="theme"][value="' + guardado + '"]',
+                    'input[name="theme"][value="' + saved + '"]',
                 );
                 if (radio) radio.checked = true;
-                applyTheme(guardado);
+                applyTheme(saved);
                 requestAnimationFrame(function () {
                     document.documentElement.classList.remove(
                         "no-theme-transition",
@@ -2209,13 +2209,13 @@
             // keep "system" in sync with the OS preference after load
             var systemMedia = window.matchMedia("(prefers-color-scheme: dark)");
             systemMedia.addEventListener("change", function (e) {
-                var guardado = "system";
+                var saved = "system";
                 try {
-                    guardado = localStorage.getItem("dashboard-theme");
+                    saved = localStorage.getItem("dashboard-theme");
                 } catch (err) {
                     /* unavailable */
                 }
-                if (guardado === "system") {
+                if (saved === "system") {
                     document.documentElement.setAttribute(
                         "data-theme",
                         e.matches ? "dark" : "light",
@@ -2225,7 +2225,7 @@
 
             updateCachePresetActive();
             renderAll();
-            refrescoIconos();
+            refreshIcons();
         </script>
     </body>
 </html>

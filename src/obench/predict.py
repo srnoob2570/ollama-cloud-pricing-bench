@@ -147,66 +147,66 @@ class PredictCell:
 
 
 def _level_of(workload: str) -> str:
-    for nivel, cargas in workloads_mod.WORKLOADS_BY_LEVEL.items():
-        if any(w.name == workload for w in cargas):
-            return nivel
+    for level, workloads in workloads_mod.WORKLOADS_BY_LEVEL.items():
+        if any(w.name == workload for w in workloads):
+            return level
     raise PredictError(f"unknown workload: {workload!r}")
 
 
 def grid() -> tuple[PredictCell, ...]:
     """The measurable-set cells, validated against the workload table on every call."""
-    celdas = tuple(PredictCell(w, m, _level_of(w)) for w, m in _GRID)
-    if len({c.key for c in celdas}) != len(_GRID):
+    cells = tuple(PredictCell(w, m, _level_of(w)) for w, m in _GRID)
+    if len({c.key for c in cells}) != len(_GRID):
         raise PredictError(f"the predictability grid does not hold {len(_GRID)} distinct cells")
-    return celdas
+    return cells
 
 
 def find_cell(workload: str | None, model: str | None) -> PredictCell:
     """The grid cell for a (workload, model) pair; PredictError outside the grid."""
-    celdas = grid()
-    for c in celdas:
+    cells = grid()
+    for c in cells:
         if c.workload == workload and c.model == model:
             return c
     raise PredictError(
         f"{workload!r}/{model!r} is not one of the predictability cells "
-        f"({len(_GRID)} cells: {', '.join(c.key for c in celdas)})"
+        f"({len(_GRID)} cells: {', '.join(c.key for c in cells)})"
     )
 
 
-def fixture_brief(celda: PredictCell, tabla) -> dict:
+def fixture_brief(cell: PredictCell, table) -> dict:
     """What the estimator receives: the fixture's public description and the rate
     table — and nothing measured, ever. The cache-free lane's per-request salt
     (protocol v3) is public protocol, not measurement: its overhead is part of
     the brief, so the estimate can account for what will actually be sent."""
-    carga = next(
-        w for w in workloads_mod.WORKLOADS_BY_LEVEL[celda.level] if w.name == celda.workload
+    workload = next(
+        w for w in workloads_mod.WORKLOADS_BY_LEVEL[cell.level] if w.name == cell.workload
     )
-    tarifa = tabla.rate(celda.model)
-    nonce_palabras = lane_mod.nonce_words(carga.t_in)
+    rate = table.rate(cell.model)
+    nonce_words = lane_mod.nonce_words(workload.t_in)
     return {
-        "cell": {"workload": celda.workload, "model": celda.model},
-        "level": celda.level,
-        "description": WORKLOAD_BRIEFS[celda.workload],
-        "requests_per_run": carga.requests,
-        "tokens_in_per_request": carga.t_in,
-        "tokens_out_per_request": carga.t_out,
+        "cell": {"workload": cell.workload, "model": cell.model},
+        "level": cell.level,
+        "description": WORKLOAD_BRIEFS[cell.workload],
+        "requests_per_run": workload.requests,
+        "tokens_in_per_request": workload.t_in,
+        "tokens_out_per_request": workload.t_out,
         # The cache-free lane's overhead (protocol v3): a run-scoped seeded nonce
         # rides every measured request as its first tokens.
-        "nonce_words_per_request": nonce_palabras,
-        "nonce_tokens_per_request": lane_mod.nonce_tokens_estimate(carga.t_in),
+        "nonce_words_per_request": nonce_words,
+        "nonce_tokens_per_request": lane_mod.nonce_tokens_estimate(workload.t_in),
         "lane": (
             "cache-free: every measured request carries a seeded nonce "
-            f"(~{nonce_palabras} words here) as its first tokens, forcing a cache "
+            f"(~{nonce_words} words here) as its first tokens, forcing a cache "
             "miss - the measured cost is the workload's raw work"
         ),
         "rates": {
-            "input": tarifa.input,
-            "cached_input": tarifa.cached_input,
-            "output": tarifa.output,
-            "per": tabla.per,
+            "input": rate.input,
+            "cached_input": rate.cached_input,
+            "output": rate.output,
+            "per": table.per,
         },
-        "cache_discount": tarifa.has_cache_discount,
-        "table_version": tabla.table_version,
+        "cache_discount": rate.has_cache_discount,
+        "table_version": table.table_version,
     }
 
 
@@ -245,10 +245,10 @@ def cell_evidence(base, workload: str, model: str) -> tuple[int, int]:
     conteos = [
         sum(
             1
-            for linea in read_dataset(base / carpeta, patron)
+            for linea in read_dataset(base / folder, pattern)
             if linea.get("workload") == workload and linea.get("model") == model
         )
-        for carpeta, patron in (("runs", "requests-*.jsonl"), ("batches", "batches-*.jsonl"))
+        for folder, pattern in (("runs", "requests-*.jsonl"), ("batches", "batches-*.jsonl"))
     ]
     return conteos[0], conteos[1]
 
@@ -262,63 +262,63 @@ def load_estimates(base, phase: str) -> list[dict]:
     """
     if phase not in PHASES:
         raise PredictError(f"unknown phase: {phase!r}")
-    ruta = _estimates_path(base, phase)
-    if not ruta.exists():
+    path = _estimates_path(base, phase)
+    if not path.exists():
         return []
-    registros: list[dict] = []
-    for numero, cruda in enumerate(ruta.read_text(encoding="utf-8").splitlines(), start=1):
-        if not cruda.strip():
+    records: list[dict] = []
+    for numero, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not raw.strip():
             continue
         try:
-            linea = json.loads(cruda)
+            linea = json.loads(raw)
         except json.JSONDecodeError as e:
             raise PredictError(
-                f"{ruta.name} line {numero} is not JSON ({e}): the registry is unreadable - "
+                f"{path.name} line {numero} is not JSON ({e}): the registry is unreadable - "
                 "an estimate registry is never hand-repaired; restore it or retire the phase"
             ) from None
         try:
             validate_estimate_line(linea)
         except Exception as e:  # noqa: BLE001 - a foreign line names itself in the message
             raise PredictError(
-                f"{ruta.name} line {numero} does not honor the estimate schema: {e}"
+                f"{path.name} line {numero} does not honor the estimate schema: {e}"
             ) from None
         actual = line_hash(linea)
         if actual != linea["hash"]:
             raise PredictError(
-                f"{ruta.name} line {numero} does not match its lock (stored "
+                f"{path.name} line {numero} does not match its lock (stored "
                 f"{str(linea['hash'])[:12]}, computed {actual[:12]}): the registry was edited "
                 "after the estimate - its timestamp no longer proves anything"
             )
-        registros.append(linea)
+        records.append(linea)
     vistas: set[tuple[str, str]] = set()
-    for linea in registros:
-        clave = (linea["cell"]["workload"], linea["cell"]["model"])
-        if clave in vistas:
+    for linea in records:
+        key = (linea["cell"]["workload"], linea["cell"]["model"])
+        if key in vistas:
             raise PredictError(
-                f"{ruta.name} holds two estimates for {clave[0]}/{clave[1]}: a cell carries "
+                f"{path.name} holds two estimates for {key[0]}/{key[1]}: a cell carries "
                 "exactly one estimate per phase - the registry is corrupt"
             )
-        vistas.add(clave)
-    return registros
+        vistas.add(key)
+    return records
 
 
-def _find(registros: list[dict], workload: str, model: str) -> dict | None:
-    for r in registros:
+def _find(records: list[dict], workload: str, model: str) -> dict | None:
+    for r in records:
         if r["cell"]["workload"] == workload and r["cell"]["model"] == model:
             return r
     return None
 
 
-def _claves_grid() -> set[tuple[str, str]]:
+def _keys_grid() -> set[tuple[str, str]]:
     """Every cell's (workload, model) key — the grid-membership test."""
     return {(c.workload, c.model) for c in grid()}
 
 
-def _en_grid(registros: list[dict], claves: set[tuple[str, str]]) -> int:
+def _en_grid(records: list[dict], keys: set[tuple[str, str]]) -> int:
     """How many of the phase's locked records still belong to the grid: estimates
     locked under a retired scope (a v1-era registry, say) count nowhere — they
     are neither a cell's estimate nor evidence, and the report flags them."""
-    return sum(1 for r in registros if (r["cell"]["workload"], r["cell"]["model"]) in claves)
+    return sum(1 for r in records if (r["cell"]["workload"], r["cell"]["model"]) in keys)
 
 
 def record_estimate(
@@ -330,7 +330,7 @@ def record_estimate(
     estimated_pp: float,
     estimated_usd: float,
     notes: str = "",
-    tabla,
+    table,
     now: float | None = None,
 ) -> dict:
     """Records one locked estimate; raises PredictError on any ordering violation.
@@ -341,46 +341,45 @@ def record_estimate(
     """
     if phase not in PHASES:
         raise PredictError(f"unknown phase: {phase!r}")
-    for nombre, valor in (("estimated_pp", estimated_pp), ("estimated_usd", estimated_usd)):
+    for name, value in (("estimated_pp", estimated_pp), ("estimated_usd", estimated_usd)):
         # finite is the load-bearing half of the guard: +inf would pass a bare
         # "> 0" check and lock an infinite estimate into a hash-chained,
         # never-revisable registry whose report.json could not even parse
         if (
-            isinstance(valor, bool)
-            or not isinstance(valor, (int, float))
-            or not math.isfinite(valor)
-            or not float(valor) > 0
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not float(value) > 0
         ):
             raise PredictError(
-                f"the estimate must be a finite number > 0 in native units "
-                f"({nombre}); got {valor!r}"
+                f"the estimate must be a finite number > 0 in native units ({name}); got {value!r}"
             )
-    celda = find_cell(workload, model)
+    cell = find_cell(workload, model)
     previos = load_estimates(base, phase)
-    previo = _find(previos, workload, model)
-    if previo is not None:
+    prior = _find(previos, workload, model)
+    if prior is not None:
         raise PredictError(
-            f"{celda.key} already has a locked {phase} estimate (recorded at "
-            f"{time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(previo['timestamp']))} UTC, "
-            f"hash {str(previo['hash'])[:12]}): an estimate is locked, not revisable"
+            f"{cell.key} already has a locked {phase} estimate (recorded at "
+            f"{time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(prior['timestamp']))} UTC, "
+            f"hash {str(prior['hash'])[:12]}): an estimate is locked, not revisable"
         )
-    peticiones, lotes = cell_evidence(base, workload, model)
+    requests, batches = cell_evidence(base, workload, model)
     if phase == BLIND:
-        if peticiones or lotes:
+        if requests or batches:
             raise PredictError(
-                f"refusing a blind estimate for {celda.key}: its real already exists in the "
-                f"dataset ({peticiones} request lines, {lotes} batch lines) - an estimate "
+                f"refusing a blind estimate for {cell.key}: its real already exists in the "
+                f"dataset ({requests} request lines, {batches} batch lines) - an estimate "
                 "made after seeing the real would be dishonest; record it as informed"
             )
     else:
         if _find(load_estimates(base, BLIND), workload, model) is None:
             raise PredictError(
                 f"the informed re-estimation re-estimates the blind estimate: record the "
-                f"blind estimate for {celda.key} first"
+                f"blind estimate for {cell.key} first"
             )
-        if not (peticiones or lotes):
+        if not (requests or batches):
             raise PredictError(
-                f"no measured evidence for {celda.key} yet: the informed phase re-estimates "
+                f"no measured evidence for {cell.key} yet: the informed phase re-estimates "
                 "with the data already taken - run the cell first"
             )
     linea = {
@@ -390,65 +389,65 @@ def record_estimate(
         "estimated_usd": float(estimated_usd),
         "notes": notes,
         "timestamp": time.time() if now is None else now,
-        "table_version": tabla.table_version,
-        "evidence": {"request_lines": peticiones, "batch_lines": lotes},
+        "table_version": table.table_version,
+        "evidence": {"request_lines": requests, "batch_lines": batches},
     }
     linea["hash"] = line_hash(linea)
     validate_estimate_line(linea)
-    ruta = _estimates_path(base, phase)
-    ruta.parent.mkdir(parents=True, exist_ok=True)
-    tmp = ruta.with_suffix(".jsonl.tmp")
+    path = _estimates_path(base, phase)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".jsonl.tmp")
     with tmp.open("w", encoding="utf-8") as f:
-        for registro in previos:
-            f.write(json.dumps(registro, ensure_ascii=False) + "\n")
+        for record in previos:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
         f.write(json.dumps(linea, ensure_ascii=False) + "\n")
-    tmp.replace(ruta)
+    tmp.replace(path)
     return linea
 
 
-def _estado(registro: dict | None) -> dict | None:
+def _state(record: dict | None) -> dict | None:
     """A phase row's projection of the locked estimate (key order preserved)."""
-    if registro is None:
+    if record is None:
         return None
     return {
-        "estimated_pp": registro["estimated_pp"],
-        "estimated_usd": registro["estimated_usd"],
-        "timestamp": registro["timestamp"],
-        "hash": registro["hash"],
+        "estimated_pp": record["estimated_pp"],
+        "estimated_usd": record["estimated_usd"],
+        "timestamp": record["timestamp"],
+        "hash": record["hash"],
     }
 
 
-def plan_doc(base, tabla) -> dict:
+def plan_doc(base, table) -> dict:
     """The walk-through artifact: every cell's phase state plus the pending cells'
     public brief. Raises TableError when the table does not price a grid model —
     the brief would be lying about the rates the estimator will see. The counts
     cover grid cells only; estimates locked under a retired scope ride in
     counts['off_grid'] (the report flags them in findings.off_grid_estimates)."""
     base = pathlib.Path(base)
-    claves = _claves_grid()
+    keys = _keys_grid()
     ciegos = load_estimates(base, BLIND)
     informadas = load_estimates(base, INFORMED)
-    filas = []
-    for celda in grid():
-        ciego = _find(ciegos, celda.workload, celda.model)
-        informada = _find(informadas, celda.workload, celda.model)
-        filas.append(
+    rows = []
+    for cell in grid():
+        ciego = _find(ciegos, cell.workload, cell.model)
+        informada = _find(informadas, cell.workload, cell.model)
+        rows.append(
             {
-                "workload": celda.workload,
-                "model": celda.model,
-                "level": celda.level,
-                "blind": _estado(ciego),
-                "informed": _estado(informada),
+                "workload": cell.workload,
+                "model": cell.model,
+                "level": cell.level,
+                "blind": _state(ciego),
+                "informed": _state(informada),
                 # a brief only for what is still pending: an estimated cell has
                 # already been walked through
-                "brief": fixture_brief(celda, tabla) if ciego is None else None,
+                "brief": fixture_brief(cell, table) if ciego is None else None,
             }
         )
-    ciegos_en, informadas_en = _en_grid(ciegos, claves), _en_grid(informadas, claves)
+    ciegos_en, informadas_en = _en_grid(ciegos, keys), _en_grid(informadas, keys)
     return {
         "kind": "predictability-plan",
-        "table_version": tabla.table_version,
-        "cells": filas,
+        "table_version": table.table_version,
+        "cells": rows,
         "counts": {
             "blind": ciegos_en,
             "informed": informadas_en,
@@ -463,38 +462,38 @@ def plan_doc(base, tabla) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _percentiles(muestras: list[float]) -> tuple[float, float]:
+def _percentiles(samples: list[float]) -> tuple[float, float]:
     """The 2.5 / 97.5 percentile bounds of the resample means (sorted in place)."""
-    muestras.sort()
-    return muestras[int(0.025 * BOOTSTRAP_B)], muestras[int(0.975 * BOOTSTRAP_B)]
+    samples.sort()
+    return samples[int(0.025 * BOOTSTRAP_B)], samples[int(0.975 * BOOTSTRAP_B)]
 
 
-def _bootstrap_ci(valores: list[float]) -> tuple[float, float] | None:
+def _bootstrap_ci(values: list[float]) -> tuple[float, float] | None:
     """Percentile bootstrap CI of the mean, under the study's fixed seed.
 
     A single observation collapses to itself (there is nothing to resample);
     None with nothing to aggregate.
     """
-    if not valores:
+    if not values:
         return None
-    if len(valores) == 1:
-        return valores[0], valores[0]
+    if len(values) == 1:
+        return values[0], values[0]
     rng = random.Random(BOOTSTRAP_SEED)
-    n = len(valores)
+    n = len(values)
     medias = []
     for _ in range(BOOTSTRAP_B):
-        muestra = [valores[rng.randrange(n)] for _ in range(n)]
-        medias.append(sum(muestra) / n)
+        sample = [values[rng.randrange(n)] for _ in range(n)]
+        medias.append(sum(sample) / n)
     return _percentiles(medias)
 
 
-def _bootstrap_delta_ci(legado: list[float], nuevo: list[float]) -> tuple[float, float] | None:
+def _bootstrap_delta_ci(legado: list[float], newCost: list[float]) -> tuple[float, float] | None:
     """Percentile bootstrap CI of mean(legacy APE) − mean(new APE), PAIRED: the same
     resample of cells feeds both systems, so their correlation survives resampling."""
-    if not legado or len(legado) != len(nuevo):
+    if not legado or len(legado) != len(newCost):
         return None
     if len(legado) == 1:
-        d = legado[0] - nuevo[0]
+        d = legado[0] - newCost[0]
         return d, d
     rng = random.Random(BOOTSTRAP_SEED)
     n = len(legado)
@@ -502,7 +501,7 @@ def _bootstrap_delta_ci(legado: list[float], nuevo: list[float]) -> tuple[float,
     for _ in range(BOOTSTRAP_B):
         indices = [rng.randrange(n) for _ in range(n)]
         ml = sum(legado[i] for i in indices) / n
-        mn = sum(nuevo[i] for i in indices) / n
+        mn = sum(newCost[i] for i in indices) / n
         deltas.append(ml - mn)
     return _percentiles(deltas)
 
@@ -524,7 +523,7 @@ def _verdict(ci_delta: tuple[float, float] | None) -> tuple[str, str]:
     return "unresolved at this sample size", "not resolved"
 
 
-def _cell_real(celda_doc: dict, tabla) -> dict:
+def _cell_real(cell_doc: dict, table) -> dict:
     """The cell's real, from the analyze derivatives alone (native units).
 
     legacy: the median Δpp(weekly) of the cell's reps — the meter's own unit.
@@ -539,43 +538,43 @@ def _cell_real(celda_doc: dict, tabla) -> dict:
     bracket or without token evidence contributes nothing; a model the chosen
     table no longer prices extrapolates nothing.
     """
-    reps = celda_doc["reps"]
+    reps = cell_doc["reps"]
     dpps = [r["dpp_weekly"] for r in reps if _es_numero(r.get("dpp_weekly"))]
     real_pp = statistics.median(dpps) if dpps else None
 
     try:
-        tarifa = tabla.rate(celda_doc["model"])
+        rate = table.rate(cell_doc["model"])
     except TableError:
-        tarifa = None
+        rate = None
     s0s: list[float] = []
     s1s: list[float] = []
-    if tarifa is not None:
-        s_efectivo = (celda_doc.get("s_effective") or {}).get("s")
-        s_valor = s_efectivo if _es_numero(s_efectivo) else 0.0
+    if rate is not None:
+        s_effective = (cell_doc.get("s_effective") or {}).get("s")
+        s_value = s_effective if _es_numero(s_effective) else 0.0
         for r in reps:
             tin, tout = r.get("tokens_in"), r.get("tokens_out")
             if tin is None or tout is None:
                 continue
-            s0s.append(new_task_cost(tin, tout, tarifa, s=0.0, per=tabla.per))
-            s1s.append(new_task_cost(tin, tout, tarifa, s=s_valor, per=tabla.per))
+            s0s.append(new_task_cost(tin, tout, rate, s=0.0, per=table.per))
+            s1s.append(new_task_cost(tin, tout, rate, s=s_value, per=table.per))
     real_s0 = statistics.median(s0s) if s0s else None
     real_s1 = statistics.median(s1s) if s1s else None
 
     if real_pp is None:
-        estado = UNMEASURED
+        state = UNMEASURED
     elif real_pp < TICK_PP * (1 - TICK_BAND):
         # "Under a tick" through the residue band: the meter's deltas are
         # tick-quantized, so a real of exactly one tick (which unrounded
         # arithmetic lands a few 1e-14 below or above 0.1) is measured,
         # while anything genuinely under the tick stays excluded.
-        estado = SUB_RESOLUTION
+        state = SUB_RESOLUTION
     else:
-        estado = MEASURED
+        state = MEASURED
     return {
         "real_pp": real_pp,
         "real_new_s0_usd_per_run": real_s0,
         "real_new_s1_usd_per_run": real_s1,
-        "legacy_status": estado,
+        "legacy_status": state,
     }
 
 
@@ -586,14 +585,14 @@ def _ape(estimado: float | None, real: float | None) -> float | None:
     return abs(estimado - real) / real
 
 
-def _apes(filas: list[dict], fase: str, campo: str, *, solo_medidos: bool = False) -> list[float]:
+def _apes(rows: list[dict], fase: str, field: str, *, solo_medidos: bool = False) -> list[float]:
     """The phase's non-None APEs of one field across the rows; `solo_medidos` keeps
     the legacy-side exclusion (a real under a tick carries no legacy APE anywhere)."""
     return [
-        f[fase][campo]
-        for f in filas
+        f[fase][field]
+        for f in rows
         if f[fase] is not None
-        and f[fase][campo] is not None
+        and f[fase][field] is not None
         and (not solo_medidos or f["legacy_status"] == MEASURED)
     ]
 
@@ -602,16 +601,16 @@ def _cell_rows(
     celdas_analyze: dict[tuple[str, str], dict],
     ciegos: list[dict],
     informadas: list[dict],
-    tabla,
+    table,
 ) -> tuple[list[dict], list[str]]:
     """One report row per grid cell, with each phase's APEs where an estimate exists."""
-    filas = []
+    rows = []
     obsoletas: list[str] = []
-    for celda in grid():
-        celda_doc = celdas_analyze.get((celda.model, celda.workload))
+    for cell in grid():
+        cell_doc = celdas_analyze.get((cell.model, cell.workload))
         real = (
-            _cell_real(celda_doc, tabla)
-            if celda_doc
+            _cell_real(cell_doc, table)
+            if cell_doc
             else {
                 "real_pp": None,
                 "real_new_s0_usd_per_run": None,
@@ -619,57 +618,57 @@ def _cell_rows(
                 "legacy_status": UNMEASURED,
             }
         )
-        fila = {
-            "workload": celda.workload,
-            "model": celda.model,
-            "level": celda.level,
+        row = {
+            "workload": cell.workload,
+            "model": cell.model,
+            "level": cell.level,
             **real,
             "blind": None,
             "informed": None,
         }
-        for fase, registros in ((BLIND, ciegos), (INFORMED, informadas)):
-            estimacion = _find(registros, celda.workload, celda.model)
-            if estimacion is None:
+        for fase, records in ((BLIND, ciegos), (INFORMED, informadas)):
+            estimate = _find(records, cell.workload, cell.model)
+            if estimate is None:
                 continue
             # Vintage guard: an estimate locked against one table and a real priced
             # on another do not divide — the repricing itself would become the
             # error. The new-side APEs are set aside (analyze's set-aside
             # precedent), the legacy APE stands (pp is meter-native, the table
             # never touches it), and the mismatch is flagged, never blended.
-            coinciden = estimacion["table_version"] == tabla.table_version
+            coinciden = estimate["table_version"] == table.table_version
             if not coinciden:
                 obsoletas.append(
-                    f"{celda.key} (estimate locked on {estimacion['table_version']}, "
-                    f"report priced on {tabla.table_version})"
+                    f"{cell.key} (estimate locked on {estimate['table_version']}, "
+                    f"report priced on {table.table_version})"
                 )
-            fila[fase] = {
-                "estimated_pp": estimacion["estimated_pp"],
-                "estimated_usd": estimacion["estimated_usd"],
-                "timestamp": estimacion["timestamp"],
-                "table_version": estimacion["table_version"],
+            row[fase] = {
+                "estimated_pp": estimate["estimated_pp"],
+                "estimated_usd": estimate["estimated_usd"],
+                "timestamp": estimate["timestamp"],
+                "table_version": estimate["table_version"],
                 "table_vintage_mismatch": not coinciden,
                 # the sub-resolution exclusion holds per cell too: a real under
                 # a tick carries no legacy APE anywhere in the report
-                "ape_legacy": _ape(estimacion["estimated_pp"], real["real_pp"])
+                "ape_legacy": _ape(estimate["estimated_pp"], real["real_pp"])
                 if real["legacy_status"] == MEASURED
                 else None,
-                "ape_new": _ape(estimacion["estimated_usd"], real["real_new_s0_usd_per_run"])
+                "ape_new": _ape(estimate["estimated_usd"], real["real_new_s0_usd_per_run"])
                 if coinciden
                 else None,
-                "ape_new_s1": _ape(estimacion["estimated_usd"], real["real_new_s1_usd_per_run"])
+                "ape_new_s1": _ape(estimate["estimated_usd"], real["real_new_s1_usd_per_run"])
                 if coinciden
                 else None,
             }
-        filas.append(fila)
-    return filas, obsoletas
+        rows.append(row)
+    return rows, obsoletas
 
 
-def _fase_aggregates(filas: list[dict]) -> dict:
+def _fase_aggregates(rows: list[dict]) -> dict:
     """The per-system aggregates: legacy over the cells whose real resolves above a
     tick; new over the cells whose extrapolation exists (no resolution floor)."""
 
-    def _mape(fase: str, campo: str) -> dict | None:
-        apes = _apes(filas, fase, campo, solo_medidos=campo == "ape_legacy")
+    def _mape(fase: str, field: str) -> dict | None:
+        apes = _apes(rows, fase, field, solo_medidos=field == "ape_legacy")
         if not apes:
             return None
         ci = _bootstrap_ci(apes)
@@ -681,14 +680,14 @@ def _fase_aggregates(filas: list[dict]) -> dict:
 
     fases = {}
     for fase in PHASES:
-        if not any(f[fase] is not None for f in filas):
+        if not any(f[fase] is not None for f in rows):
             continue
         legacy = _mape(fase, "ape_legacy")
-        nuevo = _mape(fase, "ape_new")
+        newCost = _mape(fase, "ape_new")
         s1 = _mape(fase, "ape_new_s1")
         # the paired comparison only where BOTH systems are measurable
         parejask, parejasn = [], []
-        for f in filas:
+        for f in rows:
             if (
                 f[fase] is not None
                 and f["legacy_status"] == MEASURED
@@ -698,63 +697,63 @@ def _fase_aggregates(filas: list[dict]) -> dict:
                 parejask.append(f[fase]["ape_legacy"])
                 parejasn.append(f[fase]["ape_new"])
         ci_delta = _bootstrap_delta_ci(parejask, parejasn)
-        veredicto, claim = _verdict(ci_delta)
+        verdict, claim = _verdict(ci_delta)
         fases[fase] = {
             "mape_legacy": legacy,
-            "mape_new": nuevo,
+            "mape_new": newCost,
             "mape_new_s1": s1,
             "paired_cells": len(parejask),
             "delta_mape": statistics.mean(parejask) - statistics.mean(parejasn)
             if parejask
             else None,
             "ci_delta": list(ci_delta) if ci_delta else None,
-            "verdict": veredicto,
+            "verdict": verdict,
             "ollama_claim": claim,
         }
     return fases
 
 
-def _workload_breakdown(filas: list[dict]) -> list[dict]:
+def _workload_breakdown(rows: list[dict]) -> list[dict]:
     """The per-workload MAPE means."""
     por_workload: dict[str, list[dict]] = {}
-    for f in filas:
+    for f in rows:
         por_workload.setdefault(f["workload"], []).append(f)
     desglose = []
     for workload, grupo in sorted(por_workload.items()):
-        entrada = {"workload": workload, "level": grupo[0]["level"], "cells": []}
+        input = {"workload": workload, "level": grupo[0]["level"], "cells": []}
         for fase in PHASES:
             legado = _apes(grupo, fase, "ape_legacy", solo_medidos=True)
-            nuevo = _apes(grupo, fase, "ape_new")
-            entrada[fase] = {
+            newCost = _apes(grupo, fase, "ape_new")
+            input[fase] = {
                 "mape_legacy": statistics.mean(legado) if legado else None,
-                "mape_new": statistics.mean(nuevo) if nuevo else None,
+                "mape_new": statistics.mean(newCost) if newCost else None,
             }
-        desglose.append(entrada)
+        desglose.append(input)
     return desglose
 
 
 def _findings(
-    filas: list[dict],
+    rows: list[dict],
     obsoletas: list[str],
     ciegos: list[dict],
     informadas: list[dict],
-    claves: set[tuple[str, str]],
+    keys: set[tuple[str, str]],
 ) -> dict:
     """The opacity findings: what the report cannot score, named never anonymized."""
     return {
         "sub_resolution_legacy": [
             f"{f['workload']}/{f['model']} (real {f['real_pp']:g} pp, under the {TICK_PP:g} pp tick)"
-            for f in filas
+            for f in rows
             if f["legacy_status"] == SUB_RESOLUTION
         ],
         "unmeasured": [
-            f"{f['workload']}/{f['model']}" for f in filas if f["legacy_status"] == UNMEASURED
+            f"{f['workload']}/{f['model']}" for f in rows if f["legacy_status"] == UNMEASURED
         ],
         "stale_table_estimates": obsoletas,
-        "pending_blind": [f"{f['workload']}/{f['model']}" for f in filas if f["blind"] is None],
+        "pending_blind": [f"{f['workload']}/{f['model']}" for f in rows if f["blind"] is None],
         "pending_informed": [
             f"{f['workload']}/{f['model']}"
-            for f in filas
+            for f in rows
             if f["blind"] is not None and f["informed"] is None
         ],
         # a cell measured before any blind estimate exists is a permanent dead
@@ -762,21 +761,21 @@ def _findings(
         # never leave it as an anonymous line in pending_blind
         "measured_without_blind": [
             f"{f['workload']}/{f['model']}"
-            for f in filas
+            for f in rows
             if f["real_pp"] is not None and f["blind"] is None
         ],
         # estimates locked under a retired scope: valid hashes, real money
         # spent on the estimate, but no grid cell to attach to anymore
         "off_grid_estimates": sorted(
             f"{r['cell']['workload']}/{r['cell']['model']} ({r['phase']})"
-            for fase, registros in ((BLIND, ciegos), (INFORMED, informadas))
-            for r in registros
-            if (r["cell"]["workload"], r["cell"]["model"]) not in claves
+            for fase, records in ((BLIND, ciegos), (INFORMED, informadas))
+            for r in records
+            if (r["cell"]["workload"], r["cell"]["model"]) not in keys
         ),
     }
 
 
-def build_report(base, *, tabla) -> dict:
+def build_report(base, *, table) -> dict:
     """The MAPE report, offline from the raw datasets + the locked estimates.
 
     Anchored to the persisted S0/S1 pair (methodology v1.2): the new side's S1
@@ -798,26 +797,26 @@ def build_report(base, *, tabla) -> dict:
     base = pathlib.Path(base)
     ciegos = load_estimates(base, BLIND)
     informadas = load_estimates(base, INFORMED)
-    claves = _claves_grid()
-    doc = analyze_mod.build(base, tabla=tabla, ancla=100.0, s=S1_DEFAULT, cells_only=True)
+    keys = _keys_grid()
+    doc = analyze_mod.build(base, table=table, anchor=100.0, s=S1_DEFAULT, cells_only=True)
     celdas_analyze = {(c["model"], c["workload"]): c for c in doc["cells"]}
-    filas, obsoletas = _cell_rows(celdas_analyze, ciegos, informadas, tabla)
+    rows, obsoletas = _cell_rows(celdas_analyze, ciegos, informadas, table)
     return {
         "kind": "predictability-report",
         "generated_at": time.time(),
         "protocol_version": PROTOCOL_VERSION,
-        "table_version": tabla.table_version,
+        "table_version": table.table_version,
         "params": {
             "s1_default": S1_DEFAULT,
             "tick_pp": TICK_PP,
             "bootstrap_samples": BOOTSTRAP_B,
             "bootstrap_seed": BOOTSTRAP_SEED,
         },
-        "estimates": {"blind": _en_grid(ciegos, claves), "informed": _en_grid(informadas, claves)},
-        "cells": filas,
-        "workloads": _workload_breakdown(filas),
-        "aggregate": _fase_aggregates(filas),
-        "findings": _findings(filas, obsoletas, ciegos, informadas, claves),
+        "estimates": {"blind": _en_grid(ciegos, keys), "informed": _en_grid(informadas, keys)},
+        "cells": rows,
+        "workloads": _workload_breakdown(rows),
+        "aggregate": _fase_aggregates(rows),
+        "findings": _findings(rows, obsoletas, ciegos, informadas, keys),
         "notes": (
             "computed offline from the locked estimate registries and the raw datasets "
             "(the reals come from the analyze derivatives: legacy = median dpp_weekly of "

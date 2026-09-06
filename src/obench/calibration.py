@@ -99,15 +99,15 @@ def _bracket_specs(*, run_id: str, model: str) -> dict[str, BatchSpec]:
     return specs
 
 
-def _dp_ventana(batch: dict | None) -> float | None:
+def _dp_window(batch: dict | None) -> float | None:
     """The bracket's Δpp on the study's window (weekly), session as the fallback."""
     if not batch:
         return None
-    semanal = batch.get("dpp_weekly")
-    if isinstance(semanal, (int, float)):
-        return float(semanal)
-    sesion = batch.get("dpp_session")
-    return float(sesion) if isinstance(sesion, (int, float)) else None
+    weekly = batch.get("dpp_weekly")
+    if isinstance(weekly, (int, float)):
+        return float(weekly)
+    session = batch.get("dpp_session")
+    return float(session) if isinstance(session, (int, float)) else None
 
 
 def _ttft_s(rec: dict) -> float | None:
@@ -135,15 +135,15 @@ def _hit_de(rec: dict, tin_frio: int | None) -> bool | None:
     return None
 
 
-def _iqr_de(estimaciones: list[float]) -> tuple[float, float] | None:
+def _iqr_de(estimates: list[float]) -> tuple[float, float] | None:
     """The estimates' IQR (q25, q75); None below the two points it needs."""
-    if len(estimaciones) < 2:
+    if len(estimates) < 2:
         return None
-    q = statistics.quantiles(estimaciones, n=4)
+    q = statistics.quantiles(estimates, n=4)
     return q[0], q[2]
 
 
-def resolve_s(calibracion, modelos, *, default_s: float = 0.5) -> dict[str, EffectiveS]:
+def resolve_s(calibration, models, *, default_s: float = 0.5) -> dict[str, EffectiveS]:
     """The analyze seam: each model's effective hit rate under the agreed precedence.
 
     Measurement wins over the S1 assumption when the calibration was conclusive;
@@ -152,36 +152,34 @@ def resolve_s(calibracion, modelos, *, default_s: float = 0.5) -> dict[str, Effe
     the S1 assumption, marked as such so no number ever reads as measured when
     it is not. Malformed readings resolve as assumed, never as a traceback.
     """
-    lecturas = calibracion.get("readings") if isinstance(calibracion, dict) else None
-    lecturas = lecturas if isinstance(lecturas, dict) else {}
-    resueltos: dict[str, EffectiveS] = {}
-    for modelo in modelos:
-        entrada = lecturas.get(modelo)
-        if not isinstance(entrada, dict):
+    readings = calibration.get("readings") if isinstance(calibration, dict) else None
+    readings = readings if isinstance(readings, dict) else {}
+    resolved: dict[str, EffectiveS] = {}
+    for model in models:
+        input = readings.get(model)
+        if not isinstance(input, dict):
             # No calibration data: the S1 assumption stands, nothing reported.
-            s, fuente, reportada, declarado = default_s, "assumed", None, False
-            nota = "no calibration data - the S1 assumption is kept"
+            s, font, reportada, declarado = default_s, "assumed", None, False
+            note = "no calibration data - the S1 assumption is kept"
         else:
-            descuento = entrada.get("paper_discount")
+            descuento = input.get("paper_discount")
             declarado = bool(isinstance(descuento, dict) and descuento.get("declared"))
-            tasa = entrada.get("hit_rate")
-            if entrada.get("conclusive") and isinstance(tasa, (int, float)):
+            tasa = input.get("hit_rate")
+            if input.get("conclusive") and isinstance(tasa, (int, float)):
                 medida = max(0.0, min(1.0, float(tasa)))
-                s, fuente, reportada = medida, "measured", medida
+                s, font, reportada = medida, "measured", medida
                 if medida == 0.0:
-                    nota = "measured no caching - the effective hit rate sits at the S0 floor"
+                    note = "measured no caching - the effective hit rate sits at the S0 floor"
                 else:
-                    nota = f"the measured hit rate replaces the S1 assumption ({default_s:g})"
+                    note = f"the measured hit rate replaces the S1 assumption ({default_s:g})"
             else:
                 # An inconclusive measurement keeps S1; the raw rate rides along
                 # unclamped, never reading as measured.
-                s, fuente = default_s, "assumed"
+                s, font = default_s, "assumed"
                 reportada = tasa if isinstance(tasa, (int, float)) else None
-                nota = "inconclusive calibration - the S1 assumption is kept and marked"
-        resueltos[modelo] = EffectiveS(
-            modelo, s, fuente, fuente == "measured", reportada, declarado, nota
-        )
-    return resueltos
+                note = "inconclusive calibration - the S1 assumption is kept and marked"
+        resolved[model] = EffectiveS(model, s, font, font == "measured", reportada, declarado, note)
+    return resolved
 
 
 def _hit_samples(
@@ -193,52 +191,52 @@ def _hit_samples(
     them) when the API tracks one; else the prompt-eval drop against the cold
     send. Returns (samples, explicit samples, used-field, used-drop).
     """
-    muestras: list[float] = []
+    samples: list[float] = []
     explicitas: list[float] = []
-    uso_campo = uso_caida = False
+    usage_field = uso_caida = False
     for rec in calientes:
         tin, tcache = rec.get("tok_in"), rec.get("tok_cached")
         if isinstance(tin, int) and isinstance(tcache, int) and tin + tcache > 0:
-            muestras.append(tcache / (tin + tcache))
-            explicitas.append(muestras[-1])
-            uso_campo = True
+            samples.append(tcache / (tin + tcache))
+            explicitas.append(samples[-1])
+            usage_field = True
         elif (
             isinstance(tin, int)
             and tin > 0  # a zero warm report is broken telemetry, not a perfect hit
             and isinstance(tin_frio, int)
             and tin_frio > 0
         ):
-            muestras.append(max(0.0, 1.0 - tin / tin_frio))
+            samples.append(max(0.0, 1.0 - tin / tin_frio))
             uso_caida = True
-    return muestras, explicitas, uso_campo, uso_caida
+    return samples, explicitas, usage_field, uso_caida
 
 
-def _conclusive(senal_ticks: float | None, sobre_cero: bool, explicitos_cero: bool) -> str | None:
+def _conclusive(senal_ticks: float | None, above_zero: bool, explicit_zero: bool) -> str | None:
     """The conclusive rule over the unrounded tick signal: "yes", "no", or None.
 
     The tick comparisons read the unrounded signal through the residue band:
     a gap of exactly 2 ticks must resolve as "no" (the meter's quantum), not
     as "yes" on a 2.0000000000000084.
     """
-    resuelto = senal_ticks is not None and senal_ticks > CONCLUSIVE_TICKS * (1 + TICK_BAND)
-    if resuelto and sobre_cero:
+    resolved = senal_ticks is not None and senal_ticks > CONCLUSIVE_TICKS * (1 + TICK_BAND)
+    if resolved and above_zero:
         return "yes"
-    if senal_ticks is not None and explicitos_cero and not resuelto:
+    if senal_ticks is not None and explicit_zero and not resolved:
         return "no"
     return None
 
 
 def _persistence(
-    lineas_espaciada: list[dict], lineas_intra: list[dict], tin_frio: int | None
+    spaced_lines: list[dict], intra_lines: list[dict], tin_frio: int | None
 ) -> str | None:
     """Which spaced replay offsets still hit, from the raw stamps: a horizon."""
-    golpes = [_hit_de(r, tin_frio) for r in lineas_espaciada]
-    referencia = lineas_intra[-1].get("t_total")
+    golpes = [_hit_de(r, tin_frio) for r in spaced_lines]
+    reference = intra_lines[-1].get("t_total")
     edades = [
-        r["t_start"] - referencia
-        if isinstance(referencia, (int, float)) and isinstance(r.get("t_start"), (int, float))
+        r["t_start"] - reference
+        if isinstance(reference, (int, float)) and isinstance(r.get("t_start"), (int, float))
         else None
-        for r in lineas_espaciada
+        for r in spaced_lines
     ]
     if edades[-1] is not None and all(g is True for g in golpes):
         return f">= {edades[-1]:g} s"
@@ -252,17 +250,17 @@ def _persistence(
         and all(e is not None for e in edades)
     ):
         ultimo_golpe = max(i for i, g in enumerate(golpes) if g is True)
-        primer_fallo = min(i for i, g in enumerate(golpes) if g is False)
-        return f"between {edades[ultimo_golpe]:g} and {edades[primer_fallo]:g} s"
+        first_failure = min(i for i, g in enumerate(golpes) if g is False)
+        return f"between {edades[ultimo_golpe]:g} and {edades[first_failure]:g} s"
     return None
 
 
 def _analyze_model(
-    modelo: str,
+    model: str,
     brackets: dict[str, dict],
-    peticiones: dict[str, list[dict]],
+    requests_by_batch: dict[str, list[dict]],
     *,
-    tabla,
+    table,
 ) -> dict:
     """One model's calibration reading, derived from its raw lines alone.
 
@@ -273,37 +271,37 @@ def _analyze_model(
     frio = brackets.get(COLD_WORKLOAD)
     intra = brackets.get(INTRA_WORKLOAD)
     espaciada = brackets.get(SPACED_WORKLOAD)
-    lineas_frio = peticiones.get(COLD_WORKLOAD, [])
-    lineas_intra = peticiones.get(INTRA_WORKLOAD, [])
-    lineas_espaciada = peticiones.get(SPACED_WORKLOAD, [])
+    cold_lines = requests_by_batch.get(COLD_WORKLOAD, [])
+    intra_lines = requests_by_batch.get(INTRA_WORKLOAD, [])
+    spaced_lines = requests_by_batch.get(SPACED_WORKLOAD, [])
 
-    notas = [
+    notes = [
         f"the {w} bracket never closed - no reading from it"
         for w, b in ((COLD_WORKLOAD, frio), (INTRA_WORKLOAD, intra), (SPACED_WORKLOAD, espaciada))
         if b is None
     ]
 
-    dp_frio = _dp_ventana(frio)
-    dp_intra = _dp_ventana(intra)
-    dp_espaciada = _dp_ventana(espaciada)
+    dp_frio = _dp_window(frio)
+    dp_intra = _dp_window(intra)
+    dp_espaciada = _dp_window(espaciada)
 
     # The warm replays: the intra bracket's requests after its primer, plus every
     # spaced replay (each re-sends the prefix an earlier bracket refreshed).
-    tin_frio = lineas_frio[0].get("tok_in") if lineas_frio else None
-    calientes = lineas_intra[1:] + lineas_espaciada
-    muestras, explicitas, uso_campo, uso_caida = _hit_samples(calientes, tin_frio)
+    tin_frio = cold_lines[0].get("tok_in") if cold_lines else None
+    calientes = intra_lines[1:] + spaced_lines
+    samples, explicitas, usage_field, uso_caida = _hit_samples(calientes, tin_frio)
 
     # The Δpp signal: the cold per-request cost against the intra bracket's
     # average (its primer plus warm replays), in ticks of the meter's resolution.
     senal_pp = senal_ticks = None
-    if dp_frio is not None and dp_frio > 0 and dp_intra is not None and lineas_intra:
-        senal_pp = dp_frio - dp_intra / len(lineas_intra)
+    if dp_frio is not None and dp_frio > 0 and dp_intra is not None and intra_lines:
+        senal_pp = dp_frio - dp_intra / len(intra_lines)
         senal_ticks = senal_pp / TICK_PP
 
     proxy: dict | None = None
-    if not muestras and dp_frio is not None and dp_frio > 0:
+    if not samples and dp_frio is not None and dp_frio > 0:
         estimadores = []
-        for dp, n in ((dp_intra, len(lineas_intra)), (dp_espaciada, len(lineas_espaciada))):
+        for dp, n in ((dp_intra, len(intra_lines)), (dp_espaciada, len(spaced_lines))):
             if dp is not None and n:
                 estimadores.append(max(0.0, 1.0 - (dp / n) / dp_frio))
         if len(estimadores) >= 2:
@@ -313,39 +311,39 @@ def _analyze_model(
                 "iqr": [q[0], q[2]],
             }
 
-    estimaciones = muestras if muestras else (proxy["estimates"] if proxy else [])
-    iqr = _iqr_de(estimaciones)
-    sobre_cero = iqr is not None and iqr[0] > 0
+    estimates = samples if samples else (proxy["estimates"] if proxy else [])
+    iqr = _iqr_de(estimates)
+    above_zero = iqr is not None and iqr[0] > 0
     # A conclusive "no" needs the field's own zeros: a reported hit count of 0
     # on every replay is evidence of absence, while an unchanged prompt-eval
     # count only says the API reveals nothing (caching could still exist,
     # invisible in both signals) — that stays unknown, and S1 stays marked.
-    explicitos_cero = len(explicitas) >= 2 and all(m == 0.0 for m in explicitas)
+    explicit_zero = len(explicitas) >= 2 and all(m == 0.0 for m in explicitas)
 
-    conclusiva = _conclusive(senal_ticks, sobre_cero, explicitos_cero)
+    conclusiva = _conclusive(senal_ticks, above_zero, explicit_zero)
 
     if conclusiva == "yes":
-        tasa: float | None = statistics.median(estimaciones)
+        tasa: float | None = statistics.median(estimates)
     elif conclusiva == "no":
         tasa = 0.0
     else:
         tasa = None
 
-    if conclusiva == "yes" or any(m > 0 for m in muestras):
+    if conclusiva == "yes" or any(m > 0 for m in samples):
         existe = "yes"
     elif conclusiva == "no":
         existe = "no"
     else:
         existe = "unknown"
 
-    if uso_campo:
-        base_estimacion = "reported cache-hit tokens"
+    if usage_field:
+        estimate_basis = "reported cache-hit tokens"
     elif uso_caida:
-        base_estimacion = "prompt-eval drop"
+        estimate_basis = "prompt-eval drop"
     elif proxy:
-        base_estimacion = "dpp proxy"
+        estimate_basis = "dpp proxy"
     else:
-        base_estimacion = None
+        estimate_basis = None
 
     # Persistence: which spaced replay offsets still hit, from the raw stamps.
     # A horizon needs a cache whose existence the evidence established first —
@@ -353,19 +351,19 @@ def _analyze_model(
     persistencia: str | None = None
     if conclusiva == "no":
         persistencia = "none observed"
-    elif existe == "yes" and lineas_espaciada and lineas_intra:
-        persistencia = _persistence(lineas_espaciada, lineas_intra, tin_frio)
+    elif existe == "yes" and spaced_lines and intra_lines:
+        persistencia = _persistence(spaced_lines, intra_lines, tin_frio)
 
     try:
-        declarado = tabla.rate(modelo).has_cache_discount
+        declarado = table.rate(model).has_cache_discount
     except TableError:
         # A slate model the chosen table no longer prices: the reading still
         # ships (the brackets' spend is already in the raw dataset) with no
         # declared-discount signal and a note - never a traceback after the
         # quota is spent, and never a lost runs/calibration-<run_id>.json.
         declarado = None
-        notas.append(f"the price table does not price {modelo!r} - no declared-discount signal")
-    materializado = {"yes": True, "no": False}.get(existe)
+        notes.append(f"the price table does not price {model!r} - no declared-discount signal")
+    materialized = {"yes": True, "no": False}.get(existe)
 
     def _evidencia(rec: dict) -> dict:
         return {
@@ -378,36 +376,36 @@ def _analyze_model(
         COLD_WORKLOAD: {
             "batch_id": frio.get("batch_id") if frio else None,
             "dpp": dp_frio,
-            "requests": [_evidencia(r) for r in lineas_frio],
+            "requests": [_evidencia(r) for r in cold_lines],
         },
         INTRA_WORKLOAD: {
             "batch_id": intra.get("batch_id") if intra else None,
             "dpp": dp_intra,
-            "replays": [_evidencia(r) for r in lineas_intra[1:]],
+            "replays": [_evidencia(r) for r in intra_lines[1:]],
         },
         SPACED_WORKLOAD: {
             "batch_id": espaciada.get("batch_id") if espaciada else None,
             "dpp": dp_espaciada,
-            "replays": [{**_evidencia(r), "hit": _hit_de(r, tin_frio)} for r in lineas_espaciada],
+            "replays": [{**_evidencia(r), "hit": _hit_de(r, tin_frio)} for r in spaced_lines],
         },
     }
     return {
         "cache_exists": existe,
         "persistence": persistencia,
         "hit_rate": tasa,
-        "hit_rate_basis": base_estimacion,
+        "hit_rate_basis": estimate_basis,
         "conclusive": conclusiva is not None,
         "rule": {
             "dp_signal_pp": senal_pp,
             "dp_signal_ticks": senal_ticks,
             "conclusive_ticks_required": CONCLUSIVE_TICKS,
-            "estimates": list(estimaciones) if estimaciones else None,
+            "estimates": list(estimates) if estimates else None,
             "iqr": list(iqr) if iqr else None,
-            "estimate_basis": base_estimacion,
+            "estimate_basis": estimate_basis,
         },
         "signals": senales,
-        "paper_discount": {"declared": declarado, "materialized": materializado},
-        "notes": "; ".join(notas),
+        "paper_discount": {"declared": declarado, "materialized": materialized},
+        "notes": "; ".join(notes),
     }
 
 
@@ -417,7 +415,7 @@ def _build_summary(
     runs_dir: pathlib.Path,
     batches_dir: pathlib.Path,
     table_version: str,
-    tabla,
+    table,
 ) -> dict:
     """The calibration doc, computed from the raw batches + requests lines alone.
 
@@ -426,45 +424,45 @@ def _build_summary(
     """
     batches = read_jsonl(batches_dir / f"batches-{run_id}.jsonl")
     requests = read_jsonl(runs_dir / f"requests-{run_id}.jsonl")
-    por_modelo: dict[str, dict[str, dict]] = {}
+    per_model: dict[str, dict[str, dict]] = {}
     for b in batches:
         if b.get("workload") in _WORKLOADS:
-            por_modelo.setdefault(b.get("model"), {})[b.get("workload")] = b
+            per_model.setdefault(b.get("model"), {})[b.get("workload")] = b
 
-    por_batch: dict[str | None, list[dict]] = {}
+    by_batch: dict[str | None, list[dict]] = {}
     for r in requests:
-        por_batch.setdefault(r.get("batch_id"), []).append(r)
+        by_batch.setdefault(r.get("batch_id"), []).append(r)
 
-    lecturas: dict[str, dict] = {}
-    for modelo, brackets in sorted(por_modelo.items()):
-        peticiones: dict[str, list[dict]] = {}
+    readings: dict[str, dict] = {}
+    for model, brackets in sorted(per_model.items()):
+        requests_by_batch: dict[str, list[dict]] = {}
         for w in _WORKLOADS:
             batch = brackets.get(w)
-            lineas = por_batch.get(batch.get("batch_id"), []) if batch else []
-            peticiones[w] = sorted(lineas, key=lambda r: r.get("req_id") or "")
-        analisis = _analyze_model(modelo, brackets, peticiones, tabla=tabla)
-        sellos = [
+            lines = by_batch.get(batch.get("batch_id"), []) if batch else []
+            requests_by_batch[w] = sorted(lines, key=lambda r: r.get("req_id") or "")
+        analisis = _analyze_model(model, brackets, requests_by_batch, table=table)
+        stamps = [
             r.get("t_total")
             for w in _WORKLOADS
-            for r in peticiones[w]
+            for r in requests_by_batch[w]
             if isinstance(r.get("t_total"), (int, float))
         ]
-        analisis["calibrated_at"] = max(sellos) if sellos else None
-        lecturas[modelo] = analisis
-    sin_materializar = sorted(
+        analisis["calibrated_at"] = max(stamps) if stamps else None
+        readings[model] = analisis
+    not_materialized = sorted(
         m
-        for m, a in lecturas.items()
+        for m, a in readings.items()
         if a["paper_discount"]["declared"] and a["paper_discount"]["materialized"] is False
     )
     return {
         "run_id": run_id,
         "kind": "cache-calibration",
         "level": CACHE_LEVEL,
-        "models": sorted(lecturas),
-        "readings": lecturas,
+        "models": sorted(readings),
+        "readings": readings,
         "table_version": table_version,
         "protocol_version": PROTOCOL_VERSION,
-        "unmaterialized_paper_discounts": sin_materializar,
+        "unmaterialized_paper_discounts": not_materialized,
         "notes": (
             "derived from the raw batches/*.jsonl + runs/*.jsonl lines alone. The "
             "override rule: a measured hit rate replaces S1 when conclusive (>2 ticks "
@@ -484,13 +482,13 @@ async def _run_async(
     settle_s: float,
     settle_poll_s: float,
     table_version: str,
-    tabla,
+    table,
     catalog: dict | None,
     model_map: dict[str, str],
     transport,
     emit,
 ) -> dict:
-    sesion = open_workstream(
+    session = open_workstream(
         base,
         # k=1: every calibration bracket fires at k=1, the replays' design
         Workstream(level=CACHE_LEVEL, run_id_prefix="T2-cache", k=1, lane=False),
@@ -502,24 +500,24 @@ async def _run_async(
         transport=transport,
         emit=emit,
     )
-    async with sesion:
-        run_id = sesion.run_id
+    async with session:
+        run_id = session.run_id
         # The gap plan (spaced targets + repeats) is pinned once per run_id: mixing
         # ladders under one dataset would make the persistence readings incomparable.
-        sesion.pin("gap_plan", {"targets": list(spaced_ages), "repeats": CACHE_REPEATS})
-        for modelo in models:
-            specs = _bracket_specs(run_id=run_id, model=modelo)
-            estados = {w: sesion.manifiesto.status(s.batch_id) for w, s in specs.items()}
+        session.pin("gap_plan", {"targets": list(spaced_ages), "repeats": CACHE_REPEATS})
+        for model in models:
+            specs = _bracket_specs(run_id=run_id, model=model)
+            estados = {w: session.manifest.status(s.batch_id) for w, s in specs.items()}
             if all(e in ("done", "aborted") for e in estados.values()):
                 cerrados = sum(1 for e in estados.values() if e == "done")
                 emit(
-                    f"calibrate: {modelo} already calibrated for this run "
+                    f"calibrate: {model} already calibrated for this run "
                     f"({cerrados} closed, {len(estados) - cerrados} aborted) - skipped"
                 )
                 continue
             if any(e == "in_flight" for e in estados.values()):
                 emit(
-                    f"calibrate: {modelo} has an in_flight bracket from an interrupted "
+                    f"calibrate: {model} has an in_flight bracket from an interrupted "
                     "run - model skipped, never silently retried"
                 )
                 continue
@@ -527,17 +525,17 @@ async def _run_async(
             # ---- the cold reference, then the intra-batch replay ----
             for w in (COLD_WORKLOAD, INTRA_WORKLOAD):
                 if estados[w] is not None:  # closed earlier: its spend is in the dataset
-                    emit(f"calibrate: {modelo}/{w} closed in an earlier attempt - skipped")
+                    emit(f"calibrate: {model}/{w} closed in an earlier attempt - skipped")
                     continue
-                resultado = await sesion.execute_one(specs[w])
+                resultado = await session.execute_one(specs[w])
                 emit(
-                    f"calibrate: {modelo}/{w}: {resultado.ok}/{resultado.intentados} ok, "
+                    f"calibrate: {model}/{w}: {resultado.ok}/{resultado.intentados} ok, "
                     f"dpp={resultado.dpp_session}"
                 )
-            estados = {w: sesion.manifiesto.status(s.batch_id) for w, s in specs.items()}
+            estados = {w: session.manifest.status(s.batch_id) for w, s in specs.items()}
             if estados[INTRA_WORKLOAD] != "done":
                 raise RunnerError(
-                    f"calibrate: {modelo}: the intra bracket never closed (an aborted "
+                    f"calibrate: {model}: the intra bracket never closed (an aborted "
                     "bracket is never retried), so the spaced ladder has no refresh to "
                     "sit on - delete manifest-T2-cache.json to re-calibrate this run "
                     "cleanly, or keep the incomplete evidence"
@@ -545,9 +543,7 @@ async def _run_async(
 
             # ---- the spaced replays, at their cumulative offsets ----
             if estados[SPACED_WORKLOAD] is not None:
-                emit(
-                    f"calibrate: {modelo}/{SPACED_WORKLOAD} closed in an earlier attempt - skipped"
-                )
+                emit(f"calibrate: {model}/{SPACED_WORKLOAD} closed in an earlier attempt - skipped")
                 continue
             objetivo = spaced_ages
             gaps = (objetivo[0],) + tuple(
@@ -562,24 +558,24 @@ async def _run_async(
                     + " s"
                 ),
             )
-            resultado = await sesion.execute_one(espec_spaced)
+            resultado = await session.execute_one(espec_spaced)
             emit(
-                f"calibrate: {modelo}/{SPACED_WORKLOAD}: {resultado.ok}/{resultado.intentados} "
+                f"calibrate: {model}/{SPACED_WORKLOAD}: {resultado.ok}/{resultado.intentados} "
                 f"ok, dpp={resultado.dpp_session}"
             )
-        sesion.grow_planned(
-            max(len(sesion.manifiesto.doc["batches"]), len(_WORKLOADS) * len(models))
+        session.grow_planned(
+            max(len(session.manifest.doc["batches"]), len(_WORKLOADS) * len(models))
         )
 
-    resumen = _build_summary(
+    summary = _build_summary(
         run_id=run_id,
-        runs_dir=sesion.runs_dir,
-        batches_dir=sesion.batches_dir,
+        runs_dir=session.runs_dir,
+        batches_dir=session.batches_dir,
         table_version=table_version,
-        tabla=tabla,
+        table=table,
     )
-    sesion.write_summary("calibration", resumen)
-    return resumen
+    session.write_summary("calibration", summary)
+    return summary
 
 
 def run_calibration(
@@ -590,7 +586,7 @@ def run_calibration(
     settle_s: float,
     settle_poll_s: float = 5.0,
     table_version: str,
-    tabla,
+    table,
     catalog: dict | None = None,
     model_map: dict[str, str] | None = None,
     transport=None,
@@ -609,7 +605,7 @@ def run_calibration(
             settle_s=settle_s,
             settle_poll_s=settle_poll_s,
             table_version=table_version,
-            tabla=tabla,
+            table=table,
             catalog=catalog,
             model_map=model_map or {},
             transport=transport,

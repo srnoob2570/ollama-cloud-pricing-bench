@@ -1,7 +1,7 @@
 """`bench analyze`: the re-run without re-measuring (ticket Harness 08).
 
 The analysis reads only the raw datasets (runs/*.jsonl + batches/*.jsonl), the
-versioned price table and the analysis parameters (--table-version/--ancla/--s):
+versioned price table and the analysis parameters (--table-version/--anchor/--s):
 every assertion here is on produced artifacts, and the fake observes ZERO new
 requests during any analyze invocation.
 
@@ -30,21 +30,21 @@ U = usd_per_pp(100.0)
 
 
 def analyze_cli(tmp_path, *args) -> tuple[int, str, str]:
-    salida, errores = io.StringIO(), io.StringIO()
+    output, errors = io.StringIO(), io.StringIO()
     try:
-        with contextlib.redirect_stdout(salida), contextlib.redirect_stderr(errores):
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
             from obench.cli import main
 
-            codigo = main(["--base", str(tmp_path), "analyze", *args])
+            code = main(["--base", str(tmp_path), "analyze", *args])
     except SystemExit as e:  # argparse exits 2 on usage errors
-        codigo = int(e.code or 0)
-    return codigo, salida.getvalue(), errores.getvalue()
+        code = int(e.code or 0)
+    return code, output.getvalue(), errors.getvalue()
 
 
 def analyze_doc(tmp_path, *args) -> dict:
-    codigo, salida, errores = analyze_cli(tmp_path, *args, "--json")
-    assert codigo == 0, salida or errores
-    return json.loads(salida)
+    code, output, errors = analyze_cli(tmp_path, *args, "--json")
+    assert code == 0, output or errors
+    return json.loads(output)
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +118,7 @@ def batch(
     pool: dict | None = None,
     dpp_weekly: float | None = 0.2,
 ) -> dict:
-    medidor_post = (
+    meter_post = (
         None
         if dpp_weekly is None
         else {"limits": {"session": {"usage": 0.6}, "weekly": {"usage": 0.7}}}
@@ -142,8 +142,8 @@ def batch(
         "settle_exit": "stable",
         "count_check_s": 0.5,
         "wall_clock_s": 10.0,
-        "medidor_pre": {"limits": {"session": {"usage": 0.5}, "weekly": {"usage": 0.5}}},
-        "medidor_post": medidor_post,
+        "meter_pre": {"limits": {"session": {"usage": 0.5}, "weekly": {"usage": 0.5}}},
+        "meter_post": meter_post,
         "dpp_session": dpp_weekly,
         "dpp_weekly": dpp_weekly,
         "request_counts": {"pre": {}, "count_check": {}, "post": {}},
@@ -243,10 +243,8 @@ def cell(doc: dict, model: str, workload: str) -> dict:
     return next(c for c in doc["cells"] if c["model"] == model and c["workload"] == workload)
 
 
-def sweep_cell(barrido: dict, clave: str, model: str, workload: str) -> dict:
-    return next(
-        c for c in barrido["cells"][clave] if c["model"] == model and c["workload"] == workload
-    )
+def sweep_cell(sweep: dict, key: str, model: str, workload: str) -> dict:
+    return next(c for c in sweep["cells"][key] if c["model"] == model and c["workload"] == workload)
 
 
 def near(a, b, places=6):
@@ -255,9 +253,9 @@ def near(a, b, places=6):
 
 def snapshot_raw(tmp_path: pathlib.Path) -> dict[str, bytes]:
     return {
-        f"{carpeta}/{p.name}": p.read_bytes()
-        for carpeta in ("runs", "batches")
-        for p in sorted((tmp_path / carpeta).glob("*.jsonl"))
+        f"{folder}/{p.name}": p.read_bytes()
+        for folder in ("runs", "batches")
+        for p in sorted((tmp_path / folder).glob("*.jsonl"))
     }
 
 
@@ -434,26 +432,26 @@ def test_dashboard_loads_the_pages_contract_from_the_cdn(tmp_path):
     assert "pp/1M</th>" not in html and "/task</th>" not in html
     assert html.count('class="hdr-tokens') == 2  # legacy + new price headers
     # the markup/CSS/JS live in the template file, not a Python string
-    plantilla = pathlib.Path(analyze_module.__file__).parent / "web" / "dashboard_template.html"
-    assert plantilla.exists()
-    texto_plantilla = plantilla.read_text(encoding="utf-8")
+    template = pathlib.Path(analyze_module.__file__).parent / "web" / "dashboard_template.html"
+    assert template.exists()
+    template_text = template.read_text(encoding="utf-8")
     # the readout strips left the pages in the chrome slim-down: the template
     # still carries exactly the three fills render_dashboard makes
-    for nombre in ("OPCIONES", "DATOS", "RATES"):
-        assert f"__{nombre}__" in texto_plantilla
+    for name in ("OPTIONS", "DATA", "RATES"):
+        assert f"__{name}__" in template_text
     # the data rides inside the file (no sibling fetch): it parses back
-    marcador = '<script id="analysis-data" type="application/json">'
-    assert marcador in html
-    incrustado = html.split(marcador, 1)[1].split("</script>", 1)[0]
-    datos = json.loads(incrustado)
-    assert {c["model"] for c in datos["cells"]} == {"alpha", "beta", "gamma"}
+    marker = '<script id="analysis-data" type="application/json">'
+    assert marker in html
+    incrustado = html.split(marker, 1)[1].split("</script>", 1)[0]
+    data = json.loads(incrustado)
+    assert {c["model"] for c in data["cells"]} == {"alpha", "beta", "gamma"}
     # filter options cover every model present in the dataset
-    for modelo in ("alpha", "beta", "gamma"):
-        assert f'value="{modelo}"' in html
+    for model in ("alpha", "beta", "gamma"):
+        assert f'value="{model}"' in html
     # every __TOKEN__ placeholder resolved: none survives in the rendered page
     # (ESTILO_BASE included: the vendored fill no longer exists anywhere)
-    for nombre in ("RESUMEN", "OPCIONES", "NOTAS", "DATOS", "RATES", "ESTILO_BASE"):
-        assert f"__{nombre}__" not in html
+    for name in ("RESUMEN", "OPCIONES", "NOTAS", "DATOS", "RATES", "ESTILO_BASE"):
+        assert f"__{name}__" not in html
 
 
 # ---------------------------------------------------------------------------
@@ -473,10 +471,10 @@ def render_bundle_v2(tmp_path: pathlib.Path, *args) -> tuple[str, str]:
     pricing = with_tables(tmp_path)
     craft_dataset(tmp_path)
     analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31", *args)
-    carpeta = tmp_path / "analysis"
+    folder = tmp_path / "analysis"
     return (
-        (carpeta / "dashboard.html").read_text(encoding="utf-8"),
-        (carpeta / "calculator.html").read_text(encoding="utf-8"),
+        (folder / "dashboard.html").read_text(encoding="utf-8"),
+        (folder / "calculator.html").read_text(encoding="utf-8"),
     )
 
 
@@ -503,8 +501,8 @@ def test_dashboard_v2_theme_has_three_states(tmp_path):
     """system/light/dark: the toggle stamps data-theme (system = none), and the
     tokens carry both palettes under their own selectors."""
     html = render_dashboard_v2(tmp_path)
-    for estado in ("system", "light", "dark"):
-        assert f'value="{estado}"' in html
+    for state in ("system", "light", "dark"):
+        assert f'value="{state}"' in html
     assert "data-theme" in html
     # dark tokens are selected, not flipped: their own block, distinct values
     assert '[data-theme="dark"]' in html
@@ -518,7 +516,7 @@ def test_dashboard_v2_verdict_band_leads_and_margins_ride_everywhere(tmp_path):
     tie dot)."""
     html = render_dashboard_v2(tmp_path)
     # the recommendation band leads: it precedes the cells table in the file
-    assert html.index('id="reco"') < html.index('id="tabla-cuerpo"')
+    assert html.index('id="reco"') < html.index('id="table-body"')
     # the cells table carries a margin column; the diverging chart exists
     assert ">margin (paid $)</th>" in html
     assert 'id="chart-margins"' in html
@@ -534,16 +532,16 @@ def test_dashboard_v2_cache_recomputes_from_embedded_rates(tmp_path):
     html = render_dashboard_v2(tmp_path)
     # the free S(x) input spans 0-100 and defaults to 85 % (measured agent
     # traffic runs ~90 % of input as cache reads; 85 is the conservative pick)
-    marcador = '<script id="rates-data" type="application/json">'
-    assert marcador in html
-    tarifas = json.loads(html.split(marcador, 1)[1].split("</script>", 1)[0])
-    assert set(tarifas["rates"]) == {"alpha", "beta", "gamma"}
-    assert tarifas["per"] == 1_000_000
-    for modelo, t in tarifas["rates"].items():
+    marker = '<script id="rates-data" type="application/json">'
+    assert marker in html
+    rates = json.loads(html.split(marker, 1)[1].split("</script>", 1)[0])
+    assert set(rates["rates"]) == {"alpha", "beta", "gamma"}
+    assert rates["per"] == 1_000_000
+    for model, t in rates["rates"].items():
         assert set(t) == {"input", "cached_input", "output", "has_cache_discount"}
-    assert tarifas["rates"]["beta"]["has_cache_discount"] is False  # cached=input
-    entrada = html[html.index('id="cache-s"') : html.index('id="cache-s"') + 400]
-    assert 'min="0"' in entrada and 'max="100"' in entrada and 'value="85"' in entrada
+    assert rates["rates"]["beta"]["has_cache_discount"] is False  # cached=input
+    input = html[html.index('id="cache-s"') : html.index('id="cache-s"') + 400]
+    assert 'min="0"' in input and 'max="100"' in input and 'value="85"' in input
     # quick cache % presets ride the cache control: floor, versioned S1, default, real high
     assert "cache-preset" in html and 'data-s="85"' in html
     # they carry their own binding (which sets the input) and are excluded
@@ -577,17 +575,17 @@ def test_dashboard_v2_marks_measured_s_and_notes_the_s0_models(tmp_path):
     assert "S(x) &equiv; S0" in html or "S(x) ≡ S0" in html  # the in-place note
     assert "measured" in html  # the measured marker's label
     # the per-model effective S rides in the embedded doc so the JS can pin it
-    marcador = '<script id="analysis-data" type="application/json">'
-    datos = json.loads(html.split(marcador, 1)[1].split("</script>", 1)[0])
-    assert set(datos["s_per_model"]) == {"alpha", "beta", "gamma"}
+    marker = '<script id="analysis-data" type="application/json">'
+    data = json.loads(html.split(marker, 1)[1].split("</script>", 1)[0])
+    assert set(data["s_per_model"]) == {"alpha", "beta", "gamma"}
 
 
 def test_dashboard_v2_copy_is_english(tmp_path):
     pricing = with_tables(tmp_path)
     craft_dataset(tmp_path)
     analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
-    for nombre in ("dashboard.html", "calculator.html"):
-        bajo = (tmp_path / "analysis" / nombre).read_text(encoding="utf-8").lower()
+    for name in ("dashboard.html", "calculator.html"):
+        bajo = (tmp_path / "analysis" / name).read_text(encoding="utf-8").lower()
         for palabra in ("margen", "empate", "asignado", "escenario", "ganador"):
             assert palabra not in bajo
 
@@ -603,12 +601,12 @@ def test_dashboard_v2_plan_token_budget_section(tmp_path):
     craft_dataset(tmp_path)
     analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
     html = (tmp_path / "analysis" / "calculator.html").read_text(encoding="utf-8")
-    tablero = (tmp_path / "analysis" / "dashboard.html").read_text(encoding="utf-8")
+    page = (tmp_path / "analysis" / "dashboard.html").read_text(encoding="utf-8")
     # the section's home is the calculator page now; the dashboard keeps no
     # trace of the matrix, its controls or its export code
-    assert 'id="plan-tokens"' not in tablero
-    assert 'id="plan-custom-in"' not in tablero
-    assert "exportPlanImage" not in tablero
+    assert 'id="plan-tokens"' not in page
+    assert 'id="plan-custom-in"' not in page
+    assert "exportPlanImage" not in page
     assert 'id="plan-tokens"' in html
     # the in : out selector stays gone: presets ride as matrix columns
     assert 'id="plan-ratio"' not in html
@@ -620,8 +618,8 @@ def test_dashboard_v2_plan_token_budget_section(tmp_path):
     assert "$100 paid" in html and "$300 credits" in html
     # the matrix columns are the bare splits (no category labels — they did not
     # help), each header composed at runtime from RATIOS
-    for texto in ("60 : 1", "10 : 1", "4 : 1"):
-        assert texto in html
+    for text in ("60 : 1", "10 : 1", "4 : 1"):
+        assert text in html
     # the category labels left the headers per decision
     for removed in ("Agent session", "Coding (no reasoning)", "Chat / RAG"):
         assert removed not in html
@@ -643,7 +641,7 @@ def test_dashboard_v2_plan_token_budget_section(tmp_path):
     assert "each cell: ↓ input, ↑ output, then the total" in html
     assert 'colspan="3"' in html
     assert "↓ in" in html and "↑ out" in html
-    assert "columnas.length * 3" in html
+    assert "columns.length * 3" in html
     assert "sep-l" in html  # vertical hairlines between the ratio groups
     # arrow cells: ↑ input | ↓ output | total as three sub-cells per split
     assert "↑" in html and "↓" in html
@@ -662,13 +660,13 @@ def test_dashboard_v2_plan_token_budget_section(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _bloque_tokens(ruta: pathlib.Path) -> str:
+def _block_tokens(path: pathlib.Path) -> str:
     """A template's theme-token block: from the tokens' comment header to the
     first base rule — the block every page of the bundle must share verbatim."""
-    cuerpo = ruta.read_text(encoding="utf-8")
-    inicio = cuerpo.index("/* three-state theme tokens")
-    caja = cuerpo.index("box-sizing", inicio)
-    return cuerpo[inicio : cuerpo.index("}", caja) + 1]
+    body = path.read_text(encoding="utf-8")
+    inicio = body.index("/* three-state theme tokens")
+    caja = body.index("box-sizing", inicio)
+    return body[inicio : body.index("}", caja) + 1]
 
 
 def test_calculator_loads_the_pages_contract_from_the_cdn(tmp_path):
@@ -678,7 +676,7 @@ def test_calculator_loads_the_pages_contract_from_the_cdn(tmp_path):
     helper), and its model options cover every model the embedded rates price.
     The same analysis blob rides byte-equal in both pages, the theme-token
     block is shared verbatim, and no unresolved __TOKEN__ placeholder survives."""
-    tablero, html = render_bundle_v2(tmp_path)
+    page, html = render_bundle_v2(tmp_path)
     # the CDN head block: Tailwind browser build, Google Fonts, Lucide icons
     assert 'src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"' in html
     assert "fonts.googleapis.com/css2?family=Inter" in html and "display=swap" in html
@@ -706,36 +704,36 @@ def test_calculator_loads_the_pages_contract_from_the_cdn(tmp_path):
     assert 'id="plan-custom-in"' in html and 'id="plan-custom-out"' in html
     assert 'name="theme"' in html  # the theme radios survive on this page too
     # the markup/CSS/JS live in the template file, not a Python string
-    plantillas = pathlib.Path(analyze_module.__file__).parent / "web"
-    plantilla = plantillas / "calculator_template.html"
-    assert plantilla.exists()
-    cuerpo = plantilla.read_text(encoding="utf-8")
-    assert "__DATOS__" in cuerpo and "__RATES__" in cuerpo and "__OPCIONES__" in cuerpo
+    templates = pathlib.Path(analyze_module.__file__).parent / "web"
+    template = templates / "calculator_template.html"
+    assert template.exists()
+    body = template.read_text(encoding="utf-8")
+    assert "__DATA__" in body and "__RATES__" in body and "__OPTIONS__" in body
     # the analysis doc rides inside the file (no sibling fetch): it parses back
-    marcador = '<script id="analysis-data" type="application/json">'
-    assert marcador in html
-    datos = json.loads(html.split(marcador, 1)[1].split("</script>", 1)[0])
-    assert {c["model"] for c in datos["cells"]} == {"alpha", "beta", "gamma"}
+    marker = '<script id="analysis-data" type="application/json">'
+    assert marker in html
+    data = json.loads(html.split(marker, 1)[1].split("</script>", 1)[0])
+    assert {c["model"] for c in data["cells"]} == {"alpha", "beta", "gamma"}
     # one source of truth: the same doc, byte-equal, rides in both pages
     assert (
-        html.split(marcador, 1)[1].split("</script>", 1)[0]
-        == (tablero.split(marcador, 1)[1].split("</script>", 1)[0])
+        html.split(marker, 1)[1].split("</script>", 1)[0]
+        == (page.split(marker, 1)[1].split("</script>", 1)[0])
     )
     # the rates blob parses back, and every priced model has its <option>
     # (the all-models spirit of the dashboard's filter-options check)
-    marcador_rates = '<script id="rates-data" type="application/json">'
-    assert marcador_rates in html
-    tarifas = json.loads(html.split(marcador_rates, 1)[1].split("</script>", 1)[0])
-    assert tarifas["per"] == 1_000_000
-    for modelo in tarifas["rates"]:
-        assert f'value="{modelo}"' in html
+    marker_rates = '<script id="rates-data" type="application/json">'
+    assert marker_rates in html
+    rates = json.loads(html.split(marker_rates, 1)[1].split("</script>", 1)[0])
+    assert rates["per"] == 1_000_000
+    for model in rates["rates"]:
+        assert f'value="{model}"' in html
     # every __TOKEN__ placeholder resolved: none survives in either page
-    for pagina in (tablero, html):
+    for pagina in (page, html):
         assert re.search(r"__[A-Z_]+__", pagina) is None
 
     # the theme tokens are copied, not drifted: both templates carry the
     # identical :root / dark-mode block
-    assert _bloque_tokens(plantillas / "dashboard_template.html") == _bloque_tokens(plantilla)
+    assert _block_tokens(templates / "dashboard_template.html") == _block_tokens(template)
 
 
 # ---------------------------------------------------------------------------
@@ -744,20 +742,20 @@ def test_calculator_loads_the_pages_contract_from_the_cdn(tmp_path):
 
 # the tiny JS-state allowlist: state classes the JS builds from values
 # (v.winner -> "legacy"/"new", "tie"; the nodata chip; classList "active")
-_ESTADO_CLASES = {"active", "nodata", "tie", "legacy", "new"}
+_STATE_CLASSES = {"active", "nodata", "tie", "legacy", "new"}
 
 
-def _tokens_clase(cuerpo: str) -> set[str]:
+def _tokens_clase(body: str) -> set[str]:
     """Every static class token a template can put on an element: the HTML
     class attributes plus the fragments built in JS (innerHTML strings like
     '<span class=\"chip ' + v.winner', classList.add("active")). A value cut
     by a quote/plus (JS concatenation) contributes only its real tokens."""
     tokens: set[str] = set()
-    for m in re.finditer(r'class="([^"+]*)"', cuerpo):
+    for m in re.finditer(r'class="([^"+]*)"', body):
         tokens.update(t for t in m.group(1).split() if re.fullmatch(r"[A-Za-z][\w-]*", t))
-    for m in re.finditer(r"class='([^\"+]*)'", cuerpo):
+    for m in re.finditer(r"class='([^\"+]*)'", body):
         tokens.update(t for t in m.group(1).split() if re.fullmatch(r"[A-Za-z][\w-]*", t))
-    for m in re.finditer(r'classList\.(?:add|remove|toggle)\("([^"]+)"\)', cuerpo):
+    for m in re.finditer(r'classList\.(?:add|remove|toggle)\("([^"]+)"\)', body):
         tokens.update(m.group(1).split())
     return tokens
 
@@ -772,15 +770,15 @@ def _selectores_pagina(estilos: list[str]) -> set[str]:
     return sels
 
 
-def _selectores_js(cuerpo: str) -> set[str]:
+def _selectores_js(body: str) -> set[str]:
     """Class tokens the template's own JS binds: querySelector(All) and
     closest() selector strings, classList arguments, and the ids reached
     through the $() helper (a class token sharing that exact string marks the
     same element)."""
     ligaduras: set[str] = set()
-    for m in re.finditer(r'(?:querySelector(?:All)?|closest)\("([^"]+)"\)', cuerpo):
+    for m in re.finditer(r'(?:querySelector(?:All)?|closest)\("([^"]+)"\)', body):
         ligaduras.update(re.findall(r"\.([A-Za-z][\w-]*)", m.group(1)))
-    for m in re.finditer(r"\$\(\"([^\"]+)\"\)", cuerpo):
+    for m in re.finditer(r"\$\(\"([^\"]+)\"\)", body):
         ligaduras.add(m.group(1))
     return ligaduras
 
@@ -795,15 +793,15 @@ def test_template_class_tokens_resolve_to_a_consumer():
     markup fails red."""
     web = pathlib.Path(analyze_module.__file__).parent / "web"
     rojos: list[str] = []
-    for nombre in ("dashboard_template.html", "calculator_template.html"):
-        cuerpo = (web / nombre).read_text(encoding="utf-8")
-        tokens = _tokens_clase(cuerpo)
-        pagina = _selectores_pagina(re.findall(r"<style>(.*?)</style>", cuerpo, re.S))
-        js = _selectores_js(cuerpo)
+    for name in ("dashboard_template.html", "calculator_template.html"):
+        body = (web / name).read_text(encoding="utf-8")
+        tokens = _tokens_clase(body)
+        pagina = _selectores_pagina(re.findall(r"<style>(.*?)</style>", body, re.S))
+        js = _selectores_js(body)
         for t in sorted(tokens):
-            if t in pagina or t in js or t in _ESTADO_CLASES:
+            if t in pagina or t in js or t in _STATE_CLASSES:
                 continue
-            rojos.append(f"{nombre}: .{t}")
+            rojos.append(f"{name}: .{t}")
     assert not rojos, (
         "class tokens with no consumer (dead markup, or a stray Tailwind "
         "utility typed into the markup — the Pages-first pages carry no "
@@ -827,13 +825,13 @@ def test_calculator_prices_every_model_the_table_lists(tmp_path):
     )
     craft_dataset(tmp_path)
     analyze_doc(tmp_path, "--pricing-dir", str(pricing), "--table-version", "2026-08-31")
-    carpeta = tmp_path / "analysis"
-    calc = (carpeta / "calculator.html").read_text(encoding="utf-8")
-    tablero = (carpeta / "dashboard.html").read_text(encoding="utf-8")
-    marcador = '<script id="rates-data" type="application/json">'
-    tarifas = json.loads(calc.split(marcador, 1)[1].split("</script>", 1)[0])
+    folder = tmp_path / "analysis"
+    calc = (folder / "calculator.html").read_text(encoding="utf-8")
+    page = (folder / "dashboard.html").read_text(encoding="utf-8")
+    marker = '<script id="rates-data" type="application/json">'
+    rates = json.loads(calc.split(marker, 1)[1].split("</script>", 1)[0])
     # the calculator's rows and options cover the whole table, delta included
-    assert set(tarifas["rates"]) == {"alpha", "beta", "gamma", "delta"}
+    assert set(rates["rates"]) == {"alpha", "beta", "gamma", "delta"}
     assert 'value="delta"' in calc
     # the picker's default state: the hidden multi-select carries every
     # embedded-rate model as an option, and the JS state starts with ALL of
@@ -842,9 +840,9 @@ def test_calculator_prices_every_model_the_table_lists(tmp_path):
     assert "var ALL_MODELS = Object.keys(RATES.rates" in calc
     assert "models: ALL_MODELS.slice()" in calc
     # the dashboard's payload stays cells-derived: delta is nowhere on it
-    dash_tarifas = json.loads(tablero.split(marcador, 1)[1].split("</script>", 1)[0])
-    assert set(dash_tarifas["rates"]) == {"alpha", "beta", "gamma"}
-    assert 'value="delta"' not in tablero
+    dash_rates = json.loads(page.split(marker, 1)[1].split("</script>", 1)[0])
+    assert set(dash_rates["rates"]) == {"alpha", "beta", "gamma"}
+    assert 'value="delta"' not in page
 
 
 def test_navbar_links_the_two_pages_and_marks_the_current_one(tmp_path):
@@ -853,26 +851,26 @@ def test_navbar_links_the_two_pages_and_marks_the_current_one(tmp_path):
     dashboard.html to BOTH index.html and dashboard.html, so both bundle names
     and both nav links resolve everywhere) on each page, the current page
     marked with aria-current and the theme-token active state."""
-    tablero, calc = render_bundle_v2(tmp_path)
+    page, calc = render_bundle_v2(tmp_path)
     # dashboard: Dashboard is the current page, Calculator the link out
-    assert '<a href="dashboard.html" aria-current="page">Dashboard</a>' in tablero
-    assert '<a href="calculator.html">Calculator</a>' in tablero
+    assert '<a href="dashboard.html" aria-current="page">Dashboard</a>' in page
+    assert '<a href="calculator.html">Calculator</a>' in page
     # calculator: the roles swap
     assert '<a href="dashboard.html">Dashboard</a>' in calc
     assert '<a href="calculator.html" aria-current="page">Calculator</a>' in calc
     # every navbar href resolves to a file the bundle actually ships:
     # index.html exists only after the gh-pages rename, never inside the bundle
-    plantillas = pathlib.Path(analyze_module.__file__).parent / "web"
-    for nombre in ("dashboard_template.html", "calculator_template.html"):
-        cuerpo = (plantillas / nombre).read_text(encoding="utf-8")
-        nav = cuerpo[cuerpo.index('<nav class="topnav"') : cuerpo.index("</nav>")]
+    templates = pathlib.Path(analyze_module.__file__).parent / "web"
+    for name in ("dashboard_template.html", "calculator_template.html"):
+        body = (templates / name).read_text(encoding="utf-8")
+        nav = body[body.index('<nav class="topnav"') : body.index("</nav>")]
         for href in re.findall(r'href="([^"]+)"', nav):
             assert href in {"dashboard.html", "calculator.html"}, href
     # the navbar sits above the page's main content on both pages
-    assert tablero.index('class="topnav"') < tablero.index("<main")
+    assert page.index('class="topnav"') < page.index("<main")
     assert calc.index('class="topnav"') < calc.index("<main")
     # the active state paints through the theme tokens only
-    assert 'a[aria-current="page"]' in tablero and 'a[aria-current="page"]' in calc
+    assert 'a[aria-current="page"]' in page and 'a[aria-current="page"]' in calc
 
 
 # ---------------------------------------------------------------------------
@@ -898,8 +896,8 @@ def test_every_measured_verdict_carries_its_margin_pct(tmp_path):
     doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
 
     c = cell(doc, "beta", "qa_short")
-    esperado_c = (9.6 * U - 2.0 / 3) / (2.0 / 3) * 100
-    assert c["verdict"]["s0"] == {"winner": "new", "margin_pct": esperado_c}
+    expected_c = (9.6 * U - 2.0 / 3) / (2.0 / 3) * 100
+    assert c["verdict"]["s0"] == {"winner": "new", "margin_pct": expected_c}
     b = cell(doc, "beta", "throughput")
     assert near(b["verdict"]["s0"]["margin_pct"], (2.0 / 3 - 0.2 * U) / (0.2 * U) * 100, 9)
     assert b["verdict"]["s0"]["winner"] == "legacy"
@@ -980,7 +978,7 @@ def test_credit_ratio_below_one_is_rejected(tmp_path):
     pricing = with_tables(tmp_path)
     craft_dataset(tmp_path)
     for ratio in ("0.5", "0", "-3"):
-        codigo, _salida, errores = analyze_cli(
+        code, _output, errors = analyze_cli(
             tmp_path,
             "--pricing-dir",
             pricing,
@@ -989,8 +987,8 @@ def test_credit_ratio_below_one_is_rejected(tmp_path):
             "--credit-ratio",
             ratio,
         )
-        assert codigo == 2, ratio
-        assert "must be a finite number >= 1" in errores, ratio
+        assert code == 2, ratio
+        assert "must be a finite number >= 1" in errors, ratio
 
 
 def test_a_sub_tick_winner_prices_with_its_session_equivalent(tmp_path):
@@ -1010,8 +1008,8 @@ def test_a_sub_tick_winner_prices_with_its_session_equivalent(tmp_path):
     doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
     t = cell(doc, "beta", "throughput")
     assert t["verdict"]["s0"]["winner"] == "legacy"
-    esperado = (2.0 / 3) / (0.2 * U / SESSION_R) * 100
-    assert near(t["verdict"]["s0"]["margin_pct"], esperado, 9)
+    expected = (2.0 / 3) / (0.2 * U / SESSION_R) * 100
+    assert near(t["verdict"]["s0"]["margin_pct"], expected, 9)
 
 
 def test_allocated_readings_carry_costs_marked_and_never_verdicted(tmp_path):
@@ -1029,7 +1027,7 @@ def test_allocated_readings_carry_costs_marked_and_never_verdicted(tmp_path):
         req("multi_turn", "alpha", "bP", index=1, tok_in=1000, tok_out=500, checker="fail"),
         req("reasoning", "alpha", "bP", index=2, tok_in=800, tok_out=200),
     ]
-    lote = batch(
+    pooled = batch(
         None,
         "alpha",
         "bP",
@@ -1038,22 +1036,22 @@ def test_allocated_readings_carry_costs_marked_and_never_verdicted(tmp_path):
         pool={"workloads": ["multi_turn", "reasoning"], "reps": 2},
         dpp_weekly=0.5,
     )
-    lote["dpp_session"] = 0.4
-    write_raw(tmp_path, requests, [lote])
+    pooled["dpp_session"] = 0.4
+    write_raw(tmp_path, requests, [pooled])
     doc = analyze_doc(tmp_path, "--pricing-dir", pricing)
-    sesion = U / 6.22
+    session = U / 6.22
     a = doc["pooled"][0]["allocations"]
-    for lectura in a.values():
-        assert lectura["reading"] == "allocated"
-        assert lectura["verdict"] is None
+    for reading in a.values():
+        assert reading["reading"] == "allocated"
+        assert reading["verdict"] is None
     mt, rea = a["multi_turn"], a["reasoning"]
     assert mt["attempted"] == 2 and mt["completed"] == 1
     assert rea["attempted"] == 1 and rea["completed"] == 1
     assert near(mt["cost_task_attempted_usd"], 0.375 * U / 2, 12)
     assert near(mt["cost_task_completed_usd"], 0.375 * U / 1, 12)
     assert near(rea["cost_task_attempted_usd"], 0.125 * U, 12)
-    assert near(mt["cost_task_attempted_usd_session"], 0.3 * sesion / 2, 12)
-    assert near(rea["cost_task_attempted_usd_session"], 0.1 * sesion, 12)
+    assert near(mt["cost_task_attempted_usd_session"], 0.3 * session / 2, 12)
+    assert near(rea["cost_task_attempted_usd_session"], 0.1 * session, 12)
     # the allocated workloads are never verdicted anywhere: not cells, not
     # who-wins rows
     assert all(c["model"] != "alpha" for c in doc["cells"])
@@ -1070,7 +1068,7 @@ def test_a_pooled_workload_without_token_reports_is_unattributable_not_free(tmp_
         req("reasoning", "alpha", "bMix", index=1, tok_in=1000, tok_out=500),
     ]
     requests[1].update({"tok_in": None, "tok_out": None})
-    lote = batch(
+    pooled = batch(
         None,
         "alpha",
         "bMix",
@@ -1079,7 +1077,7 @@ def test_a_pooled_workload_without_token_reports_is_unattributable_not_free(tmp_
         pool={"workloads": ["multi_turn", "reasoning"], "reps": 1},
         dpp_weekly=0.4,
     )
-    write_raw(tmp_path, requests, [lote])
+    write_raw(tmp_path, requests, [pooled])
     doc = analyze_doc(tmp_path, "--pricing-dir", pricing)
     a = doc["pooled"][0]["allocations"]
     assert a["reasoning"]["share"] == 0.0
@@ -1099,23 +1097,23 @@ def test_both_windows_ship_per_bracket_and_the_session_ships_unanchored(tmp_path
     pricing = with_tables(tmp_path)
     craft_dataset(tmp_path)
     doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
-    sesion = U / 6.22
+    session = U / 6.22
 
     # the derived session $/pp is stamped with its caveat, never as an anchor
     s = doc["base_params"]["session"]
     assert s["ratio_r"] == 6.22
-    assert s["usd_per_pp"] == sesion
+    assert s["usd_per_pp"] == session
     assert "unanchored" in s["caveat"] and "secondary" in s["caveat"]
 
     a = cell(doc, "alpha", "qa_short")
     # both windows per bracket: the per-rep rows carry both dpp...
     assert all(r["dpp_weekly"] == 0.2 and r["dpp_session"] == 0.2 for r in a["reps"])
     # ...and the cell's legacy distributions exist for both windows
-    assert near(a["legacy_cost_task_usd_session"]["median"], 0.2 * sesion / 2, 12)
+    assert near(a["legacy_cost_task_usd_session"]["median"], 0.2 * session / 2, 12)
     assert near(a["legacy_cost_task_usd"]["median"], 0.2 * U / 2, 12)
     assert near(
         a["legacy_cost_completed_usd_session"]["median"],
-        (0.2 * sesion / 2 + 0.2 * sesion) / 2,  # median of rep1 (2 tasks) and rep2 (1)
+        (0.2 * session / 2 + 0.2 * session) / 2,  # median of rep1 (2 tasks) and rep2 (1)
         9,
     )
     # every curve point (one per bracket) reports both windows
@@ -1135,28 +1133,28 @@ def test_sweep_rates_plus20_flips_the_borderline_cell(tmp_path):
     requests = [req("tool_calling", "beta", "bFlip", tok_in=2_000_000, tok_out=0)]
     write_raw(tmp_path, requests, [batch("tool_calling", "beta", "bFlip", dpp_weekly=0.75 / U)])
     doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
-    barrido = doc["sensitivity"]["rates"]
-    assert barrido["factors"] == [0.8, 1.2]
-    vueltas = {(f["model"], f["workload"]): f["verdict"] for f in barrido["flips"]["1.2"]}
-    assert vueltas[("beta", "tool_calling")]["winner"] == "legacy"
-    assert len(barrido["flips"]["1.2"]) == 1
-    assert barrido["flips"]["0.8"] == []  # cheaper rates flip nothing here
+    sweep = doc["sensitivity"]["rates"]
+    assert sweep["factors"] == [0.8, 1.2]
+    turns = {(f["model"], f["workload"]): f["verdict"] for f in sweep["flips"]["1.2"]}
+    assert turns[("beta", "tool_calling")]["winner"] == "legacy"
+    assert len(sweep["flips"]["1.2"]) == 1
+    assert sweep["flips"]["0.8"] == []  # cheaper rates flip nothing here
 
 
 def test_sweep_cache_scenarios_recompute_only_discounted_models(tmp_path):
     pricing = with_tables(tmp_path)
     craft_dataset(tmp_path)
     doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
-    barrido = doc["sensitivity"]["cache"]
-    assert barrido["s_values"] == [0.0, 0.25, 0.5, 0.9]
+    sweep = doc["sensitivity"]["cache"]
+    assert sweep["s_values"] == [0.0, 0.25, 0.5, 0.9]
     # S1(s=0.9): 10% input + 90% cached + output
-    esperado = (1000 * 0.1 * 0.6 + 1000 * 0.9 * 0.3 + 500 * 1.2) / 1e6
-    assert near(sweep_cell(barrido, "0.9", "alpha", "qa_short")["new_cost_task_usd"], esperado, 9)
+    expected = (1000 * 0.1 * 0.6 + 1000 * 0.9 * 0.3 + 500 * 1.2) / 1e6
+    assert near(sweep_cell(sweep, "0.9", "alpha", "qa_short")["new_cost_task_usd"], expected, 9)
     # beta has no discount: its cost is identical under every hit rate
     for s in ("0", "0.25", "0.5", "0.9"):
-        celda = sweep_cell(barrido, s, "beta", "throughput")
-        assert near(celda["new_cost_task_usd"], 2.0, 9)
-    assert barrido["flips"]["0.9"] == []  # alpha's winner is stable across S here
+        cell = sweep_cell(sweep, s, "beta", "throughput")
+        assert near(cell["new_cost_task_usd"], 2.0, 9)
+    assert sweep["flips"]["0.9"] == []  # alpha's winner is stable across S here
 
 
 def test_sweep_anchor_scales_legacy_side_and_flips(tmp_path):
@@ -1168,43 +1166,42 @@ def test_sweep_anchor_scales_legacy_side_and_flips(tmp_path):
     requests = [req("tool_calling", "beta", "bAncla", tok_in=2_000_000, tok_out=0)]
     write_raw(tmp_path, requests, [batch("tool_calling", "beta", "bAncla", dpp_weekly=0.8 / U)])
     doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
-    barrido = doc["sensitivity"]["ancla"]
-    assert barrido["factors"] == [0.7, 1.0, 1.3]
-    c07 = sweep_cell(barrido, "0.7", "beta", "tool_calling")
+    sweep = doc["sensitivity"]["anchor"]
+    assert sweep["factors"] == [0.7, 1.0, 1.3]
+    c07 = sweep_cell(sweep, "0.7", "beta", "tool_calling")
     assert near(c07["legacy_cost_task_usd"], 0.8 * 0.7, 9)
     assert c07["verdict"]["winner"] == "legacy"
-    vueltas = {(f["model"], f["workload"]) for f in barrido["flips"]["0.7"]}
-    assert vueltas == {("beta", "tool_calling")}
+    turns = {(f["model"], f["workload"]) for f in sweep["flips"]["0.7"]}
+    assert turns == {("beta", "tool_calling")}
     # the measured pp/1M never moves with the anchor (it is meter-native)
     assert (
-        sweep_cell(barrido, "1.3", "beta", "tool_calling")["pp_per_1m"]
-        == (0.8 / U) * 1e6 / 2_000_000
+        sweep_cell(sweep, "1.3", "beta", "tool_calling")["pp_per_1m"] == (0.8 / U) * 1e6 / 2_000_000
     )
     # the threshold DOES ride with the anchor (it divides by USD/pp): x0.7
     # raises it by 1/0.7, exactly what the sweep's note promises
     base_thr = cell(doc, "beta", "tool_calling")["threshold_pp_per_1m"]["s0"]
     assert near(c07["threshold_pp_per_1m"], base_thr / 0.7, 9)
     # cell C's paid gap is far too wide for a ±30 % anchor to close: it stays new
-    assert sweep_cell(barrido, "0.7", "beta", "qa_short")["verdict"]["winner"] == "new"
+    assert sweep_cell(sweep, "0.7", "beta", "qa_short")["verdict"]["winner"] == "new"
 
 
 def test_sweep_k_axis_reads_the_concurrency_cells(tmp_path):
     pricing = with_tables(tmp_path)
     craft_dataset(tmp_path)
     doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
-    barrido = doc["sensitivity"]["k_axis"]
-    filas = {f["model"]: f for f in barrido["models"]}
-    por_k = {c["k"]: c for c in filas["alpha"]["cells"]}
+    sweep = doc["sensitivity"]["k_axis"]
+    rows = {f["model"]: f for f in sweep["models"]}
+    por_k = {c["k"]: c for c in rows["alpha"]["cells"]}
     # cost per attempted task = dpp x U / 8 tasks
     assert near(por_k[1]["cost_task_attempted_usd"], 1.6 * U / 8, 9)
     assert near(por_k[4]["cost_task_attempted_usd"], 3.2 * U / 8, 9)
     # alpha's per-task cost grows 2 then 4 ticks with the same tokens, a real
     # margin beyond the one-tick tie band -> overhead
-    assert filas["alpha"]["verdict"] == "overhead"
+    assert rows["alpha"]["verdict"] == "overhead"
     # beta grows by EXACTLY one tick: within the meter's resolution — read
     # through the residue band, so the boundary is squeeze deterministically,
     # never a coin flip on the payloads' last bits
-    assert filas["beta"]["verdict"] == "squeeze"
+    assert rows["beta"]["verdict"] == "squeeze"
     # the k cells never leak into the per-workload derivatives
     assert not any(c["workload"] == "concurrency" for c in doc["cells"])
 
@@ -1234,8 +1231,8 @@ def test_measured_hit_rate_replaces_the_s1_assumption(tmp_path, fake_cli):
         encoding="utf-8",
     )
     doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
-    resuelto = doc["s_per_model"]["alpha"]
-    assert resuelto["s"] == 0.8 and resuelto["source"] == "measured"
+    resolved = doc["s_per_model"]["alpha"]
+    assert resolved["s"] == 0.8 and resolved["source"] == "measured"
     # S1 now extrapolates with the MEASURED hit rate, not the 50% assumption
     a = cell(doc, "alpha", "qa_short")
     assert near(a["new_cost_task_s1_usd"], (200 * 0.6 + 800 * 0.3 + 500 * 1.2) / 1e6, 9)
@@ -1253,22 +1250,22 @@ def test_analyze_needs_no_api_key_and_reports_its_bundle(tmp_path, monkeypatch):
     monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
     pricing = with_tables(tmp_path)
     craft_dataset(tmp_path)
-    codigo, salida, errores = analyze_cli(
+    code, output, errors = analyze_cli(
         tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31"
     )
-    assert codigo == 0, salida or errores
+    assert code == 0, output or errors
     assert (tmp_path / "analysis" / "analysis.json").exists()
-    assert "analysis" in (salida + errores).lower()
+    assert "analysis" in (output + errors).lower()
 
 
 def test_analyze_without_raw_data_is_a_clean_error(tmp_path):
     pricing = with_tables(tmp_path)
-    codigo, _salida, errores = analyze_cli(
+    code, _output, errors = analyze_cli(
         tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31"
     )
-    assert codigo == 2
-    assert "raw" in errores.lower()
-    assert "Traceback" not in errores
+    assert code == 2
+    assert "raw" in errors.lower()
+    assert "Traceback" not in errors
     assert not (tmp_path / "analysis").exists()
 
 
@@ -1292,16 +1289,16 @@ def test_reference_bundle_is_never_shrunk(tmp_path):
     pricing = with_tables(tmp_path)
     craft_dataset(tmp_path)
     analyze_doc(tmp_path, "--pricing-dir", pricing)  # the full reference, written to analysis/
-    ruta = tmp_path / "analysis" / "analysis.json"
-    referencia = ruta.read_text(encoding="utf-8")
-    codigo, _sal, err = analyze_cli(tmp_path, "--pricing-dir", pricing, "--model", "alpha")
-    assert codigo == 2, err
+    path = tmp_path / "analysis" / "analysis.json"
+    reference = path.read_text(encoding="utf-8")
+    code, _sal, err = analyze_cli(tmp_path, "--pricing-dir", pricing, "--model", "alpha")
+    assert code == 2, err
     assert "never shrunk" in err
-    assert ruta.read_text(encoding="utf-8") == referencia  # untouched
+    assert path.read_text(encoding="utf-8") == reference  # untouched
     # the documented re-derivation still rewrites the reference in place
     doc2 = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-09-01")
     assert doc2["base_params"]["table_version"] == "2026-09-01"
-    assert json.loads(ruta.read_text(encoding="utf-8"))["base_params"]["table_version"] == (
+    assert json.loads(path.read_text(encoding="utf-8"))["base_params"]["table_version"] == (
         "2026-09-01"
     )
 
@@ -1310,8 +1307,8 @@ def test_analyze_ignores_torn_and_foreign_lines(tmp_path):
     """A torn tail line (crash mid-write) and non-JSON junk are skipped."""
     pricing = with_tables(tmp_path)
     craft_dataset(tmp_path)
-    ruta = tmp_path / "runs" / f"requests-{RUN}.jsonl"
-    ruta.write_text(ruta.read_text(encoding="utf-8") + "{torn\n\n[]\n", encoding="utf-8")
+    path = tmp_path / "runs" / f"requests-{RUN}.jsonl"
+    path.write_text(path.read_text(encoding="utf-8") + "{torn\n\n[]\n", encoding="utf-8")
     doc = analyze_doc(tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31")
     assert len([c for c in doc["cells"] if c["model"] == "alpha"]) >= 1
 
@@ -1363,9 +1360,9 @@ def test_k_axis_cost_divides_by_accepted_not_planned(tmp_path):
     )
     write_raw(tmp_path, requests, [batch("concurrency", "alpha", "bkr", k=8, n=8, dpp_weekly=1.6)])
     doc = analyze_doc(tmp_path, "--pricing-dir", pricing)
-    fila = doc["sensitivity"]["k_axis"]["models"][0]
-    assert fila["cells"][0]["attempted"] == 7
-    assert near(fila["cells"][0]["cost_task_attempted_usd"], 1.6 * U / 7, 9)
+    row = doc["sensitivity"]["k_axis"]["models"][0]
+    assert row["cells"][0]["attempted"] == 7
+    assert near(row["cells"][0]["cost_task_attempted_usd"], 1.6 * U / 7, 9)
 
 
 def test_cache_sweep_survives_a_token_report_missing_the_output_count(tmp_path):
@@ -1375,10 +1372,10 @@ def test_cache_sweep_survives_a_token_report_missing_the_output_count(tmp_path):
     requests = [req("qa_short", "alpha", "bSinOut", tok_out=0)]
     requests[0]["tok_out"] = None  # the API never reported the output count
     write_raw(tmp_path, requests, [batch("qa_short", "alpha", "bSinOut", dpp_weekly=0.2)])
-    codigo, _salida, errores = analyze_cli(
+    code, _output, errors = analyze_cli(
         tmp_path, "--pricing-dir", pricing, "--table-version", "2026-08-31"
     )
-    assert codigo == 0, errores
+    assert code == 0, errors
 
 
 # ---------------------------------------------------------------------------
@@ -1401,7 +1398,7 @@ def test_pooled_brackets_allocate_legacy_by_token_share_post_hoc(tmp_path):
         req("multi_turn", "alpha", "bP", index=1, tok_in=1000, tok_out=500),
         req("reasoning", "alpha", "bP", index=2, tok_in=800, tok_out=200),
     ]
-    lote = batch(
+    pooled = batch(
         None,
         "alpha",
         "bP",
@@ -1410,19 +1407,19 @@ def test_pooled_brackets_allocate_legacy_by_token_share_post_hoc(tmp_path):
         pool={"workloads": ["multi_turn", "reasoning"], "reps": 2},
         dpp_weekly=0.5,
     )
-    lote["dpp_session"] = 0.4
-    write_raw(tmp_path, requests, [lote])
+    pooled["dpp_session"] = 0.4
+    write_raw(tmp_path, requests, [pooled])
     doc = analyze_doc(tmp_path, "--pricing-dir", pricing)
     # A pooled bracket never becomes a measured cell, even though its request
     # lines name task workloads: the legacy is allocated, never verdicted.
     assert all(c["model"] != "alpha" for c in doc["cells"])
-    filas = doc["pooled"]
-    assert len(filas) == 1
-    fila = filas[0]
-    assert fila["batch_id"] == "bP" and fila["model"] == "alpha"
-    assert fila["workloads"] == ["multi_turn", "reasoning"] and fila["reps"] == 2
-    assert fila["dpp_weekly"] == 0.5 and fila["dpp_session"] == 0.4
-    a = fila["allocations"]
+    rows = doc["pooled"]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["batch_id"] == "bP" and row["model"] == "alpha"
+    assert row["workloads"] == ["multi_turn", "reasoning"] and row["reps"] == 2
+    assert row["dpp_weekly"] == 0.5 and row["dpp_session"] == 0.4
+    a = row["allocations"]
     assert a["multi_turn"]["tokens_total"] == 3000
     assert a["reasoning"]["tokens_total"] == 1000
     assert a["multi_turn"]["share"] == 0.75 and a["reasoning"]["share"] == 0.25
@@ -1469,25 +1466,25 @@ def test_custom_s_births_a_stamped_set_and_never_touches_the_reference(tmp_path,
     craft_dataset(tmp_path)
 
     # the reference set first: the persisted S0/S1 pair under analysis/
-    referencia = analyze_doc(tmp_path, "--pricing-dir", pricing)
-    assert referencia["base_params"]["methodology_version"] == analyze_module.METHODOLOGY_VERSION
-    assert referencia["base_params"]["s"] == 0.5
+    reference = analyze_doc(tmp_path, "--pricing-dir", pricing)
+    assert reference["base_params"]["methodology_version"] == analyze_module.METHODOLOGY_VERSION
+    assert reference["base_params"]["s"] == 0.5
     assert (tmp_path / "analysis" / "analysis.json").exists()
     antes = (tmp_path / "analysis" / "analysis.json").read_bytes()
 
-    sello = analyze_doc(tmp_path, "--pricing-dir", pricing, "--s", "0.35")
-    assert sello["base_params"]["s"] == 0.35
-    assert sello["base_params"]["methodology_version"] == analyze_module.METHODOLOGY_VERSION
-    carpeta = tmp_path / "analysis-s0.35"
-    assert (carpeta / "analysis.json").exists()
-    assert (carpeta / "dashboard.html").exists()
+    stamp = analyze_doc(tmp_path, "--pricing-dir", pricing, "--s", "0.35")
+    assert stamp["base_params"]["s"] == 0.35
+    assert stamp["base_params"]["methodology_version"] == analyze_module.METHODOLOGY_VERSION
+    folder = tmp_path / "analysis-s0.35"
+    assert (folder / "analysis.json").exists()
+    assert (folder / "dashboard.html").exists()
     # the stamped set recomputes the same cells: S0 columns identical, the
     # S1 sensitivity moved to the custom hit rate
-    assert [c["new_cost_task_s0_usd"] for c in sello["cells"]] == [
-        c["new_cost_task_s0_usd"] for c in referencia["cells"]
+    assert [c["new_cost_task_s0_usd"] for c in stamp["cells"]] == [
+        c["new_cost_task_s0_usd"] for c in reference["cells"]
     ]
-    assert [c["new_cost_task_s1_usd"] for c in sello["cells"]] != [
-        c["new_cost_task_s1_usd"] for c in referencia["cells"]
+    assert [c["new_cost_task_s1_usd"] for c in stamp["cells"]] != [
+        c["new_cost_task_s1_usd"] for c in reference["cells"]
     ]
     # the persisted s0/s1 set is never edited by a stamped re-run
     assert (tmp_path / "analysis" / "analysis.json").read_bytes() == antes
@@ -1502,10 +1499,10 @@ def test_stamp_folder_names_follow_the_s_value(tmp_path, fake_cli):
     an explicitly-passed default keeps the persisted analysis/ folder."""
     pricing = with_tables(tmp_path)
     craft_dataset(tmp_path)
-    for s, carpeta in (("0", "analysis-s0"), ("0.9", "analysis-s0.9"), ("0.5", "analysis")):
-        codigo, salida, errores = analyze_cli(tmp_path, "--pricing-dir", pricing, "--s", s)
-        assert codigo == 0, salida or errores
-        assert (tmp_path / carpeta / "analysis.json").exists(), carpeta
+    for s, folder in (("0", "analysis-s0"), ("0.9", "analysis-s0.9"), ("0.5", "analysis")):
+        code, output, errors = analyze_cli(tmp_path, "--pricing-dir", pricing, "--s", s)
+        assert code == 0, output or errors
+        assert (tmp_path / folder / "analysis.json").exists(), folder
     assert not (tmp_path / "analysis-s0.5").exists()  # the default is not a stamp
 
 
@@ -1519,15 +1516,15 @@ def test_zero_movement_and_aborted_brackets_never_enter_a_cell(tmp_path):
     carry settle_exit so a consumer can audit the exclusion."""
     pricing = with_tables(tmp_path)
     craft_dataset(tmp_path)
-    cero = batch("qa_short", "alpha", "bCero", rep=3, dpp_weekly=0.0)
-    cero["dpp_session"] = 0.0  # BOTH windows at the pre-burst plateau
-    abortada = batch("qa_short", "alpha", "bAbortada", rep=4, dpp_weekly=0.5)
-    abortada["notes"] = "aborted: probe 429 mid-burst"  # non-zero dpp: only the abort excludes it
-    write_raw(tmp_path, [], [cero, abortada])
+    zero = batch("qa_short", "alpha", "bCero", rep=3, dpp_weekly=0.0)
+    zero["dpp_session"] = 0.0  # BOTH windows at the pre-burst plateau
+    aborted = batch("qa_short", "alpha", "bAbortada", rep=4, dpp_weekly=0.5)
+    aborted["notes"] = "aborted: probe 429 mid-burst"  # non-zero dpp: only the abort excludes it
+    write_raw(tmp_path, [], [zero, aborted])
     doc = analyze_doc(tmp_path, "--pricing-dir", pricing)
-    celda = cell(doc, "alpha", "qa_short")
-    assert [r["rep"] for r in celda["reps"]] == [1, 2]  # the two extra brackets stay out
-    assert all(r["settle_exit"] == "stable" for r in celda["reps"])  # the marker rides the row
+    got = cell(doc, "alpha", "qa_short")
+    assert [r["rep"] for r in got["reps"]] == [1, 2]  # the two extra brackets stay out
+    assert all(r["settle_exit"] == "stable" for r in got["reps"])  # the marker rides the row
     # the dp-tokens curve applies the same rule: neither bracket is a
     # measurement, so neither becomes a curve point
     ids = {p["batch_id"] for p in doc["dp_tokens_curve"]}
